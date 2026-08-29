@@ -1,0 +1,22 @@
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+.clang_complete
+.gcc-flags.json
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*~
+
+# Nextion Editor build output. The .HMI project source is tracked; the compiled
+# .tft is a build artifact and is regenerated from it.
+hmi/*.tft
+hmi/bak/
+
+# OS
+Thumbs.db
+desktop.ini
+.DS_Store
