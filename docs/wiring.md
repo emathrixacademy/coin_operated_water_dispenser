@@ -58,7 +58,29 @@ rather than as a phantom coin or a phantom bottle.
 | Gallon bay float | D26 | INPUT_PULLUP | LOW = empty | **Safety lockout.** Inhibits the pump unconditionally |
 | ₱1 hopper outlet count | D27 | INPUT_PULLUP | Falling edge | Polled. Confirms coins actually left |
 | ₱5 hopper outlet count | D28 | INPUT_PULLUP | Falling edge | Polled. Confirms coins actually left |
-| Profit chamber full | D29 | INPUT_PULLUP | LOW = full | Locks the machine |
+| Profit chamber full | D29 | INPUT_PULLUP | LOW = beam broken | IR break-beam at the fill line. Locks the machine |
+
+### Profit chamber sensor — IR break-beam, not a microswitch
+
+The beam crosses the chamber at the fill height and only breaks when the coin stack
+physically reaches it. A lever microswitch was rejected: coins stack unevenly and one
+leaning coin pushes the arm while the chamber is still half empty, locking the machine
+early and sending a technician out for nothing.
+
+It is also the same sensor family and the same polled-input code path as the hopper
+outlet counters, so it needs no new driver.
+
+### Temperature sensor — DS18B20, waterproof probe
+
+D23, one-wire, with a 4.7 k pull-up to 5 V on the data line. Use the **stainless
+waterproof probe** version, not the bare TO-92 part. The probe sits in or against
+chilled water with condensation on it continuously, which is a corrosion and drift
+problem for a thermistor. The DS18B20 is factory-calibrated and reads Celsius directly,
+so it adds no per-unit calibration step to a build that already has flow calibration.
+
+| Signal | Pin | Notes |
+|---|---|---|
+| Cold tank temperature | D23 | DS18B20 one-wire, 4.7 k pull-up to 5 V. Status screen only |
 
 ## Digital outputs
 
@@ -96,9 +118,10 @@ not assumed:
 
 ## Analog inputs
 
-| Signal | Pin | Notes |
-|---|---|---|
-| Cold tank temperature | A0 | Feeds the System Status screen only. Never gates billing or dispensing |
+None. A0–A15 are unused and available for service expansion.
+
+Temperature is digital on D23 — see the DS18B20 note above. It feeds the System Status
+screen only and never gates billing or dispensing.
 
 ## Power
 
@@ -116,19 +139,15 @@ loads on the machine and share a ground with the coin acceptor pulse line — st
 at the supply rather than daisy-chaining, or motor noise will show up as phantom coin
 pulses on D2.
 
-## Open items for review
+## Parts added beyond the original bill of materials
 
-Two things in this map are not settled by `CLAUDE.md` or the client's document. Both
-need a decision before Milestone 3.
+Two sensors are specified here that neither `README.md`'s hardware table nor the
+client's document lists. Both were signed off before Milestone 2 and are within the
+existing build budget.
 
-**The temperature sensor is not in the bill of materials.** The System Status screen in
-the client's mockup shows a temperature, but neither `README.md`'s hardware table nor
-`CLAUDE.md` lists a temperature sensor. A0 is reserved for it above. Confirm the part —
-a 10 k thermistor with a divider is the cheap option, a DS18B20 costs a digital pin but
-needs no calibration. Or confirm that the screen should show cooling on/off only and
-drop the temperature reading, which removes the part entirely.
+| Part | Pin | Approx cost | Why |
+|---|---|---|---|
+| DS18B20 waterproof stainless probe | D23 | ₱150 | Status screen temperature. Factory-calibrated, survives condensation |
+| IR break-beam pair | D29 | — | Profit chamber full detection at the fill line |
 
-**The profit chamber full sensor needs a part confirmed.** D29 is reserved. The
-mechanism for detecting a full locked chamber is not specified anywhere in the client
-document — a lever microswitch on the coin stack is the usual approach on a machine
-this size.
+Update the hardware table in `README.md` to match before handover.

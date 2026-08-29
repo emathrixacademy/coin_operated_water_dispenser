@@ -1,0 +1,56 @@
+#ifndef FAULTS_H
+#define FAULTS_H
+
+// Faults -- lockout conditions and alert routing.
+//
+// ===========================================================================
+// IN EVERY LOCKED STATE THE COIN ACCEPTOR IS DISABLED FIRST.
+// ===========================================================================
+//
+// Disabling the acceptor comes before changing the screen, before the buzzer,
+// before anything. Never accept money the machine cannot honour. A user whose
+// coin goes in one millisecond after a lockout begins is a refund the machine
+// may not be able to pay.
+//
+// Lockout conditions:
+//
+//   Gallon bay empty            OUT OF WATER -- PLEASE REFILL     auto-clears
+//   P1 < 25 pcs or P5 < 5 pcs   LOW CHANGE -- SERVICE REQUIRED    admin reload
+//   Profit chamber full         COIN STORAGE FULL                 auto-clears
+//   Hopper payout failed        CHANGE JAM -- SERVICE REQUIRED    service
+//   Flow stall                  SERVICE REQUIRED                  service
+//   Pump overran                SERVICE REQUIRED                  service
+//
+// A transaction already in progress when a lockout raises is allowed to finish
+// and pay out its change where it physically can. The lockout stops a NEW
+// transaction from starting. The exception is a change jam, where the machine
+// has already demonstrated it cannot pay.
+
+#include "types.h"
+
+void faults_begin();
+void faults_update();
+
+// Highest-priority active fault, or FAULT_NONE.
+fault_t faults_active();
+
+bool faults_is_locked();
+
+// Raise a fault that a module detected -- a jam, a stall, a pump overrun. The
+// acceptor is inhibited inside this call, before it returns.
+void faults_raise(fault_t fault);
+
+// Clear a serviceable fault. Conditions that auto-clear -- water, storage --
+// are re-evaluated in update() and do not need this.
+void faults_clear(fault_t fault);
+
+// Display text for a fault. Points at PROGMEM-backed storage; the caller does
+// not own it and must not modify it.
+const char *faults_message(fault_t fault);
+
+// True if this fault must survive a reboot. A change jam does -- rebooting the
+// machine must not silently return it to service with a jammed hopper and an
+// inventory that thinks it paid.
+bool faults_is_persistent(fault_t fault);
+
+#endif  // FAULTS_H

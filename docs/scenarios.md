@@ -5,7 +5,8 @@ Project EMX-2026-WATERVENDO-01, eMathrix Technologies.
 Every case here must pass before the machine ships. This document is the acceptance
 test suite named in `CLAUDE.md`. Cases 1–10 come from the client's document. Cases
 11–15 were added because the machine needs them and the client did not write them.
-Cases 16–19 are proposed additions awaiting sign-off — see the note at the end.
+Case 19 was proposed and adopted. Cases 16–18 remain proposals — see the note near the
+end.
 
 ## How to use this document
 
@@ -375,11 +376,29 @@ incremented for a coin whose routing was never confirmed.
 5. Repeat ten times, cutting power at varied points in the window, and reconcile the
    physical coin positions against the inventory each time.
 
-> **Open question for review.** The reconciliation policy needs your decision before
-> Milestone 3. Options: credit the user and mark the coin unrouted pending a service
-> check; or credit the user and assume the profit chamber, which is the safe direction
-> for the float since it never over-claims hopper stock. I recommend the second, with
-> the event written to the history ring buffer. Confirm before it goes into code.
+### Reconciliation policy — decided
+
+On boot, a coin that was credited but whose routing was never confirmed is handled as
+follows:
+
+1. **The user keeps the credit.** They inserted real money.
+2. **The coin is assumed to have reached the profit chamber.** Neither hopper is
+   incremented.
+3. **The event is written to the history ring buffer under a distinct event tag**,
+   `EVT_COIN_UNROUTED`, separate from ordinary transaction entries.
+
+The asymmetry is the whole point. Understating hopper stock makes the machine lock
+early, which is an annoyance. Overstating it makes the machine promise change it does
+not physically hold, which is a jam under a paying user. **Always fail toward the
+understatement.**
+
+The distinct event tag exists so a technician reading the history can see why the count
+is off by one. Without it, an unexplained discrepancy in a machine full of cash reads
+as theft, and the tech goes looking for a person instead of a power cut.
+
+**Additional verification for the tag.** After step 5 of the procedure above, open the
+Admin history page and confirm the event appears as an unrouted-coin entry, visibly
+distinct from a normal transaction line, with the denomination recorded.
 
 ---
 
@@ -461,11 +480,50 @@ restated here so it is not lost: a user inserting ₱20 and selecting 500 mL nee
 back. I will report the drain arithmetic and a proposed change policy at Milestone 5
 before writing any payout strategy. No behaviour change without your approval.
 
-**Case 19 — Flow sensor stalls with the valve open.** Valve commanded open, no flow
-pulses arriving — a blocked line, a failed sensor, or a closed upstream tap. Without a
-timeout the machine waits forever holding the user's money. Proposal: a stall timeout
-that closes the valve, refunds on the rounded-down volume actually delivered, and
-raises a service condition. Needs a timeout value from you.
+Case 19 has been adopted and moved into the gate — see below.
+
+---
+
+## Case 19 — Flow stall with the valve open
+
+*Adopted. Added because without it the machine waits forever holding a user's money.*
+
+**Trigger.** The valve is open and no flow pulses arrive for `FLOW_STALL_TIMEOUT_MS`
+(5000 ms). Three physical causes: a blocked line, a dead flow sensor, or a closed
+upstream tap.
+
+The same constant covers the never-started case. If the valve opens and nothing arrives
+at all, it trips at five seconds like any other stall — there is no separate
+start-of-pour timer.
+
+**Expected behaviour.** Close the valve. Round the dispensed volume down to the nearest
+`REFUND_ROUND_ML` as usual and charge it. Refund the remaining credit from the hoppers.
+Lock the machine with the service condition and disable the acceptor.
+
+All three causes need a person on site, so the machine must not retry or attempt to
+continue. Five seconds never trips on a normal pour — at any real flow rate pulses
+arrive continuously — and it is short enough that the user is not left standing there.
+
+**Expected screen.** `SERVICE REQUIRED`.
+
+**Expected coin outcome.** The user is charged only for the rounded-down volume that
+actually reached their bottle, and the balance is returned as coins before the lockout
+takes hold. A stall must never cost the user money.
+
+**Verification by hand.**
+1. Insert ₱20, select 2000 mL, and start the pour.
+2. At roughly 400 mL, close the upstream tap.
+3. Time it. The valve must close about five seconds after the last pulse.
+4. Confirm the machine charges for 400 mL rounded down and pays back the balance.
+   Count the coins in the tray.
+5. Confirm the lockout screen appears and the acceptor rejects a coin to the tray.
+6. Repeat for the never-started case: close the tap **before** starting, insert ₱5,
+   select 500 mL, and place a bottle. Expect the stall at five seconds and a full ₱5
+   refund, since no water was delivered.
+7. Repeat with the flow sensor connector unplugged, which simulates a dead sensor while
+   water is genuinely flowing. This is the dangerous variant — confirm the valve still
+   closes at five seconds rather than pouring indefinitely into a bottle that is
+   already overflowing.
 
 ---
 
@@ -491,6 +549,7 @@ steps have been walked physically, with real coins where the case requires them.
 | 13 | Power loss before diverter | Yes | | | | |
 | 14 | Coin during lockout window | Yes | | | | |
 | 15 | Gallon empty, tank full | No | | | | |
+| 19 | Flow stall, valve open | Yes | | | | |
 
 Coin series coverage for the coin path cases — tick each when tested:
 
