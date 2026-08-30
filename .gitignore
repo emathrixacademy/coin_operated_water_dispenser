@@ -20,3 +20,7 @@ hmi/bak/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# Simulator build output
+watervendo-sim
+watervendo-sim.exe

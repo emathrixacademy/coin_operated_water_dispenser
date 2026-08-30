@@ -504,6 +504,24 @@ typedef int32_t volume_t;   // millilitres
 // time that the coin path needs.
 #define RTC_READ_INTERVAL_MS 1000
 
+// I2C bus timeout. NOT OPTIONAL -- this is what keeps a failed clock from
+// freezing the whole machine.
+//
+// The Arduino Wire library spins on the TWI interrupt flag with NO timeout by
+// default: twi.c has five unbounded `while` loops. A DS3231 that fails with SDA
+// held low -- a dead module, a wiring short, or a brownout part-way through a
+// transfer -- hangs the caller forever. rtc_update() runs in loop(), so that is
+// the entire machine stopped: no coin pulses, no flow counting, no hopper
+// polling, mid-transaction, with the user's money inside it.
+//
+// A real 7-byte read at 100 kHz takes about 1 ms, so 3 ms is a 3x margin on a
+// healthy bus and bounds the worst case below LOOP_WARN_US on a broken one.
+//
+// Paired with reset_with_timeout = true, which resets the TWI hardware on
+// expiry -- without that the peripheral stays wedged and every later read fails
+// too, turning a momentary glitch into a permanently dead clock.
+#define RTC_I2C_TIMEOUT_US 3000
+
 // Timestamp meaning "no valid time". Written into history entries recorded
 // while the clock is failed, so a later reader can tell an unknown time from a
 // real one instead of seeing a plausible-looking 1970.
