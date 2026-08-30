@@ -14,6 +14,8 @@
 #include "persist.h"
 #include "hmi.h"
 #include "faults.h"
+#include "change_plan.h"
+#include <string.h>
 #include "rtc.h"
 
 // Single non-blocking state machine.
@@ -81,6 +83,7 @@ enum trigger_t : uint8_t {
 // ---------------------------------------------------------------------------
 
 static state_t s_state = STATE_BOOT;
+static state_t s_prev_state = STATE_BOOT;
 
 // When the current state was entered. Every timeout in the machine is measured
 // against this rather than against a per-state timer, so a state cannot leave a
@@ -89,6 +92,108 @@ static uint32_t s_state_since = 0;
 
 static uint32_t state_elapsed() {
   return (uint32_t)(millis() - s_state_since);
+}
+
+// The volume the user selected, in millilitres. Set by billing_select(), which
+// has already taken its price out of credit before this is written.
+static volume_t s_target_ml = 0;
+
+// The payout in progress. Planned once on entering PAYING_CHANGE and then run
+// as two sequential hopper legs -- coin_hopper_dispense() drives one hopper at
+// a time and refuses a second while busy.
+static uint16_t s_pay_p1 = 0;
+static uint16_t s_pay_p5 = 0;
+static uint8_t  s_pay_leg = 0;      // 0 = P5 leg, 1 = P1 leg, 2 = done
+static money_t  s_change_paid = 0;  // held for the Thank You summary
+
+// ---------------------------------------------------------------------------
+// Confirm button
+// ---------------------------------------------------------------------------
+//
+// One momentary input, owned by the state machine. A whole module for a single
+// button would be ceremony; the debounce is four lines and lives here next to
+// the transitions it drives.
+
+static bool s_confirm_state = false;
+static bool s_confirm_candidate = false;
+static uint32_t s_confirm_since = 0;
+static bool s_confirm_pressed = false;   // one-shot, consumed by reading
+
+static void confirm_update() {
+  const bool raw = (digitalRead(PIN_CONFIRM_BTN) == LOW);
+  const uint32_t now = millis();
+
+  if (raw != s_confirm_candidate) {
+    s_confirm_candidate = raw;
+    s_confirm_since = now;
+    return;
+  }
+  if (raw == s_confirm_state) return;
+  if ((uint32_t)(now - s_confirm_since) < CONFIRM_DEBOUNCE_MS) return;
+
+  s_confirm_state = raw;
+  if (raw) s_confirm_pressed = true;   // press edge only, not release
+}
+
+static bool confirm_take() {
+  const bool p = s_confirm_pressed;
+  s_confirm_pressed = false;
+  return p;
+}
+
+// ---------------------------------------------------------------------------
+// Coin acceptance
+// ---------------------------------------------------------------------------
+
+// Credit and route one pending coin, if there is one and the chute is clear.
+//
+// ORDER: credit first, then route. billing_add_coin() cannot fail in a way that
+// loses the coin, whereas coin_diverter_route() asserts the acceptor window and
+// writes the in-flight marker -- so crediting afterwards would leave a gap in
+// which a power cut costs the user money the machine never recorded.
+static void accept_pending_coin() {
+  if (!coin_acceptor_available()) return;
+
+  // Never credit a second coin while the servo is still travelling. The
+  // diverter refuses an overlapping route anyway; this stops the coin being
+  // consumed and silently dropped when it does.
+  if (coin_diverter_is_busy()) return;
+
+  const coin_t c = coin_acceptor_take_coin();
+  if (c == COIN_NONE) return;
+
+  billing_add_coin(c);
+  coin_diverter_route(c);
+
+  // Persist the new credit immediately. A power cut between the coin landing
+  // and the transaction ending must not cost the user their money -- SPEC 3.3
+  // and scenarios.md case 12.
+  transaction_t txn;
+  billing_store(&txn);
+  persist_txn_update(&txn);
+}
+
+// Write the transaction to the history ring and the daily totals.
+//
+// Called ONLY after the payout has been confirmed by the outlet counts. A
+// record written at transaction start and then contradicted by a jam claims
+// money left the machine when it did not, which is exactly the discrepancy a
+// technician cannot explain later.
+static void commit_transaction() {
+  history_entry_t e;
+  memset(&e, 0, sizeof(e));
+  e.timestamp  = rtc_timestamp();   // RTC_TIMESTAMP_INVALID if the clock failed
+  e.tag        = EVT_TRANSACTION;
+  e.amount_in  = billing_inserted();
+  e.volume_out = billing_total_dispensed();
+  e.change_out = s_change_paid;
+  persist_history_add(&e);
+
+  // Profit is what the user was actually charged: inserted less change paid.
+  persist_daily_add(billing_inserted() - s_change_paid,
+                    billing_total_dispensed());
+
+  persist_txn_close();
 }
 
 // ---------------------------------------------------------------------------
@@ -290,6 +395,7 @@ static void transition_to(state_t next, trigger_t why) {
 
   on_exit(s_state);
 
+  s_prev_state = s_state;
   s_state = next;
   s_state_since = millis();
 
@@ -311,34 +417,75 @@ static void transition_to(state_t next, trigger_t why) {
 static void on_enter(state_t s) {
   switch (s) {
     case STATE_STANDBY:
-      // TODO(M5-B): billing_reset() and persist_txn_close() once the money path
-      // is wired. Resetting here rather than on exit from THANK_YOU means an
-      // abandoned transaction is also cleared down.
-      // TODO(M5-C): faults_release_latched() -- Case 20 path (d), a fault
-      // latched while nothing was owed must lock the machine immediately.
+      // Clear down for the next user. Done on ENTRY to standby rather than on
+      // exit from thank-you, so a transaction abandoned by any route is also
+      // cleared rather than leaking credit into the next user's session.
+      billing_reset();
+      s_target_ml = 0;
+      s_change_paid = 0;
+
+      // Case 20 path (d): a fault latched while nothing was owed. There was no
+      // payout to hang the release on, so it happens here. Without this the
+      // latch sits forever and the safety mechanism is decorative.
+      faults_release_latched();
       break;
 
-    case STATE_ACCEPTING:
-      // TODO(M5-B): open the EEPROM transaction record.
+    case STATE_ACCEPTING: {
+      // Open the EEPROM transaction record. From here on a power cut is
+      // recoverable -- scenarios.md case 12.
+      transaction_t txn;
+      billing_store(&txn);
+      persist_txn_open(&txn);
       break;
+    }
 
     case STATE_AWAITING_BOTTLE:
       // TODO(M5-C): buzzer ladder at BOTTLE_WAIT_WARN1_MS / WARN2_MS.
       break;
 
     case STATE_DISPENSING:
-      // TODO(M5-B): dispense_start(target) on first entry, dispense_resume()
-      // when arriving from PAUSED. These are NOT the same call -- resume must
-      // continue toward the original target from the volume already delivered.
+      // start() and resume() are NOT interchangeable. resume() continues toward
+      // the ORIGINAL target from the volume already delivered; start() would
+      // reset the count and hand out a second full measure of free water on
+      // every replaced bottle.
+      if (s_prev_state == STATE_PAUSED) {
+        dispense_resume();
+      } else {
+        dispense_start(s_target_ml);
+      }
       break;
 
     case STATE_PAUSED:
-      // TODO(M5-B): dispense_pause().
+      // Valve shut immediately, delivered volume held. The grace countdown is
+      // this state's elapsed timer, not the module's business.
+      dispense_pause();
       break;
 
-    case STATE_PAYING_CHANGE:
-      // TODO(M5-B): change_plan() then the hopper payout.
+    case STATE_PAYING_CHANGE: {
+      s_pay_p1 = 0;
+      s_pay_p5 = 0;
+      s_pay_leg = 2;          // assume nothing to do until a plan says otherwise
+      s_change_paid = 0;
+
+      const money_t due = billing_change_due();
+      if (due <= 0) break;    // nothing owed; PAYING_CHANGE falls straight through
+
+      change_plan_t plan;
+      if (!change_plan(due, coin_hopper_count(HOPPER_P1),
+                       coin_hopper_count(HOPPER_P5), &plan)) {
+        // Should be unreachable: the LOW CHANGE gate guaranteed coverage for
+        // the full ceiling before the first coin was accepted. If it happens
+        // anyway the machine cannot pay what it owes, which is a jam by any
+        // other name -- and locking is the honest answer.
+        faults_raise(FAULT_CHANGE_JAM);
+        break;
+      }
+
+      s_pay_p1 = plan.p1;
+      s_pay_p5 = plan.p5;
+      s_pay_leg = 0;
       break;
+    }
 
     case STATE_FAULT:
       // The acceptor is already inhibited -- faults_raise() did it before it
@@ -366,8 +513,10 @@ static void on_exit(state_t s) {
       break;
 
     case STATE_THANK_YOU:
-      // TODO(M5-B): commit the transaction to EEPROM and the history ring,
-      // add the daily totals, then billing_reset().
+      // Nothing. The transaction was committed in PAYING_CHANGE, once the
+      // payout was confirmed by the outlet counts, and billing_reset() happens
+      // on entry to STANDBY so that every route out of a transaction clears
+      // down rather than only this one.
       break;
 
     default:
@@ -396,46 +545,117 @@ static void state_update(state_t s) {
         transition_to(STATE_FAULT, TRIG_FAULT_RAISED_WHILE_IDLE);
         break;
       }
+
+      // ---------------------------------------------------------------
+      // THE LOW CHANGE GATE -- SPEC 6.1.1.
+      //
+      // Checked against the worst case for the FULL CEILING, not against the
+      // coin about to be inserted. A user who puts in P1 and then P19 more
+      // must not discover mid-transaction that the machine cannot make their
+      // change. Passing this gate is the machine's guarantee that whatever
+      // the user does next, it can be completed.
+      //
+      // Evaluated here, in STANDBY, and nowhere else. Re-checking during a
+      // transaction is invariant 8 from the other direction: once the money
+      // is in, refusing is no longer an option.
+      // ---------------------------------------------------------------
+      if (!coin_hopper_can_cover(billing_worst_case_change())) {
+        faults_raise(FAULT_LOW_CHANGE);
+        transition_to(STATE_FAULT, TRIG_FAULT_RAISED_WHILE_IDLE);
+        break;
+      }
+
       // TODO(M5-C): admin gesture -> STATE_ADMIN.
       if (coin_acceptor_available()) {
-        // TODO(M5-B): the LOW CHANGE gate runs HERE, before the coin is
-        // credited -- SPEC 6.1.1. If the hoppers cannot cover
-        // billing_worst_case_change(), raise LOW CHANGE and stay put.
         transition_to(STATE_ACCEPTING, TRIG_FIRST_COIN);
+        // The coin itself is credited by ACCEPTING on the next pass. Crediting
+        // here would happen before on_enter() opened the EEPROM record.
       }
       break;
 
     // -------------------------------------------------------------------
     case STATE_ACCEPTING:
-      // TODO(M5-B): consume the coin, billing_add_coin(), route it through the
-      // diverter. Further coins are handled here rather than by re-entering
-      // this state.
+      // Further coins are handled here rather than by re-entering the state --
+      // re-entry would re-run on_enter() and reopen the transaction record.
+      accept_pending_coin();
+
       if (billing_at_ceiling()) {
+        // The acceptor is inhibited by the transition itself: SELECTING is not
+        // an accepting state. The machine stops taking money it has capped.
         transition_to(STATE_SELECTING, TRIG_CREDIT_AT_CEILING);
         break;
       }
-      // TODO(M5-C): confirm button -> SELECTING.
+      if (confirm_take()) {
+        transition_to(STATE_SELECTING, TRIG_CONFIRM_PRESSED);
+      }
       break;
 
     // -------------------------------------------------------------------
-    case STATE_SELECTING:
-      // TODO(M5-B): read the HMI selection, billing_can_select(),
-      // billing_select(), then AWAITING_BOTTLE.
-      // TODO(M5-B): "finish without pour" -> PAYING_CHANGE with full credit.
+    case STATE_SELECTING: {
+      int32_t payload = 0;
+      const hmi_event_t e = hmi_take_event(&payload);
+
+      if (e == HMI_EVENT_SELECT_VOLUME) {
+        // billing_can_select() enforces the whole rule set: positive, within
+        // the ceiling, a whole 100 mL step, and affordable. The price is then
+        // deducted from the SELECTION, before the valve opens, and nothing the
+        // flow sensor later reports can change it.
+        if (billing_can_select((volume_t)payload)) {
+          s_target_ml = billing_select((volume_t)payload);
+
+          transaction_t txn;
+          billing_store(&txn);
+          persist_txn_update(&txn);
+
+          transition_to(STATE_AWAITING_BOTTLE, TRIG_TARGET_CHOSEN);
+        }
+        // An unaffordable selection is simply not actioned. The greyed-out
+        // option should have prevented it reaching here at all.
+        break;
+      }
+
+      // The back arrow from SELECT VOLUME means "I'm done, give me my money".
+      // Same destination as the explicit finish button.
+      if (e == HMI_EVENT_FINISH || e == HMI_EVENT_BACK) {
+        transition_to(STATE_PAYING_CHANGE, TRIG_FINISH_NO_POUR);
+      }
       break;
+    }
 
     // -------------------------------------------------------------------
-    case STATE_AWAITING_BOTTLE:
+    case STATE_AWAITING_BOTTLE: {
       if (bottle_present()) {
         transition_to(STATE_DISPENSING, TRIG_BOTTLE_DETECTED);
+        break;
+      }
+
+      // Back from INSERT BOTTLE cancels the selection. Nothing has poured, so
+      // the whole selection price returns to credit with no rounding.
+      int32_t payload = 0;
+      if (hmi_take_event(&payload) == HMI_EVENT_BACK) {
+        billing_cancel_selection();
+        s_target_ml = 0;
+
+        transaction_t txn;
+        billing_store(&txn);
+        persist_txn_update(&txn);
+
+        transition_to(STATE_SELECTING, TRIG_CONFIRM_PRESSED);
         break;
       }
       // Silent to 15 s, buzzer, buzzer, then cancel and refund in full. The
       // user gets two audible warnings before losing the transaction.
       if (state_elapsed() >= BOTTLE_WAIT_CANCEL_MS) {
+        // Cancelled. The selection never poured, so its price goes back to
+        // credit in full before the payout is planned -- otherwise the user
+        // would be refunded only what they had left after paying for water
+        // they never received.
+        billing_cancel_selection();
+        s_target_ml = 0;
         transition_to(STATE_PAYING_CHANGE, TRIG_BOTTLE_WAIT_TIMEOUT);
       }
       break;
+    }
 
     // -------------------------------------------------------------------
     case STATE_DISPENSING:
@@ -474,8 +694,28 @@ static void state_update(state_t s) {
       // what the user received. dispense_update() ends the window itself.
       if (state_elapsed() < VALVE_CLOSE_SETTLE_MS) break;
 
-      // TODO(M5-B): settle the pour against billing here -- partial or
-      // complete -- BEFORE leaving, so both exits below settle identically.
+      // ---------------------------------------------------------------
+      // The pour is settled HERE, before either exit, so both routes out of
+      // SETTLING settle identically. Putting it in the destinations would mean
+      // two copies of the money arithmetic that could drift apart.
+      //
+      // This is the ONE place a measured volume touches money, and
+      // billing_settle_partial() rounds DOWN before pricing it.
+      // ---------------------------------------------------------------
+      {
+        const volume_t delivered = dispense_delivered();
+        if (delivered >= s_target_ml && s_target_ml > 0) {
+          billing_settle_complete(delivered);
+        } else {
+          billing_settle_partial(delivered);
+        }
+        dispense_clear();
+        s_target_ml = 0;
+
+        transaction_t txn;
+        billing_store(&txn);
+        persist_txn_update(&txn);
+      }
 
       if (faults_has_latched()) {
         // Settle first, lock second. Straight to the payout; the fault is
@@ -487,24 +727,41 @@ static void state_update(state_t s) {
       break;
 
     // -------------------------------------------------------------------
-    case STATE_COMPLETE:
+    case STATE_COMPLETE: {
       if (billing_credit() <= 0) {
         transition_to(STATE_PAYING_CHANGE, TRIG_CREDIT_ZERO);
         break;
       }
-      // TODO(M5-B): HMI choice -- dispense more -> SELECTING, finish ->
-      // PAYING_CHANGE.
+      int32_t payload = 0;
+      const hmi_event_t e = hmi_take_event(&payload);
+      if (e == HMI_EVENT_DISPENSE_AGAIN) {
+        transition_to(STATE_SELECTING, TRIG_DISPENSE_MORE);
+      } else if (e == HMI_EVENT_FINISH || e == HMI_EVENT_BACK) {
+        transition_to(STATE_PAYING_CHANGE, TRIG_FINISH);
+      }
       break;
+    }
 
     // -------------------------------------------------------------------
     case STATE_PAYING_CHANGE: {
-      // TODO(M5-B): drive change_plan() and the two hopper legs. For Part A
-      // the payout is treated as instantly complete so the rest of the cycle
-      // can be walked end to end.
-      const bool payout_done = !coin_hopper_is_busy();
-      if (!payout_done) break;
+      // A change jam raised on entry (the plan could not be made) locks here
+      // without running any leg.
+      if (faults_is_locked() && faults_active() == FAULT_CHANGE_JAM) {
+        transition_to(STATE_FAULT, TRIG_PAYOUT_SHORT);
+        break;
+      }
 
-      if (coin_hopper_status() == PAYOUT_JAMMED) {
+      if (coin_hopper_is_busy()) break;
+
+      // Reap a finished leg before starting the next. Inventory has already
+      // been decremented by coin_hopper's own finish(), by COUNTED coins --
+      // never by commanded ones. If the sensor did not see it leave, the
+      // machine still owns it.
+      const payout_result_t r = coin_hopper_status();
+      if (r == PAYOUT_JAMMED) {
+        s_change_paid += (money_t)coin_hopper_counted() *
+                         (s_pay_leg == 0 ? 500 : 100);
+        coin_hopper_clear();
         // The machine has physically demonstrated it cannot pay. This is the
         // ONE fault that locks immediately rather than deferring -- there is
         // no payout left to protect and waiting would only take more money.
@@ -512,17 +769,39 @@ static void state_update(state_t s) {
         transition_to(STATE_FAULT, TRIG_PAYOUT_SHORT);
         break;
       }
+      if (r == PAYOUT_COMPLETE) {
+        s_change_paid += (money_t)coin_hopper_counted() *
+                         (s_pay_leg == 0 ? 500 : 100);
+        coin_hopper_clear();
+        s_pay_leg++;
+      }
+
+      // Start the next leg. Two hoppers, run in sequence -- coin_hopper drives
+      // one at a time and refuses an overlapping command.
+      if (s_pay_leg == 0) {
+        if (s_pay_p5 > 0) { coin_hopper_dispense(HOPPER_P5, s_pay_p5); break; }
+        s_pay_leg = 1;
+      }
+      if (s_pay_leg == 1) {
+        if (s_pay_p1 > 0) { coin_hopper_dispense(HOPPER_P1, s_pay_p1); break; }
+        s_pay_leg = 2;
+      }
+
+      // Both legs done. The money is physically out and counted.
+      commit_transaction();
 
       if (faults_has_latched()) {
-        // The money is out. NOW the machine may lock.
+        // NOW the machine may lock -- SPEC 9 invariant 8. This is also Case 20
+        // path (b): with zero change due there was no payout to hang the
+        // release on, and the path still reaches here.
         faults_release_latched();
         transition_to(STATE_FAULT, TRIG_LATCHED_FAULT_RELEASED);
         break;
       }
 
       transition_to(STATE_THANK_YOU,
-                    billing_change_due() > 0 ? TRIG_PAYOUT_CONFIRMED
-                                             : TRIG_NOTHING_DUE);
+                    s_change_paid > 0 ? TRIG_PAYOUT_CONFIRMED
+                                      : TRIG_NOTHING_DUE);
       break;
     }
 
@@ -606,6 +885,14 @@ void setup() {
   boot_step(F("dispense"));      dispense_begin();
   boot_step(F("billing"));       billing_begin();
   boot_step(F("hmi"));           hmi_begin();
+
+  // Confirm button. INPUT_PULLUP like every other input, so a broken wire reads
+  // as "not pressed" rather than as a permanently held button.
+  pinMode(PIN_CONFIRM_BTN, INPUT_PULLUP);
+  s_confirm_state = (digitalRead(PIN_CONFIRM_BTN) == LOW);
+  s_confirm_candidate = s_confirm_state;
+  s_confirm_since = millis();
+
   boot_step(F("ready"));
 
   // TODO(M5-C): boot reconciliation.
@@ -651,6 +938,7 @@ void loop() {
   dispense_update();
   hmi_update();
   faults_update();
+  confirm_update();
 
   state_update(s_state);
 

@@ -164,6 +164,75 @@ Solo repo; review happens outside GitHub.
 
 ---
 
+## User interface
+
+### Back arrow · never abandons credit
+
+Two behaviours, by screen:
+
+**From INSERT BOTTLE (`AWAITING_BOTTLE`)** — cancels the selection and returns
+to `SELECTING`. Nothing has dispensed, so credit is restored **in full with no
+rounding applied**. New §2.2 row: `AWAITING_BOTTLE | back pressed | SELECTING`.
+
+**From SELECT VOLUME (`SELECTING`)** — means "I'm done, give me my money."
+Routes to `PAYING_CHANGE`. This is the existing §2.2 row "SELECTING | finish
+without pour | PAYING_CHANGE"; the arrow is simply its trigger.
+
+**Label the SELECT VOLUME arrow with text, not just a glyph.** An unlabelled
+arrow that pays out change is a surprise. "Finish & get change" or equivalent.
+
+### Nav bar during a transaction · dimmed, not hidden, not silently ignored
+
+Dimmed and non-responsive from `SELECTING` through `PAYING_CHANGE`.
+
+Silently ignoring a tap makes the user think the screen has frozen and press
+harder. Dimming tells them it is deliberately unavailable. Hiding it makes the
+layout jump between screens.
+
+### Panel · Nextion Basic NX4832T035, 3.5", 480×320, resistive
+
+Not the 4.3". That panel is 480×272 — *less* vertical room, and the 4×5 volume
+grid plus header, footer and nav bar needs the height. 480×320 gives roughly
+110×50 px per grid cell: tight but workable.
+
+Basic tier, not Enhanced. Enhanced adds GPIO and an onboard RTC this design does
+not use — the DS3231 sits on the Mega's I²C bus where the firmware controls it.
+
+**Resistive touch is correct here and is not a compromise.** This machine lives
+in a wet environment and users will have wet hands. Capacitive degrades badly
+with water on the panel; resistive does not care.
+
+### `.HMI` authoring · split between firmware and a person
+
+The binary cannot be authored programmatically. The deliverable is the complete
+firmware side, `docs/hmi_spec.md` specifying every page and object down to
+position, font, colour and the exact serial command, and a transcription
+checklist. **Scheduled as a task belonging to a person**, sized in
+`remaining.md`, not left as a gap to surface at M6.
+
+### Missing screens · all five approved for design
+
+Four fault screens (each stating the condition in plain language and what to do
+— a user facing LOW CHANGE needs to know the machine is not broken, it just
+cannot make change) · PAUSED with the grace countdown and volume already
+dispensed · Admin history and change edit · clock-not-set · **change collection
+prompt**.
+
+On the last: Thank You currently says "Please take your bottle" while ₱15 in
+coins sits in the tray unmentioned. Add it, and make it **the more prominent of
+the two**. A forgotten bottle is the user's problem; forgotten coins become
+yours.
+
+### Two mockup issues · built as drawn, recommendation recorded
+
+- DISPENSING shows SELECTED VOLUME and TARGET as separate boxes holding the same
+  number. Redundant.
+- THANK YOU labels change as "BALANCE", but "balance" means unspent credit
+  mid-transaction. Two meanings, one word. Recommend "CHANGE DISPENSED" on that
+  screen only.
+
+---
+
 ## Still open
 
 Nothing is currently blocked on a decision. The remaining blockers are physical:

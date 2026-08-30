@@ -40,6 +40,13 @@ enum hmi_event_t : uint8_t {
   HMI_EVENT_SELECT_VOLUME,   // payload = target in mL
   HMI_EVENT_DISPENSE_AGAIN,
   HMI_EVENT_FINISH,          // finish and take the change
+  // The back arrow. Its meaning depends on the page it was pressed from, and
+  // the state machine decides: from AWAITING_BOTTLE it cancels the selection
+  // and returns to SELECTING with credit intact; from SELECTING it means
+  // "I'm done, give me my money" and routes to PAYING_CHANGE.
+  //
+  // It NEVER abandons credit. See decisions.md, "Back arrow".
+  HMI_EVENT_BACK,
   HMI_EVENT_NAV_HOME,
   HMI_EVENT_NAV_STATISTICS,
   HMI_EVENT_NAV_STATUS,

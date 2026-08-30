@@ -94,6 +94,12 @@ volume_t billing_round_down(volume_t measured_ml);
 // is what keeps a sensor reading out of the money path.
 void billing_settle_partial(volume_t delivered_ml);
 
+// Cancel a selection that never poured -- the back arrow from AWAITING_BOTTLE.
+//
+// Returns the whole selection price to credit. Nothing was dispensed, so no
+// rounding applies and the user loses nothing. See decisions.md, "Back arrow".
+void billing_cancel_selection();
+
 // Credit a completed pour toward the transaction totals.
 void billing_settle_complete(volume_t delivered_ml);
 

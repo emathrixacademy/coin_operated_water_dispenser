@@ -113,6 +113,47 @@ M-1 is the one to settle early: it is the only finding here that adds a part to
 the bill of materials, and the Statistics and Thank You screens cannot be built
 until it is answered.
 
+## W — EEPROM wear on the open-transaction record — RAISED, needs a ruling
+
+Surfaced while wiring M5 Part B. Not fixed, because the fix is a spec change.
+
+Case 12 requires that a power cut never costs the user their money, so the
+open-transaction record has to be written **after every coin** — otherwise a cut
+between the last coin and the selection loses it. Part B does that.
+
+The open-transaction region sits at one fixed address and is **not**
+wear-levelled, unlike the daily counters. The arithmetic:
+
+| Writes per transaction | Transactions to 100k | At 50/day | At 100/day |
+|---|---|---|---|
+| ~7 (3 coins + open + select + settle + close) | ~14,000 | ~9 months | ~4.5 months |
+| ~24 (₱20 in ₱1 coins, worst case) | ~4,000 | ~2.5 months | ~6 weeks |
+
+`EEPROM.update()` helps — unchanged bytes cost nothing — but `credit`,
+`inserted` and the CRC byte change on every single write, so those cells take
+the full count.
+
+**This is under a year on a machine expected to last years,** and when the cell
+fails it fails as a corrupt transaction record, which the CRC will catch and
+initialise — losing an in-flight transaction rather than reading garbage. Safe
+direction, but a machine that starts eating transactions after nine months is
+not acceptable.
+
+Three options, in my order of preference:
+
+1. **Wear-level the open-transaction region across a ring**, exactly as
+   `DAILY_RING_SLOTS` already does for the daily counters. 8 slots multiplies
+   life by 8 → 6 years at 50/day worst case. Costs ~200 bytes of EEPROM, which
+   the budget has. §7.1 and §7.2 would need amending.
+2. Write only on *material* change — first coin, selection, settle, close —
+   accepting that a cut between two coins loses the later ones. Cheaper, but it
+   weakens Case 12 and I would not choose it for a machine holding money.
+3. Accept the wear and schedule EEPROM replacement as service. Not really
+   viable: the EEPROM is inside the MCU.
+
+**Recommend option 1.** Flagged rather than built because it changes the
+persistence layout, which is a §7 spec decision.
+
 ## M3′ — Pin map and config completion
 
 Small, but everything downstream references it.
@@ -193,7 +234,8 @@ before reading the document that governs their layout means building them twice.
 | 6-3 | `hmi.*` transmit path: fixed `char[HMI_TX_BUFFER]`, three-`0xFF` terminator, integer-only amount formatting. No command is currently ever sent | 6-1, 6-2 | code | 4 h |
 | 6-4 | `hmi.*` incremental RX parse and touch-event decode. `hmi_event_available()` returns false forever today, so the machine can receive no input | 6-3 | code | 4 h |
 | 6-5 | Rate-limited refresh during a pour, `HMI_DISPENSE_REFRESH_MS`. Check the transmit-time budget if 9600 baud stands | 6-3, D-1 | code | 2 h |
-| 6-6 | Build `hmi/watervendo.HMI` — the Nextion project file does not exist. Home, Statistics, System Status, Coin Inventory, Admin, plus the transaction screens and fault states | 6-1 | code | 3 days |
+| 6-6a | Write `docs/hmi_spec.md` — all **fifteen** pages (the 8 drawn, plus PAUSED, ADMIN history, ADMIN change edit, 4 fault screens, clock-not-set). Every object: name, ID, type, x/y/w/h, font, colour, and the exact serial command. Whoever transcribes it must never make a design decision | 6-1 | code | 2 days |
+| 6-6b | **TRANSCRIPTION — belongs to a PERSON, not to the firmware.** Build `hmi/watervendo.HMI` in Nextion Editor from 6-6a and flash the panel. The `.HMI` is a proprietary binary and cannot be authored programmatically. Scheduled here so it appears in the plan rather than surfacing as a gap at integration | 6-6a | **human task** | 2–3 days |
 | 6-7 | Greyed-not-hidden volume options above available credit (§4.2) | 6-3, 6-6 | code | 2 h |
 | 6-8 | Fault display with §6.2 priority, and the visible grace countdown of §5.5 | 6-3, R-4 | code | 2 h |
 | 6-9 | Firmware/HMI version handshake so a mismatched pair is detected rather than misbehaving | 6-3, 6-6 | code | 2 h |

@@ -117,6 +117,20 @@ void billing_settle_partial(volume_t delivered_ml) {
   s_txn.target_ml = 0;
 }
 
+void billing_cancel_selection() {
+  // The user backed out of AWAITING_BOTTLE before a drop was poured.
+  //
+  // Deliberately expressed as settling a partial pour of ZERO rather than as
+  // its own arithmetic. round_down(0) is 0, so nothing is charged and the whole
+  // selection price returns to credit -- which is exactly the decided
+  // behaviour, "credit restored in full with no rounding applied".
+  //
+  // Routing it through the one settlement function means the refund path is the
+  // path that is already unit tested, instead of a second piece of money
+  // arithmetic that could drift away from it.
+  billing_settle_partial(0);
+}
+
 void billing_settle_complete(volume_t delivered_ml) {
   (void)delivered_ml;
   // The pour reached its target, so the price already deducted at selection
