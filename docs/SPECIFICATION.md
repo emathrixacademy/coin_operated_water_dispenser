@@ -125,7 +125,9 @@ ACCEPTING	confirm pressed	SELECTING
 SELECTING	target chosen	AWAITING_BOTTLE
 SELECTING	finish without pour	PAYING_CHANGE
 AWAITING_BOTTLE	bottle detected	DISPENSING
+AWAITING_BOTTLE	back pressed	SELECTING (selection cancelled, credit restored in full)
 AWAITING_BOTTLE	BOTTLE_WAIT_CANCEL_MS elapsed	PAYING_CHANGE (full credit)
+FAULT	admin gesture	ADMIN (arriving does NOT clear the fault)
 DISPENSING	target reached	SETTLING
 DISPENSING	bottle removed	PAUSED
 DISPENSING	no pulses for FLOW_STALL_TIMEOUT_MS	SETTLING (stall latched, see 5.2)

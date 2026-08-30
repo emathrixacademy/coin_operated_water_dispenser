@@ -242,6 +242,44 @@ static void test_unknown_coin_credits_the_minimum() {
   TEST_ASSERT_EQUAL_INT32(100, billing_inserted());
 }
 
+static void test_cancel_selection_refunds_in_full() {
+  // The back arrow from AWAITING_BOTTLE. Nothing poured, so the user must get
+  // the whole selection price back -- no rounding, no partial charge.
+  billing_add_coin(COIN_P20);
+  billing_select(500);
+  TEST_ASSERT_EQUAL_INT32(1500, billing_credit());
+
+  billing_cancel_selection();
+  TEST_ASSERT_EQUAL_INT32(2000, billing_credit());
+  TEST_ASSERT_EQUAL_INT32(2000, billing_inserted());
+  TEST_ASSERT_EQUAL_INT32(0, billing_total_dispensed());
+}
+
+static void test_cancel_selection_leaves_nothing_selectable_behind() {
+  // After a cancel the target must be cleared, or a later settle would price a
+  // selection the user already backed out of.
+  billing_add_coin(COIN_P20);
+  billing_select(2000);
+  billing_cancel_selection();
+
+  // Settling again must be a no-op rather than refunding a second time.
+  billing_settle_partial(0);
+  TEST_ASSERT_EQUAL_INT32(2000, billing_credit());
+}
+
+static void test_cancel_after_the_bottle_timeout_refunds_the_ceiling() {
+  // The AWAITING_BOTTLE timeout path: P20 in, 2000 mL chosen, user never
+  // brings a bottle. They must be owed the entire P20 back -- which is also
+  // why billing_worst_case_change() is the full ceiling.
+  billing_add_coin(COIN_P20);
+  billing_select(2000);
+  TEST_ASSERT_EQUAL_INT32(0, billing_credit());
+
+  billing_cancel_selection();
+  TEST_ASSERT_EQUAL_INT32(2000, billing_change_due());
+  TEST_ASSERT_TRUE(billing_change_due() <= billing_worst_case_change());
+}
+
 static void test_reset_clears_everything() {
   billing_add_coin(COIN_P20);
   billing_select(500);
@@ -301,6 +339,9 @@ int main(int, char **) {
   RUN_TEST(test_worst_case_change);
   RUN_TEST(test_worst_case_change_covers_a_no_pour_refund);
   RUN_TEST(test_unknown_coin_credits_the_minimum);
+  RUN_TEST(test_cancel_selection_refunds_in_full);
+  RUN_TEST(test_cancel_selection_leaves_nothing_selectable_behind);
+  RUN_TEST(test_cancel_after_the_bottle_timeout_refunds_the_ceiling);
   RUN_TEST(test_reset_clears_everything);
   RUN_TEST(test_no_money_is_created_or_destroyed);
 
