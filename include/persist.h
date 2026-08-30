@@ -88,13 +88,45 @@ void persist_reconcile_unrouted_coin(coin_t coin);
 void persist_mark_coin_in_flight(coin_t coin);
 void persist_clear_coin_in_flight();
 
+// The in-flight coin recorded before the last diverter move, or COIN_NONE.
+// Read once on boot to drive the reconciliation above.
+coin_t persist_coin_in_flight();
+
+// --- Persistent faults --------------------------------------------------
+//
+// SPEC 6.1 and 7.1. A bitmask, one bit per fault_t, holding only the faults
+// classified persistent by faults_is_persistent().
+//
+// A persistent fault that clears on power cycle is worse than not claiming
+// persistence at all: the operator learns that the fix is a reboot, the coins
+// stay jammed, and the machine returns to accepting money it cannot pay out.
+//
+// Owned by faults.cpp. Nothing else may write these.
+uint8_t persist_fault_flags();
+void    persist_fault_flags_set(uint8_t flags);
+
 // --- Daily totals -------------------------------------------------------
 
 money_t  persist_daily_profit();
 volume_t persist_daily_volume();
 uint16_t persist_daily_transactions();
 void     persist_daily_add(money_t profit, volume_t volume);
-void     persist_daily_reset();
+
+// Close out the day at the midnight boundary. Writes the closing totals to the
+// history ring BEFORE zeroing them.
+//
+// The write-then-zero order is not a detail. The daily total is what the owner
+// counts cash against, and once it is zeroed nothing anywhere remembers what it
+// was -- a rollover that zeroed first would lose the whole day on a power cut
+// in between. Both this and the Admin reset go through one internal choke point
+// so neither can grow a path that skips the write.
+//
+// Called by the state machine when rtc_day_rolled() reports a boundary.
+void persist_daily_rollover(uint32_t timestamp);
+
+// Admin "reset daily totals". Same write-then-zero guarantee, tagged
+// distinctly so a technician can tell a hand-ended day from a midnight one.
+void persist_daily_reset(uint32_t timestamp);
 
 // --- History ------------------------------------------------------------
 

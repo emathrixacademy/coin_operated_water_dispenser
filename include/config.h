@@ -26,9 +26,12 @@
 //
 // Every coin this machine handles is a whole peso and the smallest sellable
 // volume is 100 mL = P1, so in practice no arithmetic here produces a value
-// that is not a multiple of 100 centavos. The centavo resolution exists so the
-// display can format exactly and so a future price change does not require
-// retyping the arithmetic.
+// that is not a multiple of 100 centavos.
+//
+// KEEP THE CENTAVO RESOLUTION ANYWAY. It costs nothing today and it is what
+// makes a future P0.50 price point or a promo rate a change to a constant
+// rather than a refactor of every money path in the firmware. Do not "simplify"
+// this to whole pesos.
 //
 // int32_t rather than int16_t for the daily totals: a busy day at P20 a
 // transaction overflows 16 bits of centavos in about 33 transactions.
@@ -111,6 +114,22 @@ typedef int32_t volume_t;   // millilitres
 #define PIN_HOPPER_P1_COUNT 27  // Falling edge, polled. Confirms a coin left
 #define PIN_HOPPER_P5_COUNT 28  // Falling edge, polled. Confirms a coin left
 #define PIN_CHAMBER_FULL    29  // IR break-beam at fill line. LOW = beam broken = full
+#define PIN_CONFIRM_BTN     40  // LOW = pressed. Advances ACCEPTING -> SELECTING
+
+// ---------------------------------------------------------------------------
+// Pin map -- I2C, real-time clock
+// ---------------------------------------------------------------------------
+//
+// DS3231 on the Mega's hardware I2C. These pins are fixed by the chip, not
+// chosen -- they are listed here so the map is complete and so nothing else
+// claims them.
+//
+// D20/D21 have no other use in this build.
+
+#define PIN_I2C_SDA 20
+#define PIN_I2C_SCL 21
+
+#define RTC_I2C_ADDR 0x68
 
 // ---------------------------------------------------------------------------
 // Pin map -- digital outputs
@@ -121,11 +140,24 @@ typedef int32_t volume_t;   // millilitres
 
 #define PIN_COIN_INHIBIT  30  // HIGH = acceptor inhibited
 #define PIN_VALVE         31  // Relay, active LOW
-#define PIN_PUMP          32  // Relay, active LOW
+#define PIN_PUMP          32  // DC SSR, active LOW
 #define PIN_HOPPER_P1_RUN 33  // Relay, active LOW
 #define PIN_HOPPER_P5_RUN 34  // Relay, active LOW
 #define PIN_BUZZER        35  // Active HIGH
+#define PIN_COMPRESSOR    36  // AC SSR, active LOW
+#define PIN_LED_LOW       37  // Active HIGH
+#define PIN_LED_MID       38  // Active HIGH
+#define PIN_LED_HIGH      39  // Active HIGH
 
+// The pump and compressor are SOLID STATE, not mechanical -- SPEC 1.5.
+//
+// Contact arcing on a mechanical relay couples into the high-impedance pulse
+// input on D2 and reads as phantom coin pulses: free water for the user and
+// inventory drift for the operator, visible only under load and miserable to
+// diagnose afterwards. Do not substitute a mechanical relay back in.
+//
+// Both SSR modules are active-LOW like the relay board, so RELAY_ON/OFF drive
+// them unchanged.
 #define RELAY_ON  LOW
 #define RELAY_OFF HIGH
 
@@ -153,7 +185,16 @@ typedef int32_t volume_t;   // millilitres
 // ---------------------------------------------------------------------------
 
 #define HMI_SERIAL      Serial2  // D16 TX2 / D17 RX2
-#define HMI_BAUD        115200
+
+// SPEC 1.4. The panel and the firmware must agree or the display does not
+// respond at all. If a panel is found already flashed at another rate, change
+// the PANEL -- or change config.h, SPECIFICATION.md and wiring.md together.
+//
+// Budget note for M6: a pour refresh every HMI_DISPENSE_REFRESH_MS sends on the
+// order of 60 characters, which is ~62 ms of transmit time at this rate against
+// a 250 ms budget. Workable, with little headroom for adding fields.
+#define HMI_BAUD        9600
+
 #define DEBUG_BAUD      115200
 
 // ---------------------------------------------------------------------------
@@ -180,11 +221,22 @@ typedef int32_t volume_t;   // millilitres
 // human can insert two coins.
 #define COIN_PULSE_GAP_MS 200
 
-// Sanity ceiling on a pulse train. More pulses than this in one burst is noise
-// on the line -- motor noise from the pump or a hopper coupling into D2 -- not a
-// coin. Discard the train rather than crediting a denomination that does not
-// exist.
+// Sanity ceiling on a pulse train. A P20 at 4 pulses is the longest legitimate
+// train, so more than this in one burst is noise on the line -- motor noise from
+// the pump or a hopper coupling into D2 -- or a stuck acceptor output. Discard
+// the train rather than crediting a denomination that does not exist.
 #define COIN_PULSE_MAX 8
+
+// ...but do not discard forever. A stuck acceptor output line that silently
+// swallows every coin is indistinguishable from a dead acceptor from the user's
+// side: they put money in and nothing happens, with no fault shown and no way
+// to know the machine will never respond.
+//
+// After this many CONSECUTIVE over-max trains, raise FAULT_ACCEPTOR and show a
+// service message. The counter resets on any train that resolves to a real
+// denomination, so ordinary intermittent noise never trips it -- it takes a
+// genuinely stuck line or a persistently noisy one.
+#define COIN_OVERMAX_FAULT_MAX 5
 
 // ---------------------------------------------------------------------------
 // Hopper timing
@@ -203,11 +255,16 @@ typedef int32_t volume_t;   // millilitres
 // Never assume a payout succeeded.
 #define HOPPER_RETRY_MAX 3
 
-// Debounce on the outlet count pin. Coins leave at 5-10/sec, so a real coin
-// cannot arrive within 15 ms of the previous one. Anything faster is contact
-// bounce, and counting bounce as coins makes the machine believe it paid change
-// it did not pay.
-#define HOPPER_COUNT_DEBOUNCE_MS 15
+// Debounce on the outlet count pin -- SPEC 1.2.
+//
+// Coins leave at 5-10/sec, so the real interval between two coins is 100-200 ms.
+// 25 ms leaves a 4x margin against contact bounce while staying an order of
+// magnitude clear of a genuine coin.
+//
+// TAKE THE MARGIN. Counting a bounce as a coin records change that was never
+// paid AND corrupts the inventory in the same event -- the worst pair of
+// consequences available in this machine, and silent in both directions.
+#define HOPPER_COUNT_DEBOUNCE_MS 25
 
 // Settle time after the motor stops before the count is declared final. A coin
 // already in the outlet throat when the motor cut still needs to fall past the
@@ -224,13 +281,35 @@ typedef int32_t volume_t;   // millilitres
 #define HOPPER_LOW_P1 25
 #define HOPPER_LOW_P5 5
 
-// Coins loaded into each hopper at commissioning. Count them physically and set
-// the Admin inventory to match -- see docs/calibration.md.
-#define HOPPER_START_FLOAT 100
+// (HOPPER_START_FLOAT was removed. Loading the change float is an operator
+// action confirmed in Admin against a physical count -- see SPEC 8 -- not a
+// firmware constant. A default here would only ever be wrong, and wrong in the
+// direction of claiming change the machine does not hold.)
 
 // Physical capacity, used to bound the Admin inventory edit so a typo cannot
 // claim the machine holds more change than the hopper can physically contain.
 #define HOPPER_CAPACITY 500
+
+// The profit chamber is NOT a hopper and holds far more than one. Clamping it
+// at HOPPER_CAPACITY silently stopped the chamber count rising past 500, which
+// would understate a full day's take. Separate ceiling, generous, because its
+// only job is to stop a corrupt value being believed.
+#define PROFIT_CHAMBER_CAPACITY 2000
+
+// ---------------------------------------------------------------------------
+// Change payout strategy
+// ---------------------------------------------------------------------------
+//
+// SPEC 3.4: largest-coin-first with a hard P5 reserve.
+//
+// P5 is the scarce coin. It arrives slowly and leaves fast in a machine where
+// P15 change is a common outcome; P1 recirculates heavily and absorbs the
+// pressure. Below this reserve, P5 payouts stop and change is made entirely in
+// P1 so the P5 hopper is never drained to empty by a run of large transactions.
+//
+// Lowering this trades service uptime for change quality -- more P1-heavy
+// payouts. Raising it locks the machine on LOW CHANGE more often.
+#define HOPPER_RESERVE_P5 10
 
 // ---------------------------------------------------------------------------
 // Bottle and dispense timing
@@ -251,19 +330,34 @@ typedef int32_t volume_t;   // millilitres
 // and any change due is paid on confirm.
 #define BOTTLE_REMOVED_GRACE_MS 10000
 
-// Bottle proximity debounce. A momentary flicker -- a hand passing the sensor,
-// or splash-back off the bottle neck -- must not trigger the removed-bottle
-// pause and interrupt a good pour. 50 ms is well above sensor flicker and well
-// below the time it physically takes to lift a bottle out.
-#define BOTTLE_DEBOUNCE_MS 50
+// Bottle proximity debounce -- SPEC 1.2.
+//
+// A momentary flicker -- a hand passing the sensor, or splash-back off the
+// bottle neck -- must not trigger the removed-bottle pause and interrupt a good
+// pour. 80 ms is well above sensor flicker and well below the time it
+// physically takes to lift a bottle out.
+//
+// Short, because the removal grace period depends on prompt detection. This is
+// the one debounce on the machine that is deliberately NOT generous.
+#define BOTTLE_DEBOUNCE_MS 80
+
+// Confirm button debounce -- SPEC 1.2. An ordinary momentary pushbutton.
+#define CONFIRM_DEBOUNCE_MS 50
 
 // ---------------------------------------------------------------------------
 // Flow
 // ---------------------------------------------------------------------------
 
-// MEASURED PER UNIT WITH A GRADUATED CYLINDER. Do not take this from the
-// datasheet -- see docs/calibration.md. Sensors of this class carry 2-5%
-// tolerance and the effective figure shifts with the plumbing it sits in.
+// MEASURED PER UNIT WITH A GRADUATED CYLINDER, AT THE ACTUAL DISPENSING FLOW
+// RATE. Do not take this from the datasheet -- see docs/calibration.md.
+//
+// The 450 figure below is the YF-S201 datasheet number and it is NOT a
+// constant: that sensor's pulses-per-litre shifts 5-8% between low and high
+// flow. This machine runs one flow rate through one valve on a gravity-and-pump
+// fed line, so a single figure is valid here -- but only if it was measured at
+// that rate. Calibrating by dumping water through the sensor fast produces a
+// number wrong by more than the 2-5% tolerance the calibration exists to
+// control.
 //
 // Expressed as an exact integer ratio rather than a decimal, because there is
 // no floating point in the volume path and the true figure (around 2.22 mL per
@@ -302,10 +396,22 @@ typedef int32_t volume_t;   // millilitres
 // Water level
 // ---------------------------------------------------------------------------
 
-// Float debounce. Water sloshes, especially while a pour is running or the pump
-// is filling. Without this the pump chatters at the threshold, which is hard on
-// the relay and the pump both.
+// Float debounce -- SPEC 1.2. Water sloshes, especially while a pour is running
+// or the pump is filling. Without this the pump chatters at the threshold,
+// which is hard on the switching device and the pump both.
 #define FLOAT_DEBOUNCE_MS 250
+
+// The gallon bay float is debounced HARDER than the cold tank floats.
+//
+// It is a safety interlock rather than pump control, and the cost of the two
+// error directions is not symmetric: a spurious "empty" costs an unnecessary
+// lockout, while a spurious "not empty" runs the pump dry and destroys it. The
+// bay is also refilled by hand, which sloshes far more than the tank ever does.
+#define FLOAT_GALLON_DEBOUNCE_MS 500
+
+// Profit chamber IR beam debounce -- SPEC 1.2. Coins tumbling past the beam
+// break it momentarily; only a stack that sits at the fill line is "full".
+#define CHAMBER_DEBOUNCE_MS 500
 
 // Minimum time the pump stays off after stopping, before it may start again.
 // Back-to-back starts on a diaphragm pump shorten its life; this enforces a
@@ -324,7 +430,84 @@ typedef int32_t volume_t;   // millilitres
 // Status screen only. NEVER gates billing or dispensing -- a failed temperature
 // probe must not be able to stop the machine selling water.
 #define TEMP_READ_INTERVAL_MS 5000
-#define TEMP_INVALID_C -127  // DS18B20 disconnected sentinel
+
+// Temperature is carried in TENTHS of a degree Celsius as an integer.
+//
+// The client mockup's System Status screen shows "4.8 degC", so whole degrees
+// cannot render it. Tenths in an int16_t keeps one decimal place with no
+// floating point anywhere -- the display path formats it as value/10 and
+// value%10, the same integer trick used for pesos and centavos.
+//
+// The DS18B20's native resolution is 1/128 degC, so tenths costs no accuracy.
+#define TEMP_INVALID_TENTHS -1270  // disconnected sentinel, was -127 degC
+#define TEMP_INVALID_C -127        // whole-degree sentinel, kept for callers
+
+// A DS18B20 conversion takes up to 750 ms at 12-bit resolution. The read is
+// asynchronous -- request, then collect on a later pass. NEVER block waiting.
+#define TEMP_CONVERSION_MS 800
+
+// ---------------------------------------------------------------------------
+// Cooling -- SPEC 5.4
+// ---------------------------------------------------------------------------
+//
+// Thermostat with hysteresis on the DS18B20 reading. Compressor ON above the
+// upper setpoint, OFF below the lower.
+//
+// STARTING VALUES. Measure against the actual tank and compressor at
+// commissioning -- see docs/calibration.md. A band this wide is deliberate: a
+// narrow band short-cycles the compressor, and short-cycling is how they die.
+#define COOL_SETPOINT_ON_C  12  // at or above this, start cooling
+#define COOL_SETPOINT_OFF_C  8  // at or below this, stop
+
+// Minimum time the compressor stays off before it may restart.
+//
+// Restarting a compressor against residual head pressure stalls the motor: it
+// draws locked-rotor current until the thermal overload trips. Three minutes is
+// the usual figure for the small compressors these dispensers use. DO NOT
+// SHORTEN THIS to make the water cold faster.
+#define COMPRESSOR_MIN_OFF_MS 180000  // 3 minutes
+
+// Absolute ceiling on a single compressor run. Past this it is not keeping up:
+// low charge, a failed fan, or a probe reading the wrong place. Stop and report
+// rather than running it to destruction.
+#define COMPRESSOR_MAX_RUN_MS 1800000  // 30 minutes
+
+// ---------------------------------------------------------------------------
+// Real-time clock
+// ---------------------------------------------------------------------------
+//
+// DS3231, temperature-compensated, battery-backed. NOT a DS1307 and NOT the
+// Mega's own millis() timekeeping.
+//
+// The daily profit total is a number the owner counts money against. A "daily"
+// total that silently means "since the last power cut" is worse than no total
+// at all, because the operator cannot tell which one they are reading and will
+// trust it either way. That is what the battery is for.
+//
+// The DS3231 is temperature-compensated and holds a couple of minutes a YEAR;
+// a DS1307 drifts that much in a MONTH inside a cabinet that runs a compressor.
+// Check the module is not a DS3231M -- the M part is a lower-grade oscillator
+// sold in the same footprint and is much worse.
+
+// An implausible reading is treated as a FAILED CLOCK, never trusted.
+//
+// The lower bound is the year this firmware was written: the clock cannot
+// legitimately read earlier than the code that reads it. A dead battery, a
+// corrupt I2C read or a knockoff part all land outside this window, and the
+// machine shows a clock-not-set state rather than stamping a receipt with a
+// date that is confidently wrong.
+#define RTC_MIN_YEAR 2026
+#define RTC_MAX_YEAR 2099
+
+// Poll interval. The clock is read for display and for the midnight rollover;
+// neither needs sub-second accuracy, and I2C traffic in the main loop costs
+// time that the coin path needs.
+#define RTC_READ_INTERVAL_MS 1000
+
+// Timestamp meaning "no valid time". Written into history entries recorded
+// while the clock is failed, so a later reader can tell an unknown time from a
+// real one instead of seeing a plausible-looking 1970.
+#define RTC_TIMESTAMP_INVALID 0UL
 
 // ---------------------------------------------------------------------------
 // HMI
@@ -365,7 +548,19 @@ typedef int32_t volume_t;   // millilitres
 #define EEPROM_LAYOUT_VERSION 1
 
 #define EEPROM_ADDR_HEADER     0    // magic, version, checksum
+#define EEPROM_ADDR_COIN_INFLIGHT 8 // coin credited but not yet confirmed routed
 #define EEPROM_ADDR_INVENTORY  16   // hopper counts, chamber count
+
+// Persistent fault flags -- SPEC 6.1 and 7.1.
+//
+// A persistent fault that clears on power cycle is worse than not claiming
+// persistence at all: the operator learns that the fix is a reboot, the coins
+// stay jammed, and the machine returns to accepting money it cannot pay out.
+//
+// Sits in the gap between the inventory record and the open transaction. The
+// static_asserts in persist.cpp enforce that it fits.
+#define EEPROM_ADDR_FAULTS     32
+
 #define EEPROM_ADDR_OPEN_TXN   48   // interrupted transaction, restored on boot
 #define EEPROM_ADDR_DAILY_RING 96   // wear-levelled daily counters
 #define EEPROM_ADDR_HISTORY    256  // transaction history ring buffer

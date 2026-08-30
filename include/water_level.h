@@ -19,6 +19,13 @@
 
 #include "types.h"
 
+// Cold tank level for the System Status screen and the three level LEDs.
+enum water_level_t : uint8_t {
+  WATER_LEVEL_LOW = 0,   // below the mid float
+  WATER_LEVEL_MID,       // at or above mid, not yet at high
+  WATER_LEVEL_HIGH       // at the high float -- tank full
+};
+
 void water_level_begin();
 void water_level_update();
 
@@ -26,6 +33,9 @@ void water_level_update();
 bool water_tank_below_mid();
 bool water_tank_at_high();
 bool water_gallon_empty();
+
+// Cold tank level as a single value, for the status screen.
+water_level_t water_tank_level();
 
 // True when the gallon bay is empty. The machine locks with OUT OF WATER and
 // the acceptor is disabled -- it cannot guarantee it can serve the next user.
@@ -38,11 +48,19 @@ bool water_pump_running();
 // failed float. All three destroy it. Raises FAULT_PUMP_RUNTIME.
 bool water_pump_overrun();
 
-// Cold tank temperature in whole degrees Celsius, for the Status screen only.
-// Returns TEMP_INVALID_C if the probe is disconnected or has not read yet.
+// Cold tank temperature in TENTHS of a degree Celsius, for the Status screen
+// only. 48 means 4.8 degC. Returns TEMP_INVALID_TENTHS if the probe is
+// disconnected or has not completed its first conversion.
+//
+// Tenths because the client mockup shows one decimal place. Integer only --
+// the display formats it as value/10 and value%10, with no float in the path.
 //
 // NEVER gates billing or dispensing. A failed temperature probe must not be
 // able to stop the machine selling water.
+int16_t water_temperature_tenths_c();
+
+// Whole degrees, for callers that do not want the decimal. Returns
+// TEMP_INVALID_C when the probe has no reading.
 int8_t water_temperature_c();
 
 bool water_cooling_active();
