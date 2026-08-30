@@ -24,31 +24,49 @@ bool coin_acceptor_available();
 // Returns the resolved denomination and clears the pending flag. Returns
 // COIN_NONE if nothing is pending.
 //
-// COIN_INVALID is returned for a pulse train that matched no denomination -- a
-// slug, a foreign coin, or noise. The caller credits nothing. Motor noise from
-// the pump or a hopper coupling into D2 shows up here, which is why trains
-// longer than COIN_PULSE_MAX are discarded rather than credited.
+// COIN_UNKNOWN is returned for a pulse train that is inside COIN_PULSE_MAX but
+// matched no denomination. SPEC 3.1: that is still a real coin, so the caller
+// credits it at the MINIMUM denomination and the diverter routes it to profit.
+// Crediting nothing would take the user's money.
+//
+// COIN_INVALID is never returned by this path -- it means "not a coin".
+//
+// Motor noise from the pump or a hopper coupling into D2 shows up as an
+// over-length train, which is why trains longer than COIN_PULSE_MAX are
+// discarded rather than credited, and why a run of them raises FAULT_ACCEPTOR.
 coin_t coin_acceptor_take_coin();
 
-// Inhibit control. Asserted during COIN_LOCKOUT_MS while the diverter travels,
-// and asserted FIRST in every fault lockout -- never accept money the machine
-// cannot honour.
+// --- Inhibit ------------------------------------------------------------
 //
-// Inhibits nest by intent, not by count: a lockout asserted while the per-coin
-// window is open stays asserted when that window expires. Releasing the coin
-// window does not release a fault inhibit.
+// There are TWO INDEPENDENT inhibit sources and the physical line is asserted
+// if either is set. They are tracked separately, not counted, so releasing one
+// can never release the other. Releasing the diverter window while a fault is
+// active must not re-enable the acceptor.
+//
+// Fault inhibit -- asserted FIRST in every lockout, before the screen changes.
+// Never accept money the machine cannot honour.
 void coin_acceptor_inhibit();
 void coin_acceptor_uninhibit();
+
+// Diverter window inhibit -- asserted for COIN_LOCKOUT_MS while the servo
+// travels. Owned by coin_diverter; nothing else may call these.
+void coin_acceptor_window_inhibit();
+void coin_acceptor_window_release();
+
 bool coin_acceptor_is_inhibited();
 
-// Value of a denomination in centavos. COIN_NONE and COIN_INVALID are worth 0.
-money_t coin_value(coin_t coin);
+// Consecutive over-COIN_PULSE_MAX trains seen. Resets on any train that
+// resolves to a real denomination.
+//
+// A stuck acceptor output that silently swallows coins looks exactly like a
+// dead acceptor from the user's side, so this is not discarded quietly forever:
+// at COIN_OVERMAX_FAULT_MAX the caller raises FAULT_ACCEPTOR and the machine
+// shows a service message instead of eating money in silence.
+uint8_t coin_acceptor_overmax_streak();
 
-#ifdef DEBUG
-// Count of pulse trains discarded as invalid since boot. A number that climbs
-// while the pump runs means noise on D2 -- check the star ground before
-// suspecting the acceptor.
-uint16_t coin_acceptor_invalid_count();
-#endif
+// Count of pulse trains discarded since boot -- over-max plus unrecognised.
+// A number that climbs while the pump or a hopper runs means noise on D2;
+// check the star ground before suspecting the acceptor.
+uint16_t coin_acceptor_discarded_count();
 
 #endif  // COIN_ACCEPTOR_H

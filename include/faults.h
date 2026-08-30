@@ -38,7 +38,28 @@ bool faults_is_locked();
 
 // Raise a fault that a module detected -- a jam, a stall, a pump overrun. The
 // acceptor is inhibited inside this call, before it returns.
+//
+// Do NOT call this while money is owed to a user standing at the machine. Use
+// faults_latch() -- see SPEC 9 invariant 8.
 void faults_raise(fault_t fault);
+
+// --- Deferred locking: SPEC 9 invariant 8 ------------------------------
+//
+// A fault may never be raised while money is owed to a user who is still
+// standing there. Settle first, lock second. Stranding a user's coins inside a
+// locked machine is worse than whatever the fault was protecting against, and
+// it is the failure they will remember.
+//
+// latch() records the fault without locking, so the transaction can finish and
+// the change can be paid. release_latched() then raises everything held, and is
+// called by the state machine once the change has physically been counted out.
+//
+// CHANGE JAM is the exception and is raised immediately even if latched: the
+// machine has already demonstrated it cannot pay, so there is no payout left to
+// protect and deferring the lock would only let it take more money.
+void faults_latch(fault_t fault);
+bool faults_has_latched();
+void faults_release_latched();
 
 // Clear a serviceable fault. Conditions that auto-clear -- water, storage --
 // are re-evaluated in update() and do not need this.

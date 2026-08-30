@@ -14,6 +14,7 @@
 #include "persist.h"
 #include "hmi.h"
 #include "faults.h"
+#include "rtc.h"
 
 // Single non-blocking state machine.
 // Project EMX-2026-WATERVENDO-01, eMathrix Technologies.
@@ -39,12 +40,23 @@ void setup() {
   Serial.println(F("EMX-2026-WATERVENDO-01 boot [DEBUG BUILD - NOT FOR SERVICE]"));
 #endif
 
-  // persist first: the inventory and any open transaction are inputs to every
-  // decision the other modules make on boot.
+  // ---------------------------------------------------------------------
+  // Init order below is load-bearing. Do not alphabetise it.
+  //
+  //   1. persist   -- the inventory, any open transaction and the stored fault
+  //                   flags are inputs to every decision the others make.
+  //   2. acceptor  -- must own PIN_COIN_INHIBIT (pinMode OUTPUT, asserted)
+  //                   BEFORE anything can ask it to inhibit. It boots
+  //                   inhibited: taking a coin before the inventory has been
+  //                   validated is money the machine may not be able to honour.
+  //   3. faults    -- restores persistent faults from EEPROM and inhibits the
+  //                   acceptor if any are set, so it needs both of the above.
+  // ---------------------------------------------------------------------
   persist_begin();
-
-  faults_begin();
   coin_acceptor_begin();
+  faults_begin();
+
+  rtc_begin();
   coin_diverter_begin();
   coin_hopper_begin();
   flow_begin();
@@ -66,8 +78,22 @@ void setup() {
 }
 
 void loop() {
+#ifdef DEBUG
+  // Watchdog on the no-blocking-calls rule.
+  //
+  // Every module below is polled, and two of them -- the hopper outlet counter
+  // and the bottle sensor -- depend on being polled faster than their debounce
+  // window to work at all. A slow pass is not a performance nit here: it drops
+  // a counted coin, and a dropped count is a false jam under a paying user.
+  //
+  // DEBUG only. This costs a micros() pair and a comparison, and nothing that
+  // handles money runs with serial output enabled.
+  const uint32_t loop_start_us = micros();
+#endif
+
   // Every module, every pass, unconditionally.
   persist_update();
+  rtc_update();
   coin_acceptor_update();
   coin_diverter_update();
   coin_hopper_update();
@@ -83,16 +109,35 @@ void loop() {
     case STATE_BOOT:
     case STATE_STANDBY:
     case STATE_ACCEPTING:
-    case STATE_SELECT_VOLUME:
-    case STATE_WAIT_BOTTLE:
+    case STATE_SELECTING:
+    case STATE_AWAITING_BOTTLE:
     case STATE_DISPENSING:
-    case STATE_BOTTLE_REMOVED:
-    case STATE_POUR_COMPLETE:
+    case STATE_PAUSED:
+    case STATE_SETTLING:
+    case STATE_COMPLETE:
     case STATE_PAYING_CHANGE:
     case STATE_THANK_YOU:
-    case STATE_LOCKED:
+    case STATE_FAULT:
     case STATE_ADMIN:
     default:
       break;
   }
+
+#ifdef DEBUG
+  {
+    const uint32_t elapsed_us = micros() - loop_start_us;
+    if (elapsed_us > LOOP_WARN_US) {
+      // Rate-limited: a slow pass is usually slow for many passes in a row, and
+      // printing on every one of them would itself become the blocking call.
+      static uint32_t last_warn_ms = 0;
+      const uint32_t now = millis();
+      if ((uint32_t)(now - last_warn_ms) >= 1000) {
+        last_warn_ms = now;
+        Serial.print(F("[SLOW LOOP] "));
+        Serial.print(elapsed_us);
+        Serial.println(F(" us"));
+      }
+    }
+  }
+#endif
 }

@@ -19,7 +19,12 @@ void bottle_update();
 // Debounced state. Never returns the raw pin.
 bool bottle_present();
 
-// True for one update() cycle on each debounced edge.
+// One-shot edge flags. CONSUMED BY READING -- each returns true once per
+// debounced edge and clears itself.
+//
+// Consumed rather than "true for one update() cycle" so an edge cannot be
+// missed if update() happens to run twice before the state machine looks. A
+// missed removal edge leaves the valve open over an absent bottle.
 bool bottle_just_placed();
 bool bottle_just_removed();
 
