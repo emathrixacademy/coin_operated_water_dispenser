@@ -527,6 +527,89 @@ takes hold. A stall must never cost the user money.
 
 ---
 
+## Case 20 — A latched fault must actually lock the machine
+
+*Adopted. Added because a safety mechanism that is only correct when someone
+remembers to call it is decorative.*
+
+**Why this case exists.** Invariant 8 says a fault is never raised while money is owed
+to a user standing at the machine: the fault is *latched*, the transaction settles, the
+change is paid, and only then does the machine lock. That deferral is implemented as
+`faults_latch()` plus a `faults_release_latched()` that the state machine must call.
+
+Anything that *must be called* is something that will eventually not be called. If the
+release is missed on some path — an abandoned transaction, a timeout cancel, an idle
+machine, a path added in six months by someone who has not read this document — then a
+jammed hopper or a stalled pour latches a fault that never fires. The machine looks
+healthy, keeps taking coins, and the safety mechanism is worse than absent because
+everyone believes it is there.
+
+**Trigger.** Any latchable fault raised while a transaction is in progress. Use
+`FAULT_PUMP_RUNTIME` — it is the easiest to induce without breaking anything, by
+disconnecting the cold tank high float so the pump runs past `PUMP_MAX_RUN_MS`.
+
+**Expected behaviour.**
+
+1. The fault latches. The machine does **not** lock. The user in front of it keeps
+   their screen, finishes their pour, and is paid their change in full.
+2. The moment the payout completes and nothing is owed, the machine locks and shows the
+   fault.
+3. The acceptor is inhibited before the screen changes, as in every lockout.
+
+**Hand verification — walk every one of these.** Each is a separate path to the release,
+and the point of the case is that *none* of them may leak:
+
+| Path | Latch during | Expect |
+|---|---|---|
+| a | A normal transaction that completes and pays change | Locks after payout |
+| b | A transaction that ends with **zero change due** | Locks anyway — there is no payout to hang the release on, and this is the path most likely to be missed |
+| c | The bottle-wait timeout cancel of Case 7 | Locks after the full refund is paid |
+| d | An idle machine in STANDBY, no transaction at all | Locks immediately — nothing is owed, so there is nothing to defer for |
+| e | A transaction abandoned mid-selection, user walks away | Locks once the transaction is closed out |
+
+**Fails if:** the machine is still accepting coins one full transaction after the fault
+latched, on any of the five paths.
+
+**Regression guard.** Path (d) is the cheap one to check on every build: with no
+transaction in flight, latch and release must be indistinguishable from a direct raise.
+
+---
+
+## Case 21 — Clock failure and the day boundary
+
+*Adopted with the DS3231. The daily total is a number the owner counts cash against.*
+
+**21a — Dead or missing clock.** Remove the RTC's battery and power-cycle, or
+disconnect the module. Expect: the machine shows a clock-not-set state, keeps selling
+water normally, and writes history entries carrying the invalid-timestamp marker rather
+than a plausible-looking wrong date. **Fails if** any screen or history entry shows a
+confident date. Cooling, billing and dispensing must all be unaffected — a failed clock
+is not a reason to stop selling.
+
+**21b — Implausible date.** Set the RTC to a date outside 2026–2099, or to 31 February,
+via a direct I²C write. Expect the same clock-not-set state as 21a. The plausibility
+check is what stands between a dead battery and a receipt stamped with a wrong date.
+
+**21c — Midnight rollover.** Set the clock to 23:59:30 with non-zero daily totals and
+watch it cross midnight. Expect: the closing totals are written to the history ring
+**before** they are zeroed, tagged as a day close, and the Daily Statistics screen
+resets to zero with the new date.
+
+**21d — Power cut across the boundary.** Repeat 21c but cut power at 23:59:50 and
+restore at 00:00:30. Expect the previous day's totals to be recoverable from the
+history ring. **Fails if** the day is lost — that is the exact failure the
+write-then-zero ordering exists to prevent, and it is only observable here.
+
+**21e — Off over midnight.** Power down before midnight, power up well after. Expect
+**no** spurious day-close entry on boot: there is no open day in RAM to close, and
+writing one would fabricate a day that never ran.
+
+**21f — Setting the clock does not close a day.** Set the clock forward across a date
+boundary from Admin. Expect no day-close entry and no zeroed totals — an operator
+correcting the time must not silently destroy the figures they were reading.
+
+---
+
 ## Result log — Milestone 7 test pass
 
 Fill during the integration pass. A case is not passed until the hand-verification
@@ -550,6 +633,17 @@ steps have been walked physically, with real coins where the case requires them.
 | 14 | Coin during lockout window | Yes | | | | |
 | 15 | Gallon empty, tank full | No | | | | |
 | 19 | Flow stall, valve open | Yes | | | | |
+| 20a | Latched fault locks after a normal payout | Yes | | | | |
+| 20b | Latched fault locks when zero change is due | Yes | | | | |
+| 20c | Latched fault locks after a timeout cancel refund | Yes | | | | |
+| 20d | Latched fault locks immediately when idle | No | | | | |
+| 20e | Latched fault locks after an abandoned transaction | Yes | | | | |
+| 21a | Dead / missing clock | No | | | | |
+| 21b | Implausible date rejected | No | | | | |
+| 21c | Midnight rollover writes before zeroing | No | | | | |
+| 21d | Power cut across midnight, day recoverable | No | | | | |
+| 21e | Off over midnight, no spurious day close | No | | | | |
+| 21f | Admin clock set does not close a day | No | | | | |
 
 Coin series coverage for the coin path cases — tick each when tested:
 

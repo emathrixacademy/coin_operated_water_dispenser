@@ -22,6 +22,26 @@ cashier. Calibrating it well makes the pour accurate; it does not make it safe t
 from. Nothing in the firmware may compute an amount owed from a measured volume no
 matter how good this calibration is.
 
+### Calibrate at the actual dispensing flow rate
+
+**This is the step most likely to be got wrong, and getting it wrong produces a number
+that is off by more than the tolerance the calibration exists to control.**
+
+The sensor's pulses-per-litre is not a constant. On the YF-S201 class of sensor the
+ratio shifts by roughly **5–8 % between low and high flow**. A calibration run done by
+opening a tap wide and dumping water through the sensor fast measures the sensor at a
+flow rate the machine will never actually use, and yields a figure that is wrong in
+service by more than the 2–5 % tolerance being corrected for.
+
+This machine is a favourable case: one flow rate, through one valve, on a
+gravity-and-pump-fed line. A single figure is genuinely valid here — but only if it was
+measured at that rate.
+
+So: **calibrate through the machine's own solenoid valve, under the machine's own head,
+with the pump in its normal state.** Do not calibrate on the bench with a hose. Do not
+open a bypass. If the plumbing changes in service — a different valve, a re-routed line,
+a change in tank height — the calibration is void and must be redone.
+
 ### What you are measuring
 
 `ML_PER_PULSE` in `include/config.h` — millilitres of water per flow sensor pulse,
@@ -46,6 +66,9 @@ You need a 2000 mL graduated cylinder, a debug build, and a full cold tank.
 5. Command a pour of a known large pulse count — use the calibration routine in the
    debug build rather than a timed valve opening. A large count reduces the effect of
    the one-pulse quantisation error at the start and end of the pour.
+
+   The routine drives the machine's own valve at the normal dispensing rate. That is
+   the point of using it rather than a hose — see the flow rate warning above.
 6. Read the cylinder at eye level, at the bottom of the meniscus.
 7. `ML_PER_PULSE = millilitres measured / pulses counted`.
 8. **Repeat five times.** Discard any run that differs from the others by more than
@@ -80,7 +103,9 @@ drift the whole architecture exists to prevent.
 | 4 | | | |
 | 5 | | | |
 
-Value committed to `config.h`: ______________
+Measured through the machine's own valve at the normal dispensing rate: ☐ confirmed
+
+`FLOW_PULSES_PER_LITRE` committed to `config.h`: ______________
 Calibrated by: ______________ Date: ______________
 
 ---
