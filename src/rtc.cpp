@@ -124,6 +124,21 @@ static void read_clock() {
 
 void rtc_begin() {
   Wire.begin();
+
+  // ---------------------------------------------------------------------
+  // BOUND THE BUS BEFORE THE FIRST TRANSFER.
+  //
+  // Wire spins on the TWI flag with no timeout by default, and rtc_update()
+  // runs in loop(). A DS3231 that fails with SDA held low would otherwise stop
+  // the entire machine -- no coin pulses, no flow counting, no hopper polling
+  // -- with a user's money inside it. This one line is what makes the clock a
+  // component that can fail rather than a component that can kill the machine.
+  //
+  // The `true` resets the TWI hardware on expiry. Without it the peripheral
+  // stays wedged and a momentary glitch becomes a permanently dead clock.
+  // ---------------------------------------------------------------------
+  Wire.setWireTimeout(RTC_I2C_TIMEOUT_US, true);
+
   s_ok = false;
   s_day = 0;
   s_day_rolled = false;
