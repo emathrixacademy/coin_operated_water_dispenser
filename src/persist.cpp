@@ -17,6 +17,19 @@ struct inflight_t {
   uint8_t coin;     // coin_t; COIN_NONE when nothing is in flight
 };
 
+// Ring slots. `seq` is a monotonic write counter: the newest valid slot wins on
+// boot, and the counter itself is the honest wear figure for a technician --
+// "this unit has done N writes" rather than "it is somewhere in a ring".
+struct txn_slot_t {
+  uint32_t seq;
+  transaction_t txn;
+};
+
+struct inflight_slot_t {
+  uint32_t seq;
+  inflight_t f;
+};
+
 struct daily_t {
   uint32_t seq;     // newest valid slot wins on boot
   money_t  profit;
@@ -42,26 +55,29 @@ struct fault_flags_t {
 // overwriting the region after it. Silent overlap here corrupts the coin
 // inventory, which is money.
 
-#define SLOT_DAILY_SIZE (RECORD_OVERHEAD + (int)sizeof(daily_t))
-#define SLOT_HIST_SIZE  (RECORD_OVERHEAD + (int)sizeof(hist_slot_t))
+#define SLOT_DAILY_SIZE    (RECORD_OVERHEAD + (int)sizeof(daily_t))
+#define SLOT_HIST_SIZE     (RECORD_OVERHEAD + (int)sizeof(hist_slot_t))
+#define SLOT_TXN_SIZE      (RECORD_OVERHEAD + (int)sizeof(txn_slot_t))
+#define SLOT_INFLIGHT_SIZE (RECORD_OVERHEAD + (int)sizeof(inflight_slot_t))
 
-static_assert(EEPROM_ADDR_COIN_INFLIGHT + RECORD_OVERHEAD + (int)sizeof(inflight_t)
-                  <= EEPROM_ADDR_INVENTORY,
-              "in-flight record overruns the inventory region");
 static_assert(EEPROM_ADDR_INVENTORY + RECORD_OVERHEAD + (int)sizeof(inventory_t)
                   <= EEPROM_ADDR_FAULTS,
               "inventory record overruns the fault-flags region");
 static_assert(EEPROM_ADDR_FAULTS + RECORD_OVERHEAD + (int)sizeof(fault_flags_t)
-                  <= EEPROM_ADDR_OPEN_TXN,
-              "fault-flags record overruns the open-transaction region");
-static_assert(EEPROM_ADDR_OPEN_TXN + RECORD_OVERHEAD + (int)sizeof(transaction_t)
                   <= EEPROM_ADDR_DAILY_RING,
-              "open-transaction record overruns the daily ring");
+              "fault-flags record overruns the daily ring");
 static_assert(EEPROM_ADDR_DAILY_RING + (DAILY_RING_SLOTS * SLOT_DAILY_SIZE)
                   <= EEPROM_ADDR_HISTORY,
               "daily ring overruns the history region");
-static_assert(EEPROM_ADDR_HISTORY + (HISTORY_ENTRIES * SLOT_HIST_SIZE) <= 4096,
-              "history ring overruns the Mega's 4KB EEPROM");
+static_assert(EEPROM_ADDR_HISTORY + (HISTORY_ENTRIES * SLOT_HIST_SIZE)
+                  <= EEPROM_ADDR_OPEN_TXN_RING,
+              "history ring overruns the open-transaction ring");
+static_assert(EEPROM_ADDR_OPEN_TXN_RING + (TXN_RING_SLOTS * SLOT_TXN_SIZE)
+                  <= EEPROM_ADDR_INFLIGHT_RING,
+              "open-transaction ring overruns the in-flight ring");
+static_assert(EEPROM_ADDR_INFLIGHT_RING
+                  + (INFLIGHT_RING_SLOTS * SLOT_INFLIGHT_SIZE) <= 4096,
+              "in-flight ring overruns the Mega's 4KB EEPROM");
 
 // ---------------------------------------------------------------------------
 // Raw record access
@@ -96,6 +112,17 @@ static void record_save(int addr, const uint8_t *payload, uint8_t len) {
 
 static inventory_t s_inventory;
 static transaction_t s_open_txn;
+
+// Open-transaction ring position. s_txn_seq is the cumulative write count and
+// is what Admin reports as the wear figure.
+static uint32_t s_txn_seq = 0;
+static uint8_t s_txn_slot = 0;
+
+// In-flight coin ring, plus the RAM mirror of its current value.
+static uint32_t s_inflight_seq = 0;
+static uint8_t s_inflight_slot = 0;
+static coin_t s_inflight_coin = COIN_NONE;
+
 static daily_t s_daily;
 static uint8_t s_daily_slot = 0;
 static uint32_t s_hist_seq = 0;
@@ -137,11 +164,62 @@ void persist_begin() {
     s_initialised = true;
   }
 
-  // --- Open transaction -------------------------------------------------
-  if (!record_load(EEPROM_ADDR_OPEN_TXN, (uint8_t *)&s_open_txn, sizeof(s_open_txn))) {
-    memset(&s_open_txn, 0, sizeof(s_open_txn));
-    s_open_txn.open = false;
+  // --- Open transaction ring --------------------------------------------
+  //
+  // Scan every slot, take the valid one with the highest sequence number. A
+  // slot that fails its CRC is skipped rather than trusted, so one degraded
+  // cell costs at most the newest write and the previous one still restores.
+  memset(&s_open_txn, 0, sizeof(s_open_txn));
+  s_open_txn.open = false;
+  s_txn_seq = 0;
+  s_txn_slot = 0;
+  for (uint8_t i = 0; i < TXN_RING_SLOTS; i++) {
+    txn_slot_t slot;
+    if (!record_load(EEPROM_ADDR_OPEN_TXN_RING + ((int)i * SLOT_TXN_SIZE),
+                     (uint8_t *)&slot, sizeof(slot))) {
+      continue;
+    }
+    if (slot.seq > s_txn_seq) {
+      s_txn_seq = slot.seq;
+      s_txn_slot = i;
+      s_open_txn = slot.txn;
+    }
   }
+
+  // --- In-flight coin ring ----------------------------------------------
+  s_inflight_seq = 0;
+  s_inflight_slot = 0;
+  s_inflight_coin = COIN_NONE;
+  for (uint8_t i = 0; i < INFLIGHT_RING_SLOTS; i++) {
+    inflight_slot_t slot;
+    if (!record_load(EEPROM_ADDR_INFLIGHT_RING + ((int)i * SLOT_INFLIGHT_SIZE),
+                     (uint8_t *)&slot, sizeof(slot))) {
+      continue;
+    }
+    if (slot.seq > s_inflight_seq) {
+      s_inflight_seq = slot.seq;
+      s_inflight_slot = i;
+      s_inflight_coin = (slot.f.coin > (uint8_t)COIN_INVALID)
+                            ? COIN_NONE : (coin_t)slot.f.coin;
+    }
+  }
+
+#ifdef DEBUG
+  // Ring position at boot. First question when a unit misbehaves is how far
+  // through its rings it is, and this answers it before anyone opens a cabinet.
+  Serial.print(F("[eeprom] txn ring slot "));
+  Serial.print(s_txn_slot);
+  Serial.print(F("/"));
+  Serial.print((int)TXN_RING_SLOTS);
+  Serial.print(F(" writes="));
+  Serial.print(s_txn_seq);
+  Serial.print(F("  inflight slot "));
+  Serial.print(s_inflight_slot);
+  Serial.print(F("/"));
+  Serial.print((int)INFLIGHT_RING_SLOTS);
+  Serial.print(F(" writes="));
+  Serial.println(s_inflight_seq);
+#endif
 
   // --- Daily ring -------------------------------------------------------
   //
@@ -266,23 +344,68 @@ void persist_inventory_set(coin_dest_t dest, uint16_t count) {
   persist_history_add(&e);
 }
 
+// =========================================================================
+// The open-transaction ring.
+//
+// EVERY write to the open transaction goes through here, and every one of them
+// advances a slot. That is the whole mechanism: no cell is written twice in a
+// row, so the region's life is multiplied by TXN_RING_SLOTS.
+//
+// The per-coin write this makes affordable is DELIBERATE and is not to be
+// optimised away -- see docs/decisions.md. A power cut between the last coin
+// and the selection would otherwise take the user's money with no record of it,
+// and on Philippine mains in a school that is not a hypothetical.
+// =========================================================================
+static void txn_commit() {
+  s_txn_seq++;
+  s_txn_slot = (uint8_t)((s_txn_slot + 1) % TXN_RING_SLOTS);
+
+  txn_slot_t slot;
+  slot.seq = s_txn_seq;
+  slot.txn = s_open_txn;
+  record_save(EEPROM_ADDR_OPEN_TXN_RING + ((int)s_txn_slot * SLOT_TXN_SIZE),
+              (const uint8_t *)&slot, sizeof(slot));
+
+#ifdef DEBUG
+  // Slot advance. If a unit ever starts losing transactions, the first question
+  // is whether the ring wrapped or a CRC failed -- this answers it without
+  // instrumenting anything.
+  if (s_txn_slot == 0) {
+    Serial.print(F("[eeprom] txn ring wrapped, seq="));
+    Serial.println(s_txn_seq);
+  }
+#endif
+}
+
 void persist_txn_open(const transaction_t *txn) {
   if (!txn) return;
   s_open_txn = *txn;
   s_open_txn.open = true;
-  record_save(EEPROM_ADDR_OPEN_TXN, (const uint8_t *)&s_open_txn, sizeof(s_open_txn));
+  txn_commit();
 }
 
 void persist_txn_update(const transaction_t *txn) {
   if (!txn || !s_open_txn.open) return;
   s_open_txn = *txn;
   s_open_txn.open = true;
-  record_save(EEPROM_ADDR_OPEN_TXN, (const uint8_t *)&s_open_txn, sizeof(s_open_txn));
+  txn_commit();
 }
 
 void persist_txn_close() {
   s_open_txn.open = false;
-  record_save(EEPROM_ADDR_OPEN_TXN, (const uint8_t *)&s_open_txn, sizeof(s_open_txn));
+  txn_commit();
+}
+
+uint32_t persist_txn_ring_writes() {
+  return s_txn_seq;
+}
+
+uint8_t persist_txn_ring_slot() {
+  return s_txn_slot;
+}
+
+uint32_t persist_inflight_ring_writes() {
+  return s_inflight_seq;
 }
 
 bool persist_has_open_txn() {
@@ -293,23 +416,49 @@ const transaction_t *persist_open_txn() {
   return &s_open_txn;
 }
 
+// =========================================================================
+// The in-flight coin ring.
+//
+// TWO writes per coin -- one marking it before the servo moves, one clearing it
+// once the diverter settles -- which made this the shortest-lived cell in the
+// machine at a single address: 25 days at worst case, 100 transactions a day.
+// More slots than the transaction ring because it is written twice as often and
+// each slot is a quarter the size.
+// =========================================================================
+static void inflight_commit(coin_t coin) {
+  s_inflight_seq++;
+  s_inflight_slot = (uint8_t)((s_inflight_slot + 1) % INFLIGHT_RING_SLOTS);
+
+  inflight_slot_t slot;
+  slot.seq = s_inflight_seq;
+  slot.f.coin = (uint8_t)coin;
+  record_save(EEPROM_ADDR_INFLIGHT_RING
+                  + ((int)s_inflight_slot * SLOT_INFLIGHT_SIZE),
+              (const uint8_t *)&slot, sizeof(slot));
+
+#ifdef DEBUG
+  if (s_inflight_slot == 0) {
+    Serial.print(F("[eeprom] inflight ring wrapped, seq="));
+    Serial.println(s_inflight_seq);
+  }
+#endif
+}
+
 void persist_mark_coin_in_flight(coin_t coin) {
-  inflight_t f;
-  f.coin = (uint8_t)coin;
-  record_save(EEPROM_ADDR_COIN_INFLIGHT, (const uint8_t *)&f, sizeof(f));
+  s_inflight_coin = coin;
+  inflight_commit(coin);
 }
 
 void persist_clear_coin_in_flight() {
-  inflight_t f;
-  f.coin = (uint8_t)COIN_NONE;
-  record_save(EEPROM_ADDR_COIN_INFLIGHT, (const uint8_t *)&f, sizeof(f));
+  s_inflight_coin = COIN_NONE;
+  inflight_commit(COIN_NONE);
 }
 
 coin_t persist_coin_in_flight() {
-  inflight_t f;
-  if (!record_load(EEPROM_ADDR_COIN_INFLIGHT, (uint8_t *)&f, sizeof(f))) return COIN_NONE;
-  if (f.coin > (uint8_t)COIN_INVALID) return COIN_NONE;
-  return (coin_t)f.coin;
+  // Served from the RAM mirror established at boot. Re-reading EEPROM here
+  // would scan 64 slots on every call for a value already known.
+  if ((uint8_t)s_inflight_coin > (uint8_t)COIN_INVALID) return COIN_NONE;
+  return s_inflight_coin;
 }
 
 void persist_reconcile_unrouted_coin(coin_t coin) {

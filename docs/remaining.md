@@ -113,7 +113,24 @@ M-1 is the one to settle early: it is the only finding here that adds a part to
 the bill of materials, and the Statistics and Thank You screens cannot be built
 until it is answered.
 
-## W — EEPROM wear on the open-transaction record — RAISED, needs a ruling
+## W — EEPROM wear — CLOSED, fixed under WO-001-A
+
+**Resolved.** Both hot regions are now wear-levelled rings, under one layout
+version bump (schema 1 → 2):
+
+- Open transaction: **32 slots**, ≈3.7 years worst case at 100 txn/day
+- Routing intent: **64 slots**, ≈4.4 years worst case — this one was found while
+  implementing the first and was far worse, **25 days** at a single address
+- 2816 of 4096 EEPROM bytes used, 1280 free (compiler-verified)
+
+Arithmetic and the measured layout are in `decisions.md`; spec §7.1/§7.2 updated.
+One outstanding sub-item is carried into M6 as **6-10** below.
+
+The original analysis is kept below for the record.
+
+---
+
+### Original analysis (superseded)
 
 Surfaced while wiring M5 Part B. Not fixed, because the fix is a spec change.
 
@@ -239,6 +256,7 @@ before reading the document that governs their layout means building them twice.
 | 6-7 | Greyed-not-hidden volume options above available credit (§4.2) | 6-3, 6-6 | code | 2 h |
 | 6-8 | Fault display with §6.2 priority, and the visible grace countdown of §5.5 | 6-3, R-4 | code | 2 h |
 | 6-9 | Firmware/HMI version handshake so a mismatched pair is detected rather than misbehaving | 6-3, 6-6 | code | 2 h |
+| 6-10 | **EEPROM ring wear field on the Admin page** (read-only). Data is already exposed by `persist_txn_ring_writes()` / `persist_inflight_ring_writes()`; this is the screen half. Required by WO-001-A — a technician must be able to read how much design life a unit has consumed without instrumenting it. Show the cumulative **write count** and the percentage of (slots × 100,000), not the slot index | 6-6a, 5-16 | code | 2 h |
 
 ---
 
