@@ -60,6 +60,20 @@ void persist_txn_close();
 bool persist_has_open_txn();
 const transaction_t *persist_open_txn();
 
+// --- Ring wear, for Admin -----------------------------------------------
+//
+// The open-transaction and in-flight records are written several times per
+// transaction and are wear-levelled across rings to survive it. These report
+// how far through that budget a unit is, READ ONLY, so a technician can see it
+// without instrumenting anything.
+//
+// The write count is the honest figure -- "this unit has done N writes" -- not
+// the slot index, which only says where in the loop it happens to be. Divide by
+// (slots x 100,000) for the fraction of design life consumed.
+uint32_t persist_txn_ring_writes();
+uint8_t  persist_txn_ring_slot();
+uint32_t persist_inflight_ring_writes();
+
 // --- Boot reconciliation ------------------------------------------------
 
 // Handle a coin credited but never confirmed routed -- power lost inside the

@@ -563,10 +563,14 @@ typedef int32_t volume_t;   // millilitres
 // not have.
 
 #define EEPROM_MAGIC 0x5756u  // 'WV'
-#define EEPROM_LAYOUT_VERSION 1
+
+// Layout version 2: the open-transaction and coin-in-flight records became
+// wear-levelled rings and moved. A version 1 record is rejected by
+// record_unpack() and the region initialises fresh, which is the correct
+// outcome -- misreading an old layout would report inventory that never existed.
+#define EEPROM_LAYOUT_VERSION 2
 
 #define EEPROM_ADDR_HEADER     0    // magic, version, checksum
-#define EEPROM_ADDR_COIN_INFLIGHT 8 // coin credited but not yet confirmed routed
 #define EEPROM_ADDR_INVENTORY  16   // hopper counts, chamber count
 
 // Persistent fault flags -- SPEC 6.1 and 7.1.
@@ -579,13 +583,53 @@ typedef int32_t volume_t;   // millilitres
 // static_asserts in persist.cpp enforce that it fits.
 #define EEPROM_ADDR_FAULTS     32
 
-#define EEPROM_ADDR_OPEN_TXN   48   // interrupted transaction, restored on boot
 #define EEPROM_ADDR_DAILY_RING 96   // wear-levelled daily counters
 #define EEPROM_ADDR_HISTORY    256  // transaction history ring buffer
 
-// Daily counters are written far more often than anything else here, so they
-// are wear-levelled across a small ring of cells rather than hammering one
-// address. 8 slots multiplies the life of the daily counter region by 8.
+// ---------------------------------------------------------------------------
+// The two hot regions, and why they are rings
+// ---------------------------------------------------------------------------
+//
+// AVR EEPROM is rated ~100,000 writes PER CELL. Both regions below are written
+// several times per transaction at what used to be one fixed address, and both
+// would have worn out inside a year of real service. The full arithmetic is in
+// docs/decisions.md; the summary is here so nobody shrinks a ring without
+// meeting the numbers first.
+//
+// Demand assumption: 100 transactions/day. That is not a paranoid figure -- a
+// school with cheap cold water, no competition on site, and demand that
+// concentrates at lunch. Size for the day it works, not the average day.
+
+#define EEPROM_ADDR_OPEN_TXN_RING 1024   // 32 slots x 32 B -> 1024..2048
+#define EEPROM_ADDR_INFLIGHT_RING 2048   // 64 slots x 12 B -> 2048..2816
+
+// Open transaction. Written on open, on EVERY COIN, on selection, on settle,
+// and on close -- worst case 24 writes/transaction (P20 paid in 20 x P1).
+//
+//   32 x 100,000 = 3,200,000 writes
+//   24 w/txn x 100 txn/day = 2,400 writes/day
+//   -> 1,333 days = 3.7 years at ABSOLUTE worst case
+//   -> 8.8 years at a realistic 10 writes/txn
+//
+// Sized against the worst row, not the typical one. An earlier draft sized 8
+// slots against the typical row and reported it as the worst case, which would
+// have shipped a ring good for 333 days.
+#define TXN_RING_SLOTS 32
+
+// Coin in flight. TWO writes per coin -- one marking it before the servo moves,
+// one clearing it after the diverter settles. Worse than the record above, and
+// at a single address it was the shortest-lived cell in the machine:
+//
+//   100,000 / (40 w/txn x 100 txn/day) = 25 DAYS at worst case
+//   100,000 / (12 w/txn x 100 txn/day) = 83 days at a realistic average
+//
+// With 64 slots: 4.4 years worst case, 14.6 years realistic. More slots than
+// the transaction ring because it is written twice per coin rather than once,
+// and each slot is small.
+#define INFLIGHT_RING_SLOTS 64
+
+// Daily counters: one write per transaction.
+//   8 x 100,000 / 100 per day = 8,000 days = 21 years. Already adequate.
 #define DAILY_RING_SLOTS 8
 
 // Transaction history. Twenty entries of timestamp, amount in, volume out,

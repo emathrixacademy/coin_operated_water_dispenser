@@ -129,6 +129,78 @@ change recorded but never paid — it steals from the user **and** corrupts
 inventory in the same event, which is the worst pair of consequences available
 in this machine.
 
+### EEPROM wear · both hot regions are wear-levelled rings · WO-001-A
+
+**Approved and implemented.** Layout version bumped 1 → 2.
+
+#### The per-coin write is deliberate and is not to be optimised away
+
+The open-transaction record is written **after every coin**. That is the
+expensive choice and it is the right one: a power cut between the last coin and
+the selection would otherwise take the user's money with **no record of it at
+all**. On Philippine mains, in a school, that is not hypothetical — it is a
+Tuesday.
+
+Trading EEPROM lifetime for that guarantee is correct. The ring is what makes
+the trade affordable. Anyone later tempted to write "only on material change"
+should read scenarios.md Case 12 first and then not do it.
+
+#### Sizing — worst case, not typical
+
+Demand assumption **100 transactions/day**. Not paranoid: a school with cheap
+cold water, no competition on site, demand concentrated at lunch. Size for the
+day it works, not the average day.
+
+AVR endurance is ~100,000 writes **per cell**.
+
+**Open transaction — 32 slots.** Worst case 24 writes/transaction (open + 20
+coins for ₱20 paid entirely in ₱1 + selection + settle + close):
+
+| | writes/day | life |
+|---|---|---|
+| worst, 24 w/txn | 2,400 | 3,200,000 / 2,400 = **1,333 days ≈ 3.7 years** |
+| realistic, 10 w/txn | 1,000 | 3,200 days ≈ 8.8 years |
+| typical, 7 w/txn | 700 | 4,571 days ≈ 12.5 years |
+
+**In-flight coin marker — 64 slots.** Found while implementing the above and
+**far worse**: `coin_diverter_route()` marks and `coin_diverter_update()` clears,
+so it is **two writes per coin** at what was a single address.
+
+| | at one address (before) | 64 slots (now) |
+|---|---|---|
+| worst, 40 w/txn | 100,000/4,000 = **25 days** | 1,600 days ≈ 4.4 years |
+| realistic, 12 w/txn | 83 days | 5,333 days ≈ 14.6 years |
+
+Twice the slots of the transaction ring because it is written twice as often
+and each slot is a quarter the size.
+
+Both fixed under **one** layout version bump rather than two migrations.
+
+**Daily counters** already adequate at 8 slots: one write per transaction,
+8 × 100,000 / 100 per day ≈ 21 years.
+
+#### Measured layout
+
+`transaction_t` 24 B → 32 B/slot × 32 = 1024 B (`0x400`–`0x800`).
+in-flight slot 12 B × 64 = 768 B (`0x800`–`0xB00`).
+**2816 of 4096 bytes used, 1280 free.** Compiler-verified, not estimated.
+
+#### Correcting the earlier figure
+
+An earlier draft proposed 8 slots and reported "≈6 years at worst case". That
+number was computed against the **typical** row at 50/day (6.26 years) and
+mislabelled. The actual worst case for 8 slots is 333 days at 100/day. Sizing
+against the row that does not matter is how a ring ships good for eleven months.
+
+#### Attached requirements
+
+- Ring wear is exposed read-only in Admin via `persist_txn_ring_writes()` /
+  `persist_inflight_ring_writes()`. The **write count** is the honest figure,
+  not the slot index — divide by (slots × 100,000) for fraction of life used.
+- Slot advance and wrap are logged in the boot trace under `DEBUG`, so
+  "did the ring wrap or did a CRC fail" is answerable without instrumenting a
+  unit.
+
 ### HOPPER_START_FLOAT · removed
 
 The change float is an operator action confirmed in Admin against a physical

@@ -383,11 +383,13 @@ Mega has 4 KB. One checksum covers the whole state block; the history ring is ch
 Region	Contents
 Header	Magic number, schema version, checksum
 Inventory	₱1 count, ₱5 count, profit ₱10 count, profit ₱20 count, profit unknown count
-Open transaction	Credit, target, dispensed
-Routing intent	Pending coin value and destination
 Fault state	Persistent fault flags
-Daily counters	Volume dispensed, profit, date — wear-levelled ring
+Daily counters	Volume dispensed, profit, date — wear-levelled ring, 8 slots
 History ring	20 entries: timestamp, amount in, volume out, change out, event tag
+Open transaction	Credit, target, dispensed — wear-levelled ring, 32 slots
+Routing intent	Pending coin value and destination — wear-levelled ring, 64 slots
+
+Schema version 2. A version 1 record is rejected by the framing check and its region initialises fresh, which is correct — misreading an old layout would report inventory that never existed.
 
 profit_p10 and profit_p20 are separate counters. Without the split the chamber's peso value cannot be derived from its count, and reconciling a physical collection against the recorded total becomes impossible.
 
@@ -399,7 +401,22 @@ The open transaction does not store a machine state. §2.2 resumes an interrupte
 
 7.2 Write policy
 
-EEPROM.update() only, never EEPROM.write(). Writes occur at end of transaction, at each inventory change, and on routing intent. Never per loop iteration. Daily counters are wear-levelled across a ring of cells because they change most often.
+EEPROM.update() only, never EEPROM.write(). Writes occur at end of transaction, at each inventory change, on routing intent, and — deliberately — after every coin. Never per loop iteration.
+
+THE PER-COIN OPEN-TRANSACTION WRITE IS INTENTIONAL. A power cut between the last coin and the selection would otherwise take the user's money with no record of it anywhere. That guarantee is worth the EEPROM cost, and the ring below is what makes the cost affordable. Do not "optimise" it to write only on material change — read §3.3 and scenarios.md case 12 first.
+
+Three regions are wear-levelled across rings rather than hammering one address. AVR EEPROM is rated roughly 100,000 writes PER CELL, and the sizing assumption is 100 transactions/day — a school with cheap cold water, no competition on site, and demand concentrated at lunch. Size for the day it works, not the average day.
+
+Region	Writes per transaction	Slots	Worst-case life
+Open transaction	up to 24 (one per coin, plus open/select/settle/close)	32	≈3.7 years
+Routing intent	up to 40 (two per coin: mark before the servo, clear after it settles)	64	≈4.4 years
+Daily counters	1	8	≈21 years
+
+Routing intent carries twice the slots of the open transaction because it is written twice as often and each slot is a quarter the size. At a single address it was the shortest-lived cell in the machine — 25 days at worst case.
+
+Ring wear is exposed read-only in Admin as a cumulative WRITE COUNT, not a slot index. The count is what tells a technician how much design life a unit has consumed; the slot index only says where in the loop it currently sits. Slot wrap is logged in the boot trace under DEBUG so that "did the ring wrap, or did a CRC fail" is answerable without instrumenting the unit.
+
+Full arithmetic and the measured byte layout are in docs/decisions.md.
 
 7.3 First boot and corruption
 
