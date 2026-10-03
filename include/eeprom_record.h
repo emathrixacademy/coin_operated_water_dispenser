@@ -47,4 +47,33 @@ void record_pack(uint8_t *buf, const uint8_t *payload, uint8_t len);
 // A false return means INITIALISE, never "use it anyway".
 bool record_unpack(const uint8_t *buf, uint8_t *payload, uint8_t len);
 
+// What a ring slot holds, judged from its raw bytes.
+//
+// BLANK and CORRUPT are different facts, and the difference decides money. A
+// blank slot has never been written: the ring simply has not wrapped yet. A
+// corrupt one WAS written and cannot be read -- a write torn by a power cut, or
+// a worn cell -- which means something newer than the newest readable record
+// may have existed.
+enum slot_kind_t : uint8_t {
+  SLOT_BLANK = 0,   // every byte 0xFF, the state of a virgin AVR cell
+  SLOT_VALID,       // magic, layout version and CRC all good
+  SLOT_CORRUPT      // anything else, including a record from another layout
+};
+
+// `buf` holds len + RECORD_OVERHEAD raw bytes.
+slot_kind_t record_classify(const uint8_t *buf, uint8_t len);
+
+// Whether the newest readable record in a wear-levelled ring may be believed,
+// given the slot the NEXT write would have gone to -- decisions.md R-8.
+//
+// Writes advance one slot at a time, so the slot after the newest valid one is
+// where anything newer would be. If that slot is corrupt, the newest readable
+// record is really the one BEFORE the latest write, and acting on it resurrects
+// an older state: a transaction since paid out and closed comes back "open,
+// with credit", and the machine offers that money to a stranger.
+//
+// Blank (ring not yet wrapped) and valid (an older record, about to be
+// overwritten) are both fine.
+bool ring_newest_trusted(slot_kind_t successor);
+
 #endif  // EEPROM_RECORD_H

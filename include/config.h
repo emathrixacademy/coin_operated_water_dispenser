@@ -325,6 +325,22 @@ typedef int32_t volume_t;   // millilitres
 
 #define BUZZER_BEEP_MS 300  // Non-blocking. Long enough to hear over a running pump
 
+// COMPLETE holds this long for the user to choose more-or-finish, then finishes
+// by itself and pays the change out (decisions.md R-9).
+//
+// Without a timeout a balance sits on screen until somebody presses FINISH, and
+// that somebody may not be the person who paid. Sixty seconds rather than the
+// twenty of the bottle wait because here the user is handling a full bottle and
+// a cap.
+//
+// SHORTEN THIS and a user who paid loses their change to the next person in
+// line. Lengthen it and an abandoned machine sits dead, earning nothing.
+#define COMPLETE_TIMEOUT_MS 60000
+
+// The last part of that wait is shown as a countdown, so a user who is simply
+// slow is not surprised by the payout.
+#define COMPLETE_COUNTDOWN_MS 15000
+
 // Grace to replace a bottle removed mid-pour. Replaced within the window
 // resumes from the volume already dispensed; not replaced ends the transaction
 // and any change due is paid on confirm.
@@ -564,11 +580,16 @@ typedef int32_t volume_t;   // millilitres
 
 #define EEPROM_MAGIC 0x5756u  // 'WV'
 
-// Layout version 2: the open-transaction and coin-in-flight records became
-// wear-levelled rings and moved. A version 1 record is rejected by
-// record_unpack() and the region initialises fresh, which is the correct
-// outcome -- misreading an old layout would report inventory that never existed.
-#define EEPROM_LAYOUT_VERSION 2
+// Layout version 3: the open-transaction record was redesigned (resume phase,
+// pour checkpoints, payout leg) and its ring doubled to 64 slots, which moved
+// the coin-in-flight ring. Version 2 made both regions rings.
+//
+// NO MIGRATION, by ruling: there are no units in the field. A record from any
+// other version is rejected by record_unpack(), every region initialises
+// fresh, the inventory reads zero and the machine locks on LOW CHANGE until an
+// operator loads the float -- SPEC 7.3. Misreading an old layout would report
+// inventory that never existed.
+#define EEPROM_LAYOUT_VERSION 3
 
 #define EEPROM_ADDR_HEADER     0    // magic, version, checksum
 #define EEPROM_ADDR_INVENTORY  16   // hopper counts, chamber count
@@ -600,21 +621,30 @@ typedef int32_t volume_t;   // millilitres
 // school with cheap cold water, no competition on site, and demand that
 // concentrates at lunch. Size for the day it works, not the average day.
 
-#define EEPROM_ADDR_OPEN_TXN_RING 1024   // 32 slots x 32 B -> 1024..2048
-#define EEPROM_ADDR_INFLIGHT_RING 2048   // 64 slots x 12 B -> 2048..2816
+#define EEPROM_ADDR_OPEN_TXN_RING 1024   // 64 slots x 28 B -> 1024..2816
+#define EEPROM_ADDR_INFLIGHT_RING 2816   // 64 slots x 12 B -> 2816..3584
+// 3584..4096 is FREE, deliberately. Headroom for a field nobody has thought of
+// yet is worth more than another year of wear margin (decisions.md D-2).
 
-// Open transaction. Written on open, on EVERY COIN, on selection, on settle,
-// and on close -- worst case 24 writes/transaction (P20 paid in 20 x P1).
+// Open transaction. Written on open, on EVERY COIN, on selection, at every
+// 100 mL of a pour, at each bottle pause, on settle, at the start and end of
+// each payout leg, and on close.
 //
-//   32 x 100,000 = 3,200,000 writes
-//   24 w/txn x 100 txn/day = 2,400 writes/day
-//   -> 1,333 days = 3.7 years at ABSOLUTE worst case
-//   -> 8.8 years at a realistic 10 writes/txn
+// Worst case ~50 writes/transaction: 20 coins (P20 in P1s) + 20 checkpoints
+// (one 2000 mL pour) + open, select, pauses, settle, four leg writes, close.
+//
+//   64 x 100,000 = 6,400,000 writes
+//   50 w/txn x 100 txn/day = 5,000 writes/day
+//   -> 1,280 days = 3.5 years at ABSOLUTE worst case
+//
+// The 100 mL checkpoint is what doubled the write count and therefore the
+// ring: it is the only granularity at which a power cut mid-pour costs the
+// user nothing beyond normal rounding. At 32 slots this would be 1.75 years.
 //
 // Sized against the worst row, not the typical one. An earlier draft sized 8
 // slots against the typical row and reported it as the worst case, which would
 // have shipped a ring good for 333 days.
-#define TXN_RING_SLOTS 32
+#define TXN_RING_SLOTS 64
 
 // Coin in flight. TWO writes per coin -- one marking it before the servo moves,
 // one clearing it after the diverter settles. Worse than the record above, and

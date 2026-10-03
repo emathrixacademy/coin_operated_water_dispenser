@@ -72,6 +72,9 @@ static_assert(EEPROM_ADDR_DAILY_RING + (DAILY_RING_SLOTS * SLOT_DAILY_SIZE)
 static_assert(EEPROM_ADDR_HISTORY + (HISTORY_ENTRIES * SLOT_HIST_SIZE)
                   <= EEPROM_ADDR_OPEN_TXN_RING,
               "history ring overruns the open-transaction ring");
+// 4 B sequence + 20 B transaction + 4 B framing. If this moves, the ring
+// arithmetic in config.h and decisions.md is wrong and must be redone.
+static_assert(SLOT_TXN_SIZE == 28, "open-transaction slot is 28 bytes, layout 3");
 static_assert(EEPROM_ADDR_OPEN_TXN_RING + (TXN_RING_SLOTS * SLOT_TXN_SIZE)
                   <= EEPROM_ADDR_INFLIGHT_RING,
               "open-transaction ring overruns the in-flight ring");
@@ -95,6 +98,15 @@ static bool record_load(int addr, uint8_t *payload, uint8_t len) {
   const uint8_t total = (uint8_t)(len + RECORD_OVERHEAD);
   for (uint8_t i = 0; i < total; i++) buf[i] = EEPROM.read(addr + i);
   return record_unpack(buf, payload, len);
+}
+
+// What kind of slot sits at `addr` -- blank, valid or corrupt. See
+// record_classify() for why blank and corrupt must not be confused.
+static slot_kind_t record_kind(int addr, uint8_t len) {
+  uint8_t buf[RECORD_SCRATCH];
+  const uint8_t total = (uint8_t)(len + RECORD_OVERHEAD);
+  for (uint8_t i = 0; i < total; i++) buf[i] = EEPROM.read(addr + i);
+  return record_classify(buf, len);
 }
 
 static void record_save(int addr, const uint8_t *payload, uint8_t len) {
@@ -170,9 +182,10 @@ void persist_begin() {
   // slot that fails its CRC is skipped rather than trusted, so one degraded
   // cell costs at most the newest write and the previous one still restores.
   memset(&s_open_txn, 0, sizeof(s_open_txn));
-  s_open_txn.open = false;
+  s_open_txn.phase = TXN_PHASE_NONE;
   s_txn_seq = 0;
   s_txn_slot = 0;
+  bool txn_found = false;
   for (uint8_t i = 0; i < TXN_RING_SLOTS; i++) {
     txn_slot_t slot;
     if (!record_load(EEPROM_ADDR_OPEN_TXN_RING + ((int)i * SLOT_TXN_SIZE),
@@ -183,6 +196,41 @@ void persist_begin() {
       s_txn_seq = slot.seq;
       s_txn_slot = i;
       s_open_txn = slot.txn;
+      txn_found = true;
+    }
+  }
+
+  // An unknown phase value can only come from a firmware whose phase list
+  // differed. Treat it as no transaction rather than guessing which one it was.
+  if (s_open_txn.phase > (uint8_t)TXN_PHASE_PAYING) {
+    s_open_txn.phase = TXN_PHASE_NONE;
+  }
+
+  // ---------------------------------------------------------------------
+  // R-8: IS THE NEWEST READABLE RECORD REALLY THE NEWEST?
+  //
+  // The slot after it is where the next write went. If that slot is corrupt
+  // -- a write torn by the power cut that caused this boot, or a worn cell --
+  // then what was just loaded is the state BEFORE the last write. If it says
+  // "open, with credit", the lost write may well have been the one that paid
+  // that credit out and closed it.
+  //
+  // Resuming it offers money to whoever is standing there, every time it
+  // happens. Closing it costs one user once, and that user can complain to an
+  // operator who can settle by hand. So: close it, and say so in the history.
+  // The amount not resumed is kept for the history entry written below, once
+  // the history ring has been scanned.
+  // ---------------------------------------------------------------------
+  money_t slot_lost_credit = 0;
+  bool slot_lost = false;
+  if (txn_found && s_open_txn.phase != TXN_PHASE_NONE) {
+    const uint8_t next = (uint8_t)((s_txn_slot + 1) % TXN_RING_SLOTS);
+    const slot_kind_t kind =
+        record_kind(EEPROM_ADDR_OPEN_TXN_RING + ((int)next * SLOT_TXN_SIZE),
+                    sizeof(txn_slot_t));
+    if (!ring_newest_trusted(kind)) {
+      slot_lost = true;
+      slot_lost_credit = s_open_txn.credit;
     }
   }
 
@@ -252,6 +300,27 @@ void persist_begin() {
     }
     s_hist_count++;
     if (slot.seq > s_hist_seq) s_hist_seq = slot.seq;
+  }
+
+  // R-8, second half. Done here because the history ring had to be scanned
+  // before anything could be appended to it.
+  //
+  // History FIRST, then the close: if power fails between the two, the next
+  // boot finds the same untrusted slot and does this again, which costs a
+  // duplicate history line. The other order could close the transaction and
+  // lose the only record that it ever happened.
+  if (slot_lost) {
+    history_entry_t e;
+    memset(&e, 0, sizeof(e));
+    // The clock has not been started yet at this point in setup(), and a
+    // made-up time is worse than an honest "unknown".
+    e.timestamp = RTC_TIMESTAMP_INVALID;
+    e.tag = EVT_TXN_SLOT_LOST;
+    e.amount_in = slot_lost_credit;
+    persist_history_add(&e);
+
+    // Overwrites the corrupt slot, so the ring heals itself.
+    persist_txn_close();
   }
 }
 
@@ -377,22 +446,39 @@ static void txn_commit() {
 #endif
 }
 
+// A record written through open() or update() is an OPEN transaction, whatever
+// phase the caller left in it. A caller that has not set one gets CREDIT, the
+// phase that resumes to COMPLETE with the balance and touches nothing else --
+// the safe reading of "there is money in here and I know nothing more".
+//
+// TODO(WO-005 item 3): main.cpp does not set phases yet, so every record is
+// CREDIT today. POUR and PAYING arrive with the P-4/P-5 fixes.
+static void txn_store(const transaction_t *txn) {
+  s_open_txn = *txn;
+  if (s_open_txn.phase == TXN_PHASE_NONE ||
+      s_open_txn.phase > (uint8_t)TXN_PHASE_PAYING) {
+    s_open_txn.phase = TXN_PHASE_CREDIT;
+  }
+  s_open_txn.reserved = 0;
+  txn_commit();
+}
+
 void persist_txn_open(const transaction_t *txn) {
   if (!txn) return;
-  s_open_txn = *txn;
-  s_open_txn.open = true;
-  txn_commit();
+  txn_store(txn);
 }
 
 void persist_txn_update(const transaction_t *txn) {
-  if (!txn || !s_open_txn.open) return;
-  s_open_txn = *txn;
-  s_open_txn.open = true;
-  txn_commit();
+  if (!txn || s_open_txn.phase == TXN_PHASE_NONE) return;
+  txn_store(txn);
 }
 
 void persist_txn_close() {
-  s_open_txn.open = false;
+  // Only the phase changes. The figures are left as they were so the closed
+  // record still says what the last transaction held, which is what a
+  // technician reading a dump wants to see.
+  s_open_txn.phase = TXN_PHASE_NONE;
+  s_open_txn.leg_count = 0;
   txn_commit();
 }
 
@@ -409,7 +495,7 @@ uint32_t persist_inflight_ring_writes() {
 }
 
 bool persist_has_open_txn() {
-  return s_open_txn.open;
+  return s_open_txn.phase != TXN_PHASE_NONE;
 }
 
 const transaction_t *persist_open_txn() {

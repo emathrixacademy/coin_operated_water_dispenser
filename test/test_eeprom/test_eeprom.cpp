@@ -199,9 +199,12 @@ static void test_transaction_round_trip() {
   src.credit = 1500;
   src.inserted = 2000;
   src.target_ml = 2000;
-  src.dispensed_ml = 305;
-  src.total_ml = 0;
-  src.open = true;
+  src.banked_ml = 205;
+  src.segment_ml = 100;
+  src.total_ml = 300;
+  src.phase = TXN_PHASE_POUR;
+  src.leg_hopper = 1;
+  src.leg_count = 3;
 
   uint8_t buf[RECORD_OVERHEAD + sizeof(transaction_t)];
   record_pack(buf, (const uint8_t *)&src, sizeof(src));
@@ -212,9 +215,134 @@ static void test_transaction_round_trip() {
 
   TEST_ASSERT_EQUAL_INT32(1500, dst.credit);
   TEST_ASSERT_EQUAL_INT32(2000, dst.inserted);
-  TEST_ASSERT_EQUAL_INT32(2000, dst.target_ml);
-  TEST_ASSERT_EQUAL_INT32(305, dst.dispensed_ml);
-  TEST_ASSERT_TRUE(dst.open);
+  TEST_ASSERT_EQUAL_UINT16(2000, dst.target_ml);
+  TEST_ASSERT_EQUAL_UINT16(205, dst.banked_ml);
+  TEST_ASSERT_EQUAL_UINT16(100, dst.segment_ml);
+  TEST_ASSERT_EQUAL_UINT16(300, dst.total_ml);
+  TEST_ASSERT_EQUAL_UINT8(TXN_PHASE_POUR, dst.phase);
+  TEST_ASSERT_EQUAL_UINT8(1, dst.leg_hopper);
+  TEST_ASSERT_EQUAL_UINT8(3, dst.leg_count);
+}
+
+static void test_transaction_record_is_twenty_bytes() {
+  // The ring arithmetic in config.h and decisions.md is built on this number:
+  // 20 payload + 4 sequence + 4 framing = 28 per slot, 64 slots. A field added
+  // casually shortens the ring's life without anyone deciding to.
+  TEST_ASSERT_EQUAL_size_t(20, sizeof(transaction_t));
+}
+
+static void test_transaction_volume_fields_hold_the_ceiling() {
+  // The volume fields are uint16_t to save EEPROM. That is only sound while
+  // the per-transaction ceiling fits, with room for the sensor to over-read.
+  TEST_ASSERT_TRUE(MAX_TRANSACTION_ML * 2 <= 65535L);
+}
+
+static void test_zeroed_transaction_means_no_transaction() {
+  // billing_reset() and a fresh EEPROM region both produce an all-zero record.
+  // That MUST read as "nothing to resume": if phase zero meant anything else,
+  // every cold boot would resume a transaction that never happened.
+  transaction_t t;
+  memset(&t, 0, sizeof(t));
+  TEST_ASSERT_EQUAL_UINT8(TXN_PHASE_NONE, t.phase);
+}
+
+static void test_phase_codes_are_frozen() {
+  // These numbers are IN THE EEPROM. Renumbering them reinterprets every
+  // stored transaction, so a change here must come with a layout version bump.
+  TEST_ASSERT_EQUAL_UINT8(0, TXN_PHASE_NONE);
+  TEST_ASSERT_EQUAL_UINT8(1, TXN_PHASE_CREDIT);
+  TEST_ASSERT_EQUAL_UINT8(2, TXN_PHASE_POUR);
+  TEST_ASSERT_EQUAL_UINT8(3, TXN_PHASE_PAYING);
+}
+
+// ---------------------------------------------------------------------------
+// Slot classification and the R-8 rule
+// ---------------------------------------------------------------------------
+//
+// Blank and corrupt are different facts. Blank: never written, the ring has not
+// wrapped. Corrupt: written and unreadable, so something NEWER than the newest
+// readable record may have existed -- and that something may have been the
+// write that paid a balance out.
+
+#define TXN_SLOT_BYTES (RECORD_OVERHEAD + sizeof(transaction_t))
+
+static void make_valid_slot(uint8_t *buf, money_t credit, uint8_t phase) {
+  transaction_t t;
+  memset(&t, 0, sizeof(t));
+  t.credit = credit;
+  t.phase = phase;
+  record_pack(buf, (const uint8_t *)&t, sizeof(t));
+}
+
+static void test_virgin_slot_classifies_blank() {
+  uint8_t buf[TXN_SLOT_BYTES];
+  memset(buf, 0xFF, sizeof(buf));
+  TEST_ASSERT_EQUAL(SLOT_BLANK, record_classify(buf, sizeof(transaction_t)));
+}
+
+static void test_good_slot_classifies_valid() {
+  uint8_t buf[TXN_SLOT_BYTES];
+  make_valid_slot(buf, 1500, TXN_PHASE_CREDIT);
+  TEST_ASSERT_EQUAL(SLOT_VALID, record_classify(buf, sizeof(transaction_t)));
+}
+
+static void test_classify_agrees_with_unpack_on_every_bit_flip() {
+  // record_classify() repeats record_unpack()'s checks without the copy. If
+  // the two ever disagree, boot would trust a slot it cannot actually read.
+  uint8_t good[TXN_SLOT_BYTES];
+  make_valid_slot(good, 1900, TXN_PHASE_PAYING);
+
+  for (size_t byte = 0; byte < sizeof(good); byte++) {
+    for (uint8_t bit = 0; bit < 8; bit++) {
+      uint8_t buf[TXN_SLOT_BYTES];
+      memcpy(buf, good, sizeof(buf));
+      buf[byte] ^= (uint8_t)(1u << bit);
+
+      transaction_t out;
+      const bool readable = record_unpack(buf, (uint8_t *)&out, sizeof(out));
+      const slot_kind_t kind = record_classify(buf, sizeof(transaction_t));
+      TEST_ASSERT_EQUAL(readable ? SLOT_VALID : SLOT_CORRUPT, kind);
+    }
+  }
+}
+
+static void test_torn_write_classifies_corrupt_not_blank() {
+  // A write interrupted by the power cut: the first bytes are new, the rest
+  // are still whatever the slot held. Here the slot was virgin, so the tail is
+  // 0xFF -- and it must still NOT read as blank, or the lost write is missed.
+  uint8_t buf[TXN_SLOT_BYTES];
+  make_valid_slot(buf, 1500, TXN_PHASE_NONE);
+  for (size_t i = 10; i < sizeof(buf); i++) buf[i] = 0xFF;
+  TEST_ASSERT_EQUAL(SLOT_CORRUPT, record_classify(buf, sizeof(transaction_t)));
+}
+
+static void test_erased_slot_classifies_corrupt() {
+  // All zeros is not a virgin AVR cell. Something wrote it.
+  uint8_t buf[TXN_SLOT_BYTES];
+  memset(buf, 0x00, sizeof(buf));
+  TEST_ASSERT_EQUAL(SLOT_CORRUPT, record_classify(buf, sizeof(transaction_t)));
+}
+
+static void test_other_layout_version_classifies_corrupt() {
+  uint8_t buf[TXN_SLOT_BYTES];
+  make_valid_slot(buf, 1500, TXN_PHASE_CREDIT);
+  buf[2] = (uint8_t)(EEPROM_LAYOUT_VERSION - 1);
+  TEST_ASSERT_EQUAL(SLOT_CORRUPT, record_classify(buf, sizeof(transaction_t)));
+}
+
+static void test_newest_is_trusted_when_ring_has_not_wrapped() {
+  TEST_ASSERT_TRUE(ring_newest_trusted(SLOT_BLANK));
+}
+
+static void test_newest_is_trusted_when_successor_is_an_older_record() {
+  TEST_ASSERT_TRUE(ring_newest_trusted(SLOT_VALID));
+}
+
+static void test_newest_is_NOT_trusted_when_successor_is_corrupt() {
+  // The theft route R-8 closes: the write that closed a paid-out transaction
+  // was torn, the slot before it still says "open, with credit", and the
+  // machine would offer that credit to whoever is standing there.
+  TEST_ASSERT_FALSE(ring_newest_trusted(SLOT_CORRUPT));
 }
 
 static void test_virgin_transaction_does_not_resume() {
@@ -225,7 +353,7 @@ static void test_virgin_transaction_does_not_resume() {
   transaction_t dst;
   memset(&dst, 0, sizeof(dst));
   TEST_ASSERT_FALSE(record_unpack(buf, (uint8_t *)&dst, sizeof(dst)));
-  TEST_ASSERT_FALSE(dst.open);
+  TEST_ASSERT_EQUAL_UINT8(TXN_PHASE_NONE, dst.phase);
   TEST_ASSERT_EQUAL_INT32(0, dst.credit);
 }
 
@@ -249,6 +377,20 @@ int main(int, char **) {
 
   RUN_TEST(test_transaction_round_trip);
   RUN_TEST(test_virgin_transaction_does_not_resume);
+  RUN_TEST(test_transaction_record_is_twenty_bytes);
+  RUN_TEST(test_transaction_volume_fields_hold_the_ceiling);
+  RUN_TEST(test_zeroed_transaction_means_no_transaction);
+  RUN_TEST(test_phase_codes_are_frozen);
+
+  RUN_TEST(test_virgin_slot_classifies_blank);
+  RUN_TEST(test_good_slot_classifies_valid);
+  RUN_TEST(test_classify_agrees_with_unpack_on_every_bit_flip);
+  RUN_TEST(test_torn_write_classifies_corrupt_not_blank);
+  RUN_TEST(test_erased_slot_classifies_corrupt);
+  RUN_TEST(test_other_layout_version_classifies_corrupt);
+  RUN_TEST(test_newest_is_trusted_when_ring_has_not_wrapped);
+  RUN_TEST(test_newest_is_trusted_when_successor_is_an_older_record);
+  RUN_TEST(test_newest_is_NOT_trusted_when_successor_is_corrupt);
 
   return UNITY_END();
 }
