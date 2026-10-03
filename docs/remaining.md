@@ -25,7 +25,9 @@ block.
   Findings are in §M — three of them change work already scheduled, and one is
   a new hardware requirement.
 - ~~The native tests have never been executed here.~~ **RESOLVED 2026-08-30.**
-  Host toolchain installed; **75/75 passing** across four suites. See
+  Host toolchain installed; 75/75 passing across four suites on that date.
+  **Current figure: 103/103 across five suites** (`test_billing`, `test_calendar`,
+  `test_change_plan`, `test_eeprom`, `test_fault_mask`), re-run 2026-10-04. See
   `test/README.md` for the toolchain setup and the 248-character path trap that
   makes the winget install fail in a way that looks nothing like a path problem.
 
@@ -46,7 +48,7 @@ Defects from `docs/reconciliation.md`. All closed; kept for the audit trail.
 | R-7 | Unrouted-coin reconciliation increments profit (A-4, §3.3) | **Done** — to `profit_unknown` |
 | R-8 | `coin_hopper_plan()` / `can_cover()` per §3.4 (A-9) | **Done** — `HOPPER_RESERVE_P5 = 10` |
 | R-9 | `billing_worst_case_change()` → full ₱20 ceiling (A-5) | **Done** |
-| R-10 | Host toolchain; run `pio test -e native` | **Done** — 75/75 |
+| R-10 | Host toolchain; run `pio test -e native` | **Done** — 75/75 then, 103/103 as of 2026-10-04 |
 | R-11 | Extract plan arithmetic; unit test it | **Done** — `change_plan.*`, 19 tests |
 
 Plus, from the rulings of 2026-08-30:
@@ -236,6 +238,23 @@ The largest milestone. Nothing here can be meaningfully tested until M4 exists.
 | 5-15 | Open-transaction write policy: at end of transaction and each inventory change, never per loop (§7.2). `persist_txn_open()` has no caller | 5-2 | code | 2 h |
 | 5-16 | Admin mode: all five functions of §8, each with its confirm step | 5-2, M6 | code | 2 days |
 | 5-17 | **Case 18, sustained ₱5 drain** (§10). Report the arithmetic and propose a policy. Explicitly *do not* change the client's stated behaviour — this is analysis, then a recommendation | R-8 | client decision | 1 day analysis |
+
+---
+
+## WO-002 — Screen design pending client approval
+
+**The screen design is NOT approved.** It is pending client approval against the browser
+simulator `sim/hmi/watervendo-hmi.html` (WO-002-A, 2026-10-03), which renders every page
+at the panel's true 480 × 320 and runs a port of the `src/` state machine. Show it to the
+thesis team using the walkthrough in `sim/hmi/README.md`.
+
+Until the team signs off, treat as provisional the layouts of the screens the mockup
+never drew: ACCEPTING, COMPLETE, PAYING_CHANGE, PAUSED, the fault screens, Admin, and
+clock-not-set. 6-6a (`docs/hmi_spec.md`) should transcribe from the approved simulator
+rather than from the mockup.
+
+Defects in `src/` found while porting (P-1 to P-7) are listed in `sim/hmi/README.md`.
+They belong to M5 Part C.
 
 ---
 
