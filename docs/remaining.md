@@ -30,7 +30,7 @@ managed with the client; the work is not to be compressed.
 | 1 | Open-transaction record, layout version 3 | **Done 2026-10-04** — struct, 64-slot ring, R-8 slot-trust check, 13 new host tests. The state machine does not use the new fields yet; that is item 3 |
 | 2 | Rulings into `decisions.md`, spec corrections (R-7), Rev B two-gate diverter | Rulings **done**. §3.3, §7.1, §7.2, §9 **done**. R-7 corrections and Rev B **not started** |
 | 3 | WO-003-B: defects P-1 to P-7, each with a regression test | Not started |
-| 4 | WO-004 simulator rework (icons, animation, R-1/R-2/R-3) plus `docs/hmi_spec.md` from scratch | Not started. **Critical path: unblocks the `.HMI` transcription** |
+| 4 | WO-004 simulator rework (icons, animation, R-1/R-2/R-3) plus `docs/hmi_spec.md` from scratch | **Partly done 2026-10-04, ahead of sequence at the user's request:** flat coin icons; bottle-fill animation on DISPENSING; coins dropping on WELCOME; coins lighting as counted on PAYING; coins falling into the tray on THANK YOU; blinking bottle outline on PAUSED. **Still to do:** the rest of the icon set (status, faults, nav), the bottle-detection scan sweep, R-1/R-2/R-3 behaviour, and `hmi_spec.md`. **Critical path: unblocks the `.HMI` transcription** |
 | 5 | M5 Part C: boot recovery, transient faults, coin-box beam, Admin, buzzer, rollover, R-4 warning, R-5 lockout, R-9 timeout | Not started |
 | 6 | M5 Part D: native simulator, 21 scenario cases | Not started |
 | 7 | `hmi.cpp`, the real display driver | Not started |
