@@ -128,7 +128,17 @@ enum event_tag_t : uint8_t {
   EVT_CHANGE_JAM,        // payout fell short; records commanded vs counted
   EVT_FLOW_STALL,        // pour stalled; records volume delivered and refunded
   EVT_DAY_CLOSE,         // midnight rollover; the day's closing totals
-  EVT_OVERPAY            // hopper paid out more than commanded (SPEC 3.5)
+  EVT_OVERPAY,           // hopper paid out more than commanded (SPEC 3.5)
+  // Power was lost mid-payout. The interrupted leg was deducted from inventory
+  // in full and paid again (decisions.md D-4). Tagged so an operator whose
+  // physical count is off by up to one leg can see why.
+  EVT_LEG_REPAID,
+  // The newest transaction slot was unreadable and the one before it said
+  // "open". That older state cannot be trusted -- it may be a balance that was
+  // already paid out -- so the transaction was closed rather than offered to
+  // whoever is standing there (decisions.md R-8). amount_in holds the credit
+  // that was NOT resumed, for the operator to settle by hand.
+  EVT_TXN_SLOT_LOST
 };
 
 // ---------------------------------------------------------------------------
@@ -171,15 +181,90 @@ struct inventory_t {
   uint16_t profit_unknown;
 };
 
-// An in-flight transaction, persisted so a power cut does not cost the user
-// their money. See scenarios.md cases 12 and 13.
-struct transaction_t {
-  money_t  credit;          // centavos still available to spend
-  money_t  inserted;        // centavos inserted this transaction, for the summary
-  volume_t target_ml;       // selected target for the current pour
-  volume_t dispensed_ml;    // delivered so far toward target_ml
-  volume_t total_ml;        // delivered across all pours this transaction
-  bool     open;            // true if this transaction survives a reboot
+// What a reboot does with a stored transaction -- SPEC 7.1, decisions.md D-3.
+//
+// A RESUME CODE, NOT A MACHINE STATE. Storing the raw state_t would break
+// silently the day the state list is reordered: the EEPROM would still hold a
+// number, and it would now mean a different state. These four values are part
+// of the EEPROM layout and must never be renumbered without a layout version
+// bump.
+//
+//   NONE    no transaction                         -> STANDBY
+//   CREDIT  ACCEPTING, SELECTING, COMPLETE          -> COMPLETE with the credit
+//   POUR    AWAITING_BOTTLE .. SETTLING             -> settle from the last
+//                                                      checkpoint, refund the
+//                                                      rest, then COMPLETE
+//   PAYING  PAYING_CHANGE                           -> PAYING_CHANGE for what is
+//                                                      still owed
+//
+// THE VALVE IS NEVER REOPENED ON BOOT -- SPEC 9 invariant 9. No phase resumes
+// into a pour. A machine that pours on power-up with no bottle present is P-1
+// wearing a different hat.
+enum txn_phase_t : uint8_t {
+  TXN_PHASE_NONE = 0,
+  TXN_PHASE_CREDIT = 1,
+  TXN_PHASE_POUR = 2,
+  TXN_PHASE_PAYING = 3
 };
+
+// The open transaction, persisted so a power cut does not cost the user their
+// money. SPEC 7.1; scenarios.md cases 12 and 13. Layout version 3.
+//
+// EXACTLY 20 BYTES, and the static_assert below holds it there: the EEPROM ring
+// is sized from this struct, and a field added casually would shrink the ring's
+// life without anybody deciding to.
+//
+// Volumes are uint16_t here although volume_t is 32-bit everywhere else. A
+// transaction is capped at MAX_TRANSACTION_ML (2000), and four bytes saved per
+// field is what lets the ring hold 64 slots.
+struct transaction_t {
+  // Money the user still has in the machine. THIS RECORD OWNS THE CREDIT. The
+  // coin-in-flight marker owns only where a coin physically went, and boot
+  // never credits from it -- doing so double-credits (decisions.md, P-2).
+  money_t  credit;
+
+  // Centavos inserted this transaction. Thank You, the history entry and the
+  // daily profit (inserted less change paid) all need it.
+  money_t  inserted;
+
+  // Volume committed for the CURRENT pour; its price is already out of credit.
+  // 0 when no pour is committed.
+  uint16_t target_ml;
+
+  // Poured in the COMPLETED SEGMENTS OF THE CURRENT POUR -- a segment ends at a
+  // bottle pause. Raw sensor millilitres, not yet billed.
+  //
+  // NOT the same thing as total_ml, and the two must never be merged. Billing
+  // rounds down ONCE per pour, on banked_ml + segment_ml. Folding this into a
+  // per-segment billed figure would round at every pause and favour the machine
+  // once per segment, which is one time too many.
+  uint16_t banked_ml;
+
+  // Poured in the segment in progress, as of the last checkpoint. Written each
+  // time banked_ml + segment_ml crosses a REFUND_ROUND_ML boundary, so after a
+  // power cut the round-down of the sum is exactly what the user would have
+  // been billed. Coarser takes money from the user; finer burns EEPROM for
+  // nothing (decisions.md D-1).
+  uint16_t segment_ml;
+
+  // BILLED volume of EARLIER, COMPLETED pours in this transaction. Already
+  // rounded, already paid for. Feeds the history entry and the daily total.
+  uint16_t total_ml;
+
+  uint8_t  phase;        // txn_phase_t
+
+  // The payout leg in progress, written when the hopper starts and cleared
+  // when it finishes. leg_count == 0 means no leg is running. After a cut
+  // mid-leg the count of coins that left is unknowable, so boot deducts the
+  // whole commanded leg from inventory and pays it again -- the machine guesses
+  // against itself (decisions.md D-4).
+  uint8_t  leg_hopper;   // hopper_id_t
+  uint8_t  leg_count;    // coins commanded
+
+  uint8_t  reserved;     // keeps the struct at 20 on every target; write 0
+};
+
+static_assert(sizeof(transaction_t) == 20,
+              "transaction_t is part of the EEPROM layout: 20 bytes, version 3");
 
 #endif  // TYPES_H

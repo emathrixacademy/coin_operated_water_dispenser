@@ -145,6 +145,12 @@ Trading EEPROM lifetime for that guarantee is correct. The ring is what makes
 the trade affordable. Anyone later tempted to write "only on material change"
 should read scenarios.md Case 12 first and then not do it.
 
+> **Superseded in part by WO-006 (2026-10-04), layout version 3.** The
+> open-transaction ring is now **64 slots of 28 bytes** and the worst case is
+> about 50 writes per transaction, not 24. The figures below are kept as the
+> record of how version 2 was sized. Current arithmetic is under "Open-transaction
+> record · layout version 3".
+
 #### Sizing — worst case, not typical
 
 Demand assumption **100 transactions/day**. Not paranoid: a school with cheap
@@ -255,7 +261,10 @@ arrow that pays out change is a surprise. "Finish & get change" or equivalent.
 
 ### Nav bar during a transaction · dimmed, not hidden, not silently ignored
 
-Dimmed and non-responsive from `SELECTING` through `PAYING_CHANGE`.
+~~Dimmed and non-responsive from `SELECTING` through `PAYING_CHANGE`.~~
+
+**Extended by R-3 (WO-003, 2026-10-04):** live in `STANDBY` only. It dims from
+the first accepted coin, so through `ACCEPTING` as well. See R-3 below.
 
 Silently ignoring a tap makes the user think the screen has frozen and press
 harder. Dimming tells them it is deliberately unavailable. Hiding it makes the
@@ -302,6 +311,220 @@ yours.
 - THANK YOU labels change as "BALANCE", but "balance" means unspent credit
   mid-transaction. Two meanings, one word. Recommend "CHANGE DISPENSED" on that
   screen only.
+
+---
+
+## Rulings of 4 October 2026 — WO-003, WO-005, WO-006
+
+### R-1 · Volume options appear live as coins drop
+
+The client's document settles it: *"lalabas yung lahat ng option depende sa
+hinulog."* The grid is visible from the first coin and all twenty options are
+drawn. Options at or below the available credit are live; options above it are
+**dimmed but legible**, never hidden. A student who can see that ₱20 buys
+2,000 mL puts in more money; hiding the unaffordable options removes the only
+upsell the machine has.
+
+### R-2 · CONFIRM is context-dependent, and it finishes a transaction
+
+One physical button, meaning "I am done with this step":
+
+| State | CONFIRM does |
+|---|---|
+| ACCEPTING | Closes coin entry. Commits the highlighted volume if there is one; otherwise moves to SELECTING with the acceptor inhibited |
+| SELECTING | Commits the chosen volume, advances to AWAITING_BOTTLE |
+| PAUSED | Ends the transaction early, settles the partial pour |
+| COMPLETE | Finishes, routes to PAYING_CHANGE |
+
+**The screen must label it.** The user never has to guess what CONFIRM will do.
+
+### R-1 / R-2 · How the state machine carries them
+
+Both states are kept. In ACCEPTING the grid is live and **a tap highlights a
+volume without committing it**. CONFIRM, or reaching `MAX_TRANSACTION_PESOS`,
+closes coin entry and commits the highlighted volume if there is one.
+
+- CONFIRM in ACCEPTING with **nothing highlighted** moves to SELECTING with the
+  acceptor inhibited. A button that appears dead teaches the user the machine
+  is broken.
+- **The highlight survives ACCEPTING → SELECTING.** A user who picked 500 mL and
+  then fed another coin must not lose the choice.
+
+§2.2 gains rows for CONFIRM in SELECTING, PAUSED and COMPLETE.
+
+### R-3 · The nav bar is live in STANDBY only
+
+It dims from the first accepted coin, through ACCEPTING and on to
+PAYING_CHANGE. Once a user's money is in the machine, the machine's job is to
+finish the transaction, not let them wander into Statistics and forget ₱20
+inside. Dimmed, not hidden, not silently ignored.
+
+### R-4 · LOW CHANGE is two things with two names
+
+§6.1 and §6.1.1 only contradicted each other while they shared a name.
+
+| Name | Condition | Effect |
+|---|---|---|
+| **LOW CHANGE WARNING** | ₱1 below 25 **or** ₱5 below 5 | Operator-facing, on System Status and Admin. **Machine keeps trading** |
+| **LOW CHANGE LOCKOUT** | Cannot cover worst-case change for the ₱20 ceiling | Fault. Acceptor inhibited at the STANDBY → ACCEPTING gate |
+
+Rename both in spec and code. A warning lets an operator schedule a visit; a
+lockout gets one dispatched — the same reasoning as the coin-box beam at 80%.
+The code already implements the lockout; only the warning is new.
+
+### R-5 · Coin lockout is per gate movement, not per coin
+
+A coin needs a lockout only if a gate must actually move. Consecutive coins to
+the same destination wait for nothing.
+
+- Track each gate's current position. Lock out only for the gates that must
+  change, and only for that travel.
+- `COIN_LOCKOUT_MS` default drops to **400 pending measurement**, and becomes a
+  per-unit measured value recorded at calibration with the gate angles.
+  Measured on the real flaps and stops, never taken from the servo datasheet.
+- A coin returned because the acceptor was inhibited gets a brief **"one
+  moment"** indicator. A returned coin with no explanation reads as a broken
+  machine.
+
+Never shorten the lockout below measured travel plus settle.
+
+### R-6 · DEBUG-only bench mode, built before the hardware exists
+
+Minimum: raw pulse count and gap per coin; commanded versus counted coins with
+edge times per hopper attempt; a raw flow pulse counter; step-each-output for
+the gates (servos have no position feedback); the specific cause of a clock
+failure; blank EEPROM distinguished from a failed checksum.
+
+### R-7 · Spec corrections to make in the Rev B pass
+
+§1.3 and §3.2 three-position servo · §1.5 three items long since decided (D-8,
+D-9, confirm button) · §1.2 and `wiring.md` coin-box beam at 80%, not the fill
+line · §7.1 `dispensed`, superseded by the record below.
+
+### P-2 · The saved transaction owns the credit
+
+§3.3 treated the routing intent and the credit as one fact. They are two.
+
+**The open-transaction record owns the credit. The routing intent owns only
+where the coin physically went.** On boot the machine does **not** re-credit:
+it resolves the routing by incrementing `profit_unknown` and writing the tagged
+history event, and nothing else. (`accept_pending_coin()` writes the
+transaction straight after marking the coin, so the restored credit already
+includes it; crediting again doubles it.)
+
+### Open-transaction record · layout version 3
+
+Root cause of P-2, P-4 and P-5: the old record held how much credit existed but
+not what had already been poured or paid.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `credit` | int32 centavos | Money the user still has in the machine |
+| `inserted` | int32 centavos | For Thank You, history and daily profit |
+| `target_ml` | uint16 | Committed for the current pour, 0 if none |
+| `banked_ml` | uint16 | Poured in completed segments **of the current pour** |
+| `segment_ml` | uint16 | Poured in the segment in progress, as last checkpointed |
+| `total_ml` | uint16 | **Billed** volume of **earlier** pours |
+| `phase` | uint8 | Resume code, below |
+| `leg_hopper`, `leg_count` | uint8 × 2 | Payout leg in progress |
+
+20 bytes of payload, **28 per slot**, layout version 2 → 3, **no migration**
+(no units in the field).
+
+`banked_ml` and `total_ml` are different numbers and stay apart: billing rounds
+down **once per pour, on `banked_ml + segment_ml`**. Rounding per segment would
+favour the machine once per pause, which is one time too many.
+
+**Framing asymmetry.** A layout-version mismatch rejects every record, so the
+inventory reads zero and the machine locks until the float is loaded (§7.3). A
+single failed transaction slot falls back and does **not** touch the inventory —
+per-record framing exists precisely so one bad record cannot invalidate the
+others.
+
+#### D-1 · Checkpoint every 100 mL
+
+`segment_ml` is written each time `banked_ml + segment_ml` crosses a
+`REFUND_ROUND_ML` boundary. Billing charges whole 100 mL steps, so a power cut
+then costs the user nothing beyond normal rounding. Coarser takes money from
+them; finer spends EEPROM life for nothing. The checkpoint write can delay the
+valve cut-off by about 2 mL, well inside the accepted flow-sensor tolerance.
+
+#### D-2 · Ring to 64 slots
+
+About 50 writes per transaction worst case (20 coins + 20 checkpoints + open,
+select, pauses, settle, four leg writes, close).
+
+64 × 100,000 / (50 × 100 per day) = **1,280 days ≈ 3.5 years**. At 32 slots it
+would be 1.75.
+
+Transaction ring `0x400`–`0xB00` (1024–2816), in-flight ring `0xB00`–`0xE00`
+(2816–3584), **512 bytes free**. Headroom for a field nobody has thought of yet
+is worth more than another year of wear margin.
+
+#### D-3 · Phase is a resume code, not the raw state
+
+| Phase | Covers | On boot |
+|---|---|---|
+| NONE | no transaction | STANDBY |
+| CREDIT | ACCEPTING, SELECTING, COMPLETE | COMPLETE with the credit |
+| POUR | AWAITING_BOTTLE … SETTLING | settle from the checkpoint, refund the rest, COMPLETE |
+| PAYING | PAYING_CHANGE | PAYING_CHANGE for what is still owed |
+
+A stored raw state number breaks silently when the state list is reordered.
+
+**The valve is never reopened on boot.** Now §9 invariant 9. A machine that
+resumes pouring at power-up with no bottle present is P-1 wearing a different
+hat.
+
+#### D-4 · A cut mid-payout re-pays the whole leg
+
+Leg start and leg end are written; coins within a leg are not (a ~90 ms write
+while the outlet sensor is being polled risks a missed count, and a missed
+count is a false jam). After a cut mid-leg, boot **deducts the whole commanded
+leg from inventory and pays it again**. Understating inventory locks early
+rather than promising change that is not there; overpaying by at most one leg,
+in a roughly three-second window, is the machine guessing against itself.
+
+A distinctly tagged history event (`EVT_LEG_REPAID`) records it, so an operator
+whose physical count is off can see why.
+
+#### D-5 · CHANGE JAM closes the transaction
+
+Otherwise clearing a jam and rebooting offers the previous user's credit to
+whoever is standing there — a theft route that appears every time the machine
+is serviced. The unpaid amount is settled by the operator by hand.
+
+**Unsettled jam amounts are listed on the Admin screen**, not only in history.
+
+#### R-8 · A slot fallback that would resurrect an older state
+
+If the slot after the newest readable one is **corrupt and not blank**, a newer
+write was lost — torn by the power cut, or a worn cell — and the readable one is
+an older state. If it says "open", the transaction is **treated as closed** and
+a tagged history entry (`EVT_TXN_SLOT_LOST`) records the credit not resumed.
+
+The asymmetry decides it: resuming offers money to a stranger, every time it
+happens; closing a genuine open transaction costs one user once, and that user
+is standing at the machine able to complain to an operator.
+
+### R-9 · COMPLETE times out after 60 seconds
+
+Then auto-finish and pay out. Sixty rather than twenty because the user is
+handling a full bottle and a cap. A countdown shows for the last fifteen
+seconds. `COMPLETE_TIMEOUT_MS = 60000`; shorten it and a user who paid loses
+their change to the next person in line.
+
+### Sequence · WO-005 §3
+
+1 open-transaction record · 2 rulings, spec corrections, Rev B · 3 the seven
+defects · 4 simulator rework plus `hmi_spec.md` (written from scratch) · 5 Part
+C · 6 Part D and the 21 cases · 7 `hmi.cpp` · 8 bench mode. Stop for review
+after each.
+
+The `.HMI` transcription is the longest person-blocked item and sits on the
+critical path, so what unblocks it moves first. **October is not achievable and
+is not to be optimised for.** Build it right; the date is managed with the
+client.
 
 ---
 

@@ -197,12 +197,15 @@ A coin arriving during the lockout window is drained, never queued. There is no 
 
 3.3 Power-loss reconciliation
 
+The routing intent and the credit are two facts with two owners. The open-transaction record (7.1) owns the credit. The routing intent owns only where the coin physically went.
+
 On boot, if an uncommitted routing intent exists:
 
-credit the user the coin's value
-increment the PROFIT counter, not the hopper counter
+increment the PROFIT_UNKNOWN counter, never a hopper counter and never a denomination counter the coin may not have reached
 write a distinctly tagged event to the history ring
 clear the intent
+
+and nothing else. THE COIN IS NOT CREDITED HERE. The transaction record is written immediately after the intent is marked, so the credit restored from it already includes this coin, and crediting again would pay the user twice for one coin. An earlier revision of this section listed "credit the user the coin's value" as a boot step; that was wrong.
 
 Assuming profit never over-claims hopper stock. Overstating hopper stock makes the machine promise change it cannot pay, which is a jam and a stranded user. Understating makes it lock early, which is an inconvenience. The tag exists so a service tech reading history sees why a physical count differs, rather than suspecting theft.
 
@@ -386,10 +389,10 @@ Inventory	₱1 count, ₱5 count, profit ₱10 count, profit ₱20 count, profit
 Fault state	Persistent fault flags
 Daily counters	Volume dispensed, profit, date — wear-levelled ring, 8 slots
 History ring	20 entries: timestamp, amount in, volume out, change out, event tag
-Open transaction	Credit, target, dispensed — wear-levelled ring, 32 slots
-Routing intent	Pending coin value and destination — wear-levelled ring, 64 slots
+Open transaction	Credit, inserted, target, banked, segment, total, resume phase, payout leg — wear-levelled ring, 64 slots. See 7.1.1
+Routing intent	Pending coin and destination — wear-levelled ring, 64 slots
 
-Schema version 2. A version 1 record is rejected by the framing check and its region initialises fresh, which is correct — misreading an old layout would report inventory that never existed.
+Schema version 3. A record from any other version is rejected by the framing check and its region initialises fresh, which is correct — misreading an old layout would report inventory that never existed. There is no migration: with every record rejected the inventory reads zero and the machine locks per 7.3 until an operator loads the float.
 
 profit_p10 and profit_p20 are separate counters. Without the split the chamber's peso value cannot be derived from its count, and reconciling a physical collection against the recorded total becomes impossible.
 
@@ -397,7 +400,41 @@ profit_unknown is a third counter, for coins routed to the chamber whose denomin
 
 Records are framed individually rather than under one block checksum — each carries its own magic word, schema version and CRC8. A corrupt open-transaction record therefore cannot invalidate the inventory. The history ring is framed per entry for the same reason.
 
-The open transaction does not store a machine state. §2.2 resumes an interrupted transaction to COMPLETE with its remaining credit regardless of where it was interrupted, so a stored state would be dead weight, and a mid-pour state cannot be safely resumed in any case.
+7.1.1 The open-transaction record
+
+The record must hold what the machine needs to resume, which is more than how much credit exists: it is also what has already been poured and what has already been paid.
+
+Field	Meaning
+credit	Money the user still has in the machine. THIS RECORD OWNS THE CREDIT (3.3)
+inserted	Centavos inserted, for Thank You, history and daily profit
+target_ml	Volume committed for the current pour, 0 if none
+banked_ml	Poured in the completed segments of the CURRENT pour (a segment ends at a bottle pause)
+segment_ml	Poured in the segment in progress, as of the last checkpoint
+total_ml	BILLED volume of EARLIER pours in this transaction
+phase	Resume code, below
+leg_hopper, leg_count	The payout leg in progress, 0 coins if none
+
+Twenty bytes; twenty-eight per slot with the sequence number and framing.
+
+banked_ml and total_ml are different numbers and are never merged. Billing rounds down once per pour, on banked_ml + segment_ml (4.4). Rounding per segment would favour the machine once per pause, which is one time too many.
+
+CHECKPOINTS. segment_ml is written each time banked_ml + segment_ml crosses a REFUND_ROUND_ML boundary. Billing charges whole 100 mL steps, so after a power cut the round-down of the stored sum is exactly what the user would have been billed. Coarser takes money from the user; finer spends EEPROM life for nothing.
+
+PHASE. A resume code, not the machine state. A stored raw state number would break silently when the state list is reordered.
+
+Phase	Covers	On boot
+NONE	no transaction	STANDBY
+CREDIT	ACCEPTING, SELECTING, COMPLETE	COMPLETE with the credit
+POUR	AWAITING_BOTTLE to SETTLING	settle from the checkpoint, refund the rest, then COMPLETE
+PAYING	PAYING_CHANGE	PAYING_CHANGE for what is still owed
+
+No phase resumes into a pour. See invariant 9.
+
+PAYOUT LEG. The leg is written when a hopper starts and cleared when it finishes; coins within a leg are not written, because an EEPROM write while the outlet sensor is being polled risks a missed count. After a cut mid-leg the number of coins that left is unknowable, so boot deducts the whole commanded leg from inventory and pays it again, and writes a distinctly tagged history event. The machine guesses against itself: inventory is understated and the user is overpaid by at most one leg.
+
+CHANGE JAM closes the record. The unpaid amount goes to history and to the Admin list of unsettled amounts, and is settled by the operator by hand. A record left open would offer that credit to whoever is standing at the machine after the jam is cleared.
+
+A SLOT THAT CANNOT BE TRUSTED. On boot the newest readable slot is taken. If the slot after it is corrupt and not blank, a newer write was lost — torn by the power cut, or a worn cell — and the readable slot is an older state. If that older state says a transaction is open, it is treated as closed and a tagged history entry records the credit that was not resumed. Resuming it could offer an already-paid balance to a stranger; closing it costs one user once, and that user can be settled by hand.
 
 7.2 Write policy
 
@@ -408,11 +445,11 @@ THE PER-COIN OPEN-TRANSACTION WRITE IS INTENTIONAL. A power cut between the last
 Three regions are wear-levelled across rings rather than hammering one address. AVR EEPROM is rated roughly 100,000 writes PER CELL, and the sizing assumption is 100 transactions/day — a school with cheap cold water, no competition on site, and demand concentrated at lunch. Size for the day it works, not the average day.
 
 Region	Writes per transaction	Slots	Worst-case life
-Open transaction	up to 24 (one per coin, plus open/select/settle/close)	32	≈3.7 years
+Open transaction	up to about 50 (one per coin, one per 100 mL poured, plus open, select, pauses, settle, payout legs, close)	64	≈3.5 years
 Routing intent	up to 40 (two per coin: mark before the servo, clear after it settles)	64	≈4.4 years
 Daily counters	1	8	≈21 years
 
-Routing intent carries twice the slots of the open transaction because it is written twice as often and each slot is a quarter the size. At a single address it was the shortest-lived cell in the machine — 25 days at worst case.
+Both rings now hold 64 slots. The open-transaction ring was doubled when the 100 mL pour checkpoint (7.1.1) roughly doubled its writes per transaction. The routing-intent record at a single address was the shortest-lived cell in the machine — 25 days at worst case.
 
 Ring wear is exposed read-only in Admin as a cumulative WRITE COUNT, not a slot index. The count is what tells a technician how much design life a unit has consumed; the slot index only says where in the loop it currently sits. Slot wrap is logged in the boot trace under DEBUG so that "did the ring wrap, or did a CRC fail" is answerable without instrumenting the unit.
 
@@ -479,6 +516,10 @@ A detected fault is latched, the transaction is settled, the change is paid, and
 The single exception is CHANGE JAM, where the machine has physically demonstrated it cannot pay. There, locking is the honest outcome — the money is not reachable and pretending otherwise helps nobody. Every other fault waits its turn.
 
 This applies to FLOW STALL (see 5.2), PUMP, ACCEPTOR, OUT OF WATER and STORAGE FULL alike. Any new fault added later inherits it by default; if a new fault genuinely cannot wait, that is a change to this invariant and must be argued for explicitly, not assumed.
+
+**9. The valve is never reopened on boot.**
+
+No resume phase leads into a pour (7.1.1). An interrupted pour is settled from its last checkpoint and the remainder refunded; the user chooses again with a bottle in place. A machine that resumes pouring at power-up cannot know a bottle is there, and pouring with no bottle is the worst defect this project has found.
 10. Deferred
 
 Do not build these now. They are named so they are not lost.

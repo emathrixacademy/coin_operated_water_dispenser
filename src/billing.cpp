@@ -84,8 +84,9 @@ volume_t billing_select(volume_t target_ml) {
   // The price is deducted NOW, before the valve opens. What the flow sensor
   // later reports cannot change it. That ordering is the whole design.
   s_txn.credit -= billing_price_of(target_ml);
-  s_txn.target_ml = target_ml;
-  s_txn.dispensed_ml = 0;
+  s_txn.target_ml = (uint16_t)target_ml;   // <= MAX_TRANSACTION_ML, checked above
+  s_txn.banked_ml = 0;
+  s_txn.segment_ml = 0;
   return target_ml;
 }
 
@@ -112,8 +113,9 @@ void billing_settle_partial(volume_t delivered_ml) {
 
   // Return the unused portion of the selection price to credit.
   s_txn.credit += (paid - owed);
-  s_txn.total_ml += charged_ml;
-  s_txn.dispensed_ml = 0;
+  s_txn.total_ml = (uint16_t)(s_txn.total_ml + charged_ml);
+  s_txn.banked_ml = 0;
+  s_txn.segment_ml = 0;
   s_txn.target_ml = 0;
 }
 
@@ -141,8 +143,9 @@ void billing_settle_complete(volume_t delivered_ml) {
   // sell, and it does not drift with the sensor's tolerance. Using the measured
   // figure would make the daily volume total disagree with the daily profit
   // total by the sensor error, every single transaction.
-  s_txn.total_ml += s_txn.target_ml;
-  s_txn.dispensed_ml = 0;
+  s_txn.total_ml = (uint16_t)(s_txn.total_ml + s_txn.target_ml);
+  s_txn.banked_ml = 0;
+  s_txn.segment_ml = 0;
   s_txn.target_ml = 0;
 }
 

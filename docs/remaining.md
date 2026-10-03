@@ -15,6 +15,48 @@ block.
 
 ---
 
+## Current sequence — WO-005 §3, as of 2026-10-04
+
+**This section is the live status. Sections further down predate it and are kept
+for their detail; where they disagree with this one, this one is right.**
+
+**October 2026 is not achievable.** Engineering alone is about 17 working days,
+the `.HMI` transcription is 4–6 days of a person's time, and bench work on the
+assembled machine is about 11 more, before parts lead time. The date is being
+managed with the client; the work is not to be compressed.
+
+| # | Item | Status |
+|---|---|---|
+| 1 | Open-transaction record, layout version 3 | **Done 2026-10-04** — struct, 64-slot ring, R-8 slot-trust check, 13 new host tests. The state machine does not use the new fields yet; that is item 3 |
+| 2 | Rulings into `decisions.md`, spec corrections (R-7), Rev B two-gate diverter | Rulings **done**. §3.3, §7.1, §7.2, §9 **done**. R-7 corrections and Rev B **not started** |
+| 3 | WO-003-B: defects P-1 to P-7, each with a regression test | Not started |
+| 4 | WO-004 simulator rework (icons, animation, R-1/R-2/R-3) plus `docs/hmi_spec.md` from scratch | Not started. **Critical path: unblocks the `.HMI` transcription** |
+| 5 | M5 Part C: boot recovery, transient faults, coin-box beam, Admin, buzzer, rollover, R-4 warning, R-5 lockout, R-9 timeout | Not started |
+| 6 | M5 Part D: native simulator, 21 scenario cases | Not started |
+| 7 | `hmi.cpp`, the real display driver | Not started |
+| 8 | DEBUG bench mode (R-6) | Not started |
+
+**Known stale against layout version 3:** `sim/hmi/watervendo-hmi.html` still
+models the version-2 record (an `open` flag, 32 slots in the Admin wear figure).
+Its money-path port still matches `src/` — `verify_port.js` passes. It is
+brought up to date in item 4.
+
+**Decisions table in §D below is out of date:** M-1, M-2, M-4, D-5, D-8 and D-9
+are all settled in `decisions.md`.
+
+### Parts lead times
+
+None known yet. Record each here as it becomes known.
+
+| Part | Lead time | Notes |
+|---|---|---|
+| Coin hopper, first unit | unknown | D-11: buy one, run Case 11 against it |
+| Coin hoppers, the pair | unknown | Ordered only after the first passes. **Two lead times in series; probably the longest single item** |
+| Nextion NX4832T035 | unknown | Not to be bought before the screen design is approved |
+| Coin acceptor (CH-926 class), SG90 × 2, DS3231, SSRs, sensors | unknown | |
+
+---
+
 ## Standing constraints on everything below
 
 - **No hardware exists yet.** Every per-unit calibration in M8 is unmeasurable
@@ -26,8 +68,9 @@ block.
   a new hardware requirement.
 - ~~The native tests have never been executed here.~~ **RESOLVED 2026-08-30.**
   Host toolchain installed; 75/75 passing across four suites on that date.
-  **Current figure: 103/103 across five suites** (`test_billing`, `test_calendar`,
-  `test_change_plan`, `test_eeprom`, `test_fault_mask`), re-run 2026-10-04. See
+  **Current figure: 116/116 across five suites** (`test_billing`, `test_calendar`,
+  `test_change_plan`, `test_eeprom`, `test_fault_mask`), re-run 2026-10-04 after
+  the layout-3 transaction record. See
   `test/README.md` for the toolchain setup and the 248-character path trap that
   makes the winget install fail in a way that looks nothing like a path problem.
 
@@ -48,7 +91,7 @@ Defects from `docs/reconciliation.md`. All closed; kept for the audit trail.
 | R-7 | Unrouted-coin reconciliation increments profit (A-4, §3.3) | **Done** — to `profit_unknown` |
 | R-8 | `coin_hopper_plan()` / `can_cover()` per §3.4 (A-9) | **Done** — `HOPPER_RESERVE_P5 = 10` |
 | R-9 | `billing_worst_case_change()` → full ₱20 ceiling (A-5) | **Done** |
-| R-10 | Host toolchain; run `pio test -e native` | **Done** — 75/75 then, 103/103 as of 2026-10-04 |
+| R-10 | Host toolchain; run `pio test -e native` | **Done** — 75/75 then, 116/116 as of 2026-10-04 |
 | R-11 | Extract plan arithmetic; unit test it | **Done** — `change_plan.*`, 19 tests |
 
 Plus, from the rulings of 2026-08-30:
