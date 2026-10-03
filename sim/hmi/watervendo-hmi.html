@@ -111,6 +111,27 @@
     text-align: center; }
   #screen .nav .tab.sel { background: #0d2238; }
 
+  /* ---- Animation ------------------------------------------------------
+     Every animation here is a FIXED FRAME LOOP stepped with steps(), never a
+     smooth tween, because that is all the Nextion Basic can do: pre-rendered
+     frames swapped by the panel's own timer. The Mega never drives a frame.
+     It says which loop is playing (and, for the bottle, one fill value); the
+     panel animates itself. Frame counts and rates are listed beside each. */
+  @keyframes k-pour { to { stroke-dashoffset: -12; } }
+  @keyframes k-wave { to { transform: translateX(-43px); } }
+  @keyframes k-fall { from { transform: translateY(-26px); } to { transform: translateY(var(--fall, 40px)); } }
+  @keyframes k-blink { 50% { opacity: .25; } }
+  @keyframes k-land { from { transform: translateY(-9px); } to { transform: none; } }
+  #screen .a-pour { stroke-dasharray: 7 5; animation: k-pour .4s steps(4) infinite; }   /* 4 frames, 10 fps */
+  #screen .a-wave { animation: k-wave .8s steps(4) infinite; }                          /* 4 frames, 5 fps */
+  #screen .a-fall { animation: k-fall 1.6s steps(8) infinite; }                         /* 8 frames, 5 fps */
+  #screen .a-blink { animation: k-blink 1s steps(1) infinite; }                         /* 2 frames, 2 fps */
+  #screen .a-land { animation: k-land .3s steps(3) 1; }                                 /* 3 frames, once */
+  #screen .coinrow .cn { opacity: .22; }
+  #screen .coinrow .cn.lit { opacity: 1; }
+  @media (prefers-reduced-motion: reduce) { #screen [class*="a-"] { animation: none; } }
+  button.c-btn.coin { display: inline-flex; align-items: center; gap: 6px; }
+
   /* Fit audit outlines. */
   #screen.showfit .fld.over { outline: 2px solid var(--s-red); outline-offset: -1px;
     background: rgba(255,0,0,.18); }
@@ -1596,6 +1617,34 @@ function fmt_temp(t) {
 }
 
 // ---- Icons (inline SVG, no assets) -----------------------------------------
+// Flat coin. One construction for all four denominations: a disc, one inner
+// ring at the same stroke weight, and the value as a numeral. The numeral is
+// text on purpose -- money is never only a symbol. P10 and P20 are bimetallic,
+// so their centre disc takes the second metal.
+const COIN_METAL = { 1: ['#c7ccd4', '#c7ccd4'], 5: ['#d8b04a', '#d8b04a'],
+                     10: ['#c7ccd4', '#d8b04a'], 20: ['#c98a4b', '#c7ccd4'] };
+function coin_svg(d, w) {
+  const m = COIN_METAL[d];
+  return `<svg width="${w}" height="${w}" viewBox="0 0 24 24"><circle cx="12" cy="12" r="11" fill="${m[0]}"/>` +
+    `<circle cx="12" cy="12" r="7.6" fill="${m[1]}" stroke="#3b3f46" stroke-width="1.2"/>` +
+    `<text x="12" y="${d >= 10 ? 15.4 : 16}" font-size="${d >= 10 ? 9 : 11}" font-weight="bold" text-anchor="middle" fill="#1c1f24" font-family="Arial">${d}</text></svg>`;
+}
+
+// The bottle on the dispensing page, 110 x 244. The Mega supplies one number
+// (percent); the panel picks the fill frame from it and runs the stream and
+// surface loops on its own timer.
+const BOTTLE_PATH = 'M40 24h30v18c0 8 28 14 28 34v140a8 8 0 0 1-8 8h-70a8 8 0 0 1-8-8v-140c0-20 28-26 28-34z';
+const BOTTLE_BASE = 224, BOTTLE_FILL_H = 148;
+function bottle_svg() {
+  return `<svg width="110" height="244" viewBox="0 0 110 244">` +
+    `<defs><clipPath id="btl"><path d="${BOTTLE_PATH}"/></clipPath></defs>` +
+    `<rect x="46" y="0" width="18" height="11" rx="2" fill="#7f8b99"/>` +
+    `<line data-stream x1="55" y1="11" x2="55" y2="220" stroke="#4fb0ff" stroke-width="4" class="a-pour"/>` +
+    `<g clip-path="url(#btl)"><rect data-water x="0" y="224" width="110" height="0" fill="#1e88ff"/>` +
+    `<g data-surf><path class="a-wave" d="M-43 0q10.75-5 21.5 0t21.5 0t21.5 0t21.5 0t21.5 0t21.5 0t21.5 0t21.5 0" fill="none" stroke="#9fd4ff" stroke-width="2.5"/></g></g>` +
+    `<path data-outline d="${BOTTLE_PATH}" fill="none" stroke="#ffffff" stroke-width="2.4"/></svg>`;
+}
+
 const IC = {
   drop: (w, c, fill) => `<svg width="${w}" height="${Math.round(w * 1.3)}" viewBox="0 0 20 26"><path d="M10 1.5C10 1.5 2 11.5 2 17a8 8 0 0 0 16 0C18 11.5 10 1.5 10 1.5Z" fill="${fill ? c : 'none'}" stroke="${c}" stroke-width="2"/>${fill ? '' : `<path d="M6.5 17.5a3.5 3.5 0 0 0 3.5 3.5" fill="none" stroke="${c}" stroke-width="1.6"/>`}</svg>`,
   coins: (w, c) => `<svg width="${w}" height="${Math.round(w * .85)}" viewBox="0 0 40 34" fill="none" stroke="${c}" stroke-width="2.2"><ellipse cx="20" cy="7" rx="14" ry="5"/><path d="M6 7v7c0 2.8 6.3 5 14 5s14-2.2 14-5V7"/><path d="M6 14v7c0 2.8 6.3 5 14 5s14-2.2 14-5v-7"/><path d="M6 21v6c0 2.8 6.3 5 14 5s14-2.2 14-5v-6"/></svg>`,
@@ -1660,7 +1709,12 @@ const PAGES = {
     ICON(220, 22, IC.drop(40, '#1e88ff'), 'data-lp="admin" title="Hold 3 s: admin"') +
     T('_welcome', 0, 84, 480, 46, 40, 'c b', 'WELCOME') +
     T('_insert', 0, 134, 480, 20, 16, 'c bl', 'Insert coin to start dispensing.') +
-    ICON(214, 166, IC.coins(52, '#ffffff')) +
+    // Coins dropping into the slot: the invitation to start. 8 frames, 5 fps,
+    // three coins on the same loop offset by a third each.
+    `<div style="${pos(184, 156, 112, 54)}overflow:hidden;--fall:54px">` +
+    [[1, 6, 0], [5, 44, -0.55], [10, 82, -1.1]].map(([d, x, dl]) =>
+      `<div class="a-fall" style="left:${x}px;top:0;animation-delay:${dl}s">${coin_svg(d, 24)}</div>`).join('') + `</div>` +
+    `<div style="${pos(190, 212, 100, 7)}border:2px solid #ffffff;border-radius:4px"></div>` +
     G('clk', BOX(80, 226, 320, 28, 'border-color:var(--s-amber)') +
       T('clk', 80, 232, 320, 18, 12, 'c b', 'CLOCK NOT SET — date and totals unavailable', 'color:var(--s-amber)')) +
     NAV('home'),
@@ -1698,32 +1752,34 @@ const PAGES = {
     NAV('home'),
 
   disp: () =>
-    T('title', 0, 6, 480, 24, 20, 'c b') +
-    T('_sv', 20, 40, 200, 14, 11, 'b', 'SELECTED VOLUME') + T('sv', 20, 56, 210, 32, 28, 'b') +
-    T('svp', 20, 90, 200, 16, 13, 'mu') +
-    T('_bal', 20, 114, 200, 14, 11, 'b', 'BALANCE') + T('bal', 20, 130, 210, 28, 24, 'b bl') +
-    T('_wd', 260, 40, 200, 14, 11, 'b', 'WATER DISPENSED') + T('wd', 260, 56, 210, 32, 28, 'b bl') +
-    T('_tg', 260, 98, 200, 14, 11, 'b', 'TARGET') + T('tg', 260, 114, 210, 28, 22, 'b') +
-    `<div style="${pos(20, 168, 390, 16)}background:#0f1b2b;border:1px solid #2b4566;border-radius:3px"><div data-pfill style="left:0;top:0;height:14px;width:0;background:#1e88ff;border-radius:2px"></div></div>` +
-    T('pct', 418, 166, 52, 20, 16, 'b') +
-    G('run', T('f1', 0, 202, 480, 18, 15, 'c bl', 'Thank you!') +
-      T('f2', 0, 224, 480, 18, 14, 'c', 'Please wait until dispensing is complete.')) +
-    G('paused', BOX(20, 194, 440, 80, 'border:2px solid var(--s-amber)') +
-      T('pz1', 32, 202, 300, 18, 15, 'b', 'Put your bottle back within', 'color:var(--s-amber)') +
-      T('pz2', 32, 224, 300, 18, 13, '') + T('pz3', 32, 246, 300, 18, 12, 'mu', 'If not, your balance is kept for you.') +
-      T('cd', 340, 206, 110, 56, 44, 'c b', '', 'color:var(--s-amber)')) +
+    T('title', 0, 6, 350, 24, 19, 'c b') +
+    T('_sv', 20, 40, 156, 14, 11, 'b', 'SELECTED VOLUME') + T('sv', 20, 56, 156, 28, 24, 'b') +
+    T('svp', 20, 86, 156, 15, 12, 'mu') +
+    T('_wd', 184, 40, 160, 14, 11, 'b', 'WATER DISPENSED') + T('wd', 184, 56, 160, 28, 24, 'b bl') +
+    T('_bal', 20, 108, 156, 14, 11, 'b', 'BALANCE') + T('bal', 20, 124, 156, 28, 24, 'b bl') +
+    T('_tg', 184, 108, 160, 14, 11, 'b', 'TARGET') + T('tg', 184, 124, 160, 28, 22, 'b') +
+    // The screen people watch longest: water rising in a bottle. The numbers
+    // beside it stay as text -- a dispute is settled by what the screen said.
+    `<div data-bottle style="left:356px;top:32px">${bottle_svg()}</div>` +
+    T('pct', 368, 188, 86, 26, 21, 'c b', '', 'text-shadow:0 0 4px #000,0 0 3px #000') +
+    G('run', T('f1', 20, 190, 324, 20, 15, 'c bl', 'Filling your bottle') +
+      T('f2', 20, 214, 324, 18, 13, 'c', 'Please wait until dispensing is complete.')) +
+    G('paused', BOX(20, 164, 324, 110, 'border:2px solid var(--s-amber)') +
+      T('pz1', 30, 172, 300, 18, 15, 'b', 'Put your bottle back within', 'color:var(--s-amber)') +
+      T('pz2', 30, 202, 212, 16, 12, '') + T('pz3', 30, 222, 212, 16, 12, 'mu', 'If not, your balance is kept.') +
+      T('cd', 244, 196, 94, 46, 38, 'c b', '', 'color:var(--s-amber)')) +
     G('complete',
-      BTN(20, 196, 210, 76, 'DISPENSE_AGAIN', T('_more', 0, 16, 210, 24, 19, 'c b', 'DISPENSE MORE') +
-        T('_more2', 0, 44, 210, 16, 12, 'c mu', 'Choose another volume')) +
-      BTN(250, 196, 210, 76, 'FINISH', T('_fin', 0, 14, 210, 24, 19, 'c b', 'FINISH') +
-        T('fc', 0, 42, 210, 20, 15, 'c'), 'border-color:var(--s-green)')) +
+      BTN(20, 172, 156, 100, 'DISPENSE_AGAIN', T('_more', 0, 30, 156, 20, 15, 'c b', 'DISPENSE MORE') +
+        T('_more2', 0, 54, 156, 16, 11, 'c mu', 'Choose another volume')) +
+      BTN(188, 172, 156, 100, 'FINISH', T('_fin', 0, 24, 156, 24, 19, 'c b', 'FINISH') +
+        T('fc', 0, 52, 156, 18, 13, 'c'), 'border-color:var(--s-green)')) +
     NAV('home'),
 
   paying: () =>
     T('_title', 0, 14, 480, 26, 22, 'c b', 'DISPENSING YOUR CHANGE') +
     ICON(210, 50, IC.coins(60, '#ffcc1a')) +
     T('amt', 0, 106, 480, 52, 44, 'c b', '', 'color:var(--s-amber)') +
-    T('paid', 0, 162, 480, 18, 14, 'c') + T('plan', 0, 184, 480, 16, 12, 'c mu') +
+    T('paid', 0, 162, 480, 18, 14, 'c') + `<div class="coinrow" data-coinrow style="${pos(0, 180, 480, 24)}"></div>` +
     BOX(40, 208, 400, 64, 'border:2px solid var(--s-amber)') +
     T('_col1', 40, 216, 400, 24, 19, 'c b', 'Collect your coins', 'color:var(--s-amber)') +
     T('_col2', 40, 244, 400, 18, 14, 'c', 'from the change tray below.') +
@@ -1746,7 +1802,12 @@ const PAGES = {
     T('_dt', 252, 154, 216, 13, 10, 'b mu', 'DATE & TIME') + T('dt', 252, 168, 216, 16, 12, '') +
     // The change prompt is the MORE prominent of the two -- decisions.md.
     BOX(8, 198, 464, 46, 'border:2px solid var(--s-amber)', '', 'data-chgbox') +
-    ICON(18, 206, IC.coins(32, '#ffcc1a')) +
+    // Coins falling into the tray: people forget their change, and motion
+    // fixes that better than a line of text. 8 frames, 5 fps.
+    G('tray', `<div style="${pos(14, 201, 40, 32)}overflow:hidden;--fall:32px">` +
+      `<div class="a-fall" style="left:2px;top:0">${coin_svg(5, 16)}</div>` +
+      `<div class="a-fall" style="left:22px;top:0;animation-delay:-.8s">${coin_svg(1, 16)}</div></div>` +
+      `<div style="${pos(14, 234, 40, 4)}background:var(--s-amber);border-radius:2px"></div>`) +
     T('cp1', 60, 203, 400, 22, 18, 'b', '', 'color:var(--s-amber)') +
     T('cp2', 60, 226, 400, 14, 12, '') +
     BOX(8, 248, 464, 28) + ICON(20, 250, IC.bottle(11, '#ffffff')) +
@@ -1975,7 +2036,7 @@ const UPD = {
     const st = d.state, p = d.pour;
     const resumed = st === STATE_COMPLETE && d.prev === STATE_BOOT;
     const titles = { [STATE_DISPENSING]: 'DISPENSING...', [STATE_PAUSED]: 'BOTTLE REMOVED',
-                     [STATE_SETTLING]: 'DISPENSING...', [STATE_COMPLETE]: resumed ? 'WELCOME BACK — BALANCE RESTORED' : 'DISPENSING COMPLETE' };
+                     [STATE_SETTLING]: 'DISPENSING...', [STATE_COMPLETE]: resumed ? 'BALANCE RESTORED' : 'DISPENSING COMPLETE' };
     set('title', titles[st] || '');
     color('title', st === STATE_PAUSED ? 'var(--s-amber)' : '');
     const has = p.valid && !resumed;
@@ -1986,12 +2047,27 @@ const UPD = {
     set('bal', peso(d.credit));
     const pct = has && p.target > 0 ? Math.min(100, idiv(p.delivered * 100, p.target)) : 0;
     set('pct', `${pct}%`);
-    const fill = q('[data-pfill]'); if (fill) fill.style.width = Math.round(388 * pct / 100) + 'px';
+    // Fill level: 21 pre-rendered frames, 5% apart, chosen by the panel from
+    // the one percentage the Mega sends. The stream and the surface ripple are
+    // loops the panel runs by itself; the Mega only says which state it is in.
+    const lvl = Math.min(100, idiv(pct, 5) * 5);
+    const wh = Math.round(BOTTLE_FILL_H * lvl / 100), wy = BOTTLE_BASE - wh;
+    const water = q('[data-water]'), surf = q('[data-surf]'), stream = q('[data-stream]'), outline = q('[data-outline]');
+    if (water) { water.setAttribute('y', wy); water.setAttribute('height', wh); }
+    if (surf) { surf.setAttribute('transform', `translate(0 ${wy})`); surf.style.display = lvl > 0 && st === STATE_DISPENSING ? '' : 'none'; }
+    if (stream) { stream.setAttribute('y2', Math.min(wy + 2, 222)); stream.style.display = st === STATE_DISPENSING ? '' : 'none'; }
+    // PAUSED: the bottle is gone. Its outline goes dashed and blinks, so a
+    // waiting screen never looks like a frozen one.
+    if (outline) {
+      outline.setAttribute('stroke-dasharray', st === STATE_PAUSED ? '7 6' : 'none');
+      outline.setAttribute('class', st === STATE_PAUSED ? 'a-blink' : '');
+      outline.setAttribute('stroke', st === STATE_PAUSED ? '#ffb020' : '#ffffff');
+    }
     show('run', st === STATE_DISPENSING || st === STATE_SETTLING);
     show('paused', st === STATE_PAUSED);
     show('complete', st === STATE_COMPLETE);
     set('f2', st === STATE_SETTLING ? 'Finishing…' : 'Please wait until dispensing is complete.');
-    set('pz2', `Dispensing continues from ${mlx(p.delivered)}.`);
+    set('pz2', `Continues from ${mlx(p.delivered)}.`);
     set('cd', `${Math.max(0, Math.ceil((BOTTLE_REMOVED_GRACE_MS - d.elapsed) / 1000))} s`);
     set('fc', `Get change ${peso(d.credit)}`);
   },
@@ -1999,7 +2075,25 @@ const UPD = {
   paying(d) {
     set('amt', peso(d.change_due));
     set('paid', `Paid so far ${peso(d.paid_so_far)} of ${peso(d.change_due)}`);
-    set('plan', `₱5 × ${d.plan.p5}   ·   ₱1 × ${d.plan.p1}`);
+    // One icon per coin in the plan, P5 first as they are paid. Each lights
+    // as the outlet sensor counts it. The amounts above remain text.
+    const row = q('[data-coinrow]');
+    if (row) {
+      const p5 = d.plan.p5, n = p5 + d.plan.p1, key = p5 + ':' + d.plan.p1;
+      if (row.dataset.k !== key) {
+        const x0 = Math.round((480 - n * 22) / 2);
+        row.innerHTML = Array.from({ length: n }, (_, i) =>
+          `<div class="cn" style="left:${x0 + i * 22}px;top:2px">${coin_svg(i < p5 ? 5 : 1, 20)}</div>`).join('');
+        row.dataset.k = key;
+      }
+      const n5 = Math.min(p5, idiv(d.paid_so_far, 500));
+      const n1 = idiv(d.paid_so_far - n5 * 500, 100);
+      row.querySelectorAll('.cn').forEach((el, i) => {
+        const lit = i < p5 ? i < n5 : (i - p5) < n1;
+        if (lit && !el.classList.contains('lit')) el.classList.add('lit', 'a-land');
+        if (!lit) el.classList.remove('lit', 'a-land');
+      });
+    }
   },
 
   thanks(d) {
@@ -2013,6 +2107,7 @@ const UPD = {
     set('cp1', chg ? `PLEASE TAKE YOUR CHANGE: ${peso(d.change_paid)}` : 'EXACT AMOUNT — NO CHANGE DUE');
     color('cp1', chg ? 'var(--s-amber)' : 'var(--s-muted)');
     set('cp2', chg ? 'Your coins are in the change tray below.' : '');
+    show('tray', chg);
     const box = q('[data-chgbox]'); if (box) box.style.borderColor = chg ? 'var(--s-amber)' : 'var(--s-line)';
   },
 
@@ -2241,7 +2336,10 @@ function sync_controls() {
 }
 function save_opts() { store_set(OPT_KEY, OPT); }
 
-document.querySelectorAll('[data-coin]').forEach(b => b.addEventListener('click', () => insert_coin(Number(b.dataset.coin))));
+document.querySelectorAll('[data-coin]').forEach(b => {
+  b.innerHTML = coin_svg(Number(b.dataset.coin), 22) + `<span>Insert ₱${b.dataset.coin}</span>`;
+  b.addEventListener('click', () => insert_coin(Number(b.dataset.coin)));
+});
 $('btn-confirm').addEventListener('click', press_confirm);
 $('btn-bottle').addEventListener('click', () => {
   W.bottle = !W.bottle; save_world(); sync_controls();
