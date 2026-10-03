@@ -1,0 +1,2618 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Water Vendo HMI</title>
+<!--
+  ===========================================================================
+  EMX-2026-WATERVENDO-01 -- browser HMI simulator (WO-002-A)
+  eMathrix Technologies. Client-facing demonstration artefact.
+  ===========================================================================
+
+  src/ IS AUTHORITATIVE. THIS FILE IS NOT.
+
+  This is a parallel JavaScript implementation of the firmware state machine,
+  written so the client can see and operate the screen design before a panel is
+  bought or a .HMI file is authored. It is not connected to the firmware and it
+  is not a test of it.
+
+  The money path is TRANSCRIBED, not approximated: change_plan(), the billing
+  arithmetic and the fault priority mask sit between BEGIN PORT / END PORT
+  markers below and are checked input-for-input against the compiled C by
+  sim/hmi/verify_port.js. If the JavaScript and the C ever disagree on any
+  input, the JavaScript is wrong.
+
+  Where src/ has no behaviour yet (TODO(M5-C): boot reconciliation, transient
+  fault clearing, Admin, buzzer) this file implements SPECIFICATION.md and marks
+  the place with [SPEC, src TODO]. Those parts will be replaced by a port of the
+  real code when Part C lands. Every such place is listed in sim/hmi/README.md.
+
+  Self-contained by design: no server, no build step, no network, no CDN. It has
+  to open from a USB stick on a laptop with no internet in two years' time.
+
+  Screen area: exactly 480 x 320 CSS pixels -- Nextion Basic NX4832T035. Never
+  scaled. A field that does not fit is a finding, and the fit audit reports it.
+-->
+<style>
+  :root {
+    --chrome-bg: #10141a;
+    --chrome-panel: #1a2029;
+    --chrome-line: #2c3542;
+    --chrome-text: #dfe6ee;
+    --chrome-muted: #8d9aab;
+    --chrome-accent: #3d8bfd;
+    --chrome-warn: #f0a020;
+    --chrome-bad: #ef5350;
+    --chrome-good: #4caf50;
+
+    /* Panel palette, sampled from the client's mockup (WATER-VENDO.pdf). */
+    --s-bg: #071321;
+    --s-panel: #0c1d33;
+    --s-line: #1f3d63;
+    --s-text: #ffffff;
+    --s-muted: #b9c6d6;
+    --s-blue: #1e88ff;
+    --s-blue-l: #4fb0ff;
+    --s-teal: #19b3a3;
+    --s-orange: #ff7a1a;
+    --s-purple: #9b5cff;
+    --s-green: #37d67a;
+    --s-yellow: #ffcc1a;
+    --s-amber: #ffb020;
+    --s-red: #ff4d4d;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--chrome-bg); color: var(--chrome-text);
+    font: 13px/1.4 "Segoe UI", Arial, sans-serif; }
+  h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  h2 { font-size: 12px; margin: 0 0 6px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--chrome-muted); }
+  .wrap { display: flex; flex-wrap: wrap; gap: 16px; padding: 16px; align-items: flex-start; }
+  .topbar { display: flex; gap: 16px; align-items: baseline; padding: 12px 16px 0; flex-wrap: wrap; }
+  .topbar .sub { color: var(--chrome-muted); font-size: 12px; }
+
+  /* ---- Bezel ---------------------------------------------------------- */
+  .bezel { background: linear-gradient(#5a2a1c, #3b1a11); padding: 22px 34px 22px 22px;
+    border-radius: 10px; box-shadow: 0 6px 24px rgba(0,0,0,.6), inset 0 0 0 2px #7a3a26;
+    position: relative; flex: none; }
+  .bezel .label { position: absolute; left: 22px; bottom: 4px; font-size: 10px; color: #d7b3a5; }
+  .bezel .buzz { position: absolute; right: 10px; top: 22px; width: 14px; height: 14px;
+    border-radius: 50%; background: #2a120b; box-shadow: inset 0 0 0 2px #1a0905; }
+  .bezel .buzz.on { background: var(--chrome-warn); box-shadow: 0 0 10px var(--chrome-warn); }
+
+  /* THE SCREEN. 480 x 320, never scaled. */
+  #screen { position: relative; width: 480px; height: 320px; overflow: hidden;
+    background: var(--s-bg); color: var(--s-text); font-family: Arial, Helvetica, sans-serif;
+    user-select: none; outline: 1px solid #000; }
+  #screen * { position: absolute; margin: 0; }
+  #screen .fld { white-space: nowrap; overflow: hidden; line-height: 1.15; }
+  #screen .c { text-align: center; }
+  #screen .r { text-align: right; }
+  #screen .b { font-weight: bold; }
+  #screen .mu { color: var(--s-muted); }
+  #screen .bl { color: var(--s-blue-l); }
+  #screen .box { border: 1px solid var(--s-line); border-radius: 6px; background: var(--s-panel); }
+  #screen .btn { border: 1px solid var(--s-line); border-radius: 6px; background: #10294a;
+    cursor: pointer; }
+  #screen .btn:active { background: #1b3c66; }
+  #screen .btn.dis { opacity: .32; cursor: not-allowed; }
+  #screen .btn.dis:active { background: #10294a; }
+  #screen svg { overflow: visible; }
+
+  /* Nav bar. Dimmed, not hidden, from SELECTING through PAYING_CHANGE -- decisions.md. */
+  #screen .nav { left: 0; top: 280px; width: 480px; height: 40px; background: #06101d;
+    border-top: 1px solid var(--s-line); }
+  #screen .nav .tab { top: 0; width: 120px; height: 40px; cursor: pointer;
+    border-right: 1px solid #10233a; }
+  #screen .nav .tab:last-child { border-right: 0; }
+  #screen .nav.dim .tab { opacity: .25; cursor: not-allowed; }
+  #screen .nav .tab .fld { left: 0; width: 120px; top: 26px; font-size: 9px; font-weight: bold;
+    text-align: center; }
+  #screen .nav .tab.sel { background: #0d2238; }
+
+  /* Fit audit outlines. */
+  #screen.showfit .fld.over { outline: 2px solid var(--s-red); outline-offset: -1px;
+    background: rgba(255,0,0,.18); }
+
+  /* ---- Control panel -------------------------------------------------- */
+  .panel { background: var(--chrome-panel); border: 1px solid var(--chrome-line); border-radius: 8px;
+    padding: 12px; }
+  .controls { width: 440px; max-width: 100%; display: grid; gap: 12px; }
+  .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .row .lab { color: var(--chrome-muted); font-size: 12px; min-width: 92px; }
+  button.c-btn { background: #253042; color: var(--chrome-text); border: 1px solid #3a4658;
+    border-radius: 5px; padding: 6px 10px; font: inherit; cursor: pointer; }
+  button.c-btn:hover { background: #2e3b51; }
+  button.c-btn.coin { background: #3a3016; border-color: #6b5a22; min-width: 86px; font-weight: 600; }
+  button.c-btn.primary { background: #1f4f9a; border-color: #2f68c4; font-weight: 600; }
+  button.c-btn.danger { background: #5a1f22; border-color: #8a2f33; }
+  button.c-btn.on { background: #1f6f45; border-color: #2f9a62; }
+  .seg { display: inline-flex; border: 1px solid #3a4658; border-radius: 5px; overflow: hidden; }
+  .seg button { background: #253042; color: var(--chrome-text); border: 0; border-right: 1px solid #3a4658;
+    padding: 5px 9px; font: inherit; cursor: pointer; }
+  .seg button:last-child { border-right: 0; }
+  .seg button.on { background: var(--chrome-accent); color: #fff; }
+  input.num { width: 64px; background: #0f141b; color: var(--chrome-text); border: 1px solid #3a4658;
+    border-radius: 4px; padding: 5px; font: inherit; }
+  select { background: #0f141b; color: var(--chrome-text); border: 1px solid #3a4658; border-radius: 4px;
+    padding: 5px; font: inherit; }
+  label.chk { display: inline-flex; gap: 6px; align-items: center; color: var(--chrome-muted); font-size: 12px; }
+
+  .readout { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; font-size: 12px; }
+  .readout dt { color: var(--chrome-muted); }
+  .readout dd { margin: 0; font-family: Consolas, "Courier New", monospace; }
+  .readout dd.state { color: #8fd0ff; font-weight: 700; }
+  .readout dd.bad { color: var(--chrome-bad); }
+  .readout dd.warn { color: var(--chrome-warn); }
+
+  .lower { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 16px; padding: 0 16px 16px; }
+  @media (max-width: 1100px) { .lower { grid-template-columns: minmax(0, 1fr); } }
+  .log { height: 260px; overflow: auto; font: 12px/1.45 Consolas, "Courier New", monospace; background: #0b0f14;
+    border: 1px solid var(--chrome-line); border-radius: 6px; }
+  .log table { border-collapse: collapse; width: 100%; }
+  .log td { padding: 2px 8px; border-bottom: 1px solid #161c24; vertical-align: top; }
+  .log td.t { color: var(--chrome-muted); white-space: nowrap; }
+  .log td.s { color: #8fd0ff; white-space: nowrap; }
+  .log tr.ev td { color: var(--chrome-muted); }
+  .log tr.ev td.s { color: #b9a6ff; }
+  .log tr.warn td { color: var(--chrome-warn); }
+  .log tr.bad td { color: var(--chrome-bad); }
+  .log tr.cut td { color: #fff; background: #3b1a11; text-align: center; }
+  .findings { font-size: 12px; max-height: 260px; overflow: auto; }
+  .findings li { margin-bottom: 4px; }
+  .muted { color: var(--chrome-muted); }
+  #audit-out { display: none; }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <h1>Water Vendo — HMI simulator</h1>
+  <span class="sub">EMX-2026-WATERVENDO-01 · Nextion NX4832T035 at true size (480 × 320) · demonstration only, <b>src/</b> is authoritative</span>
+</div>
+
+<div class="wrap">
+  <div class="bezel">
+    <div id="screen"></div>
+    <div class="buzz" id="buzz" title="Buzzer"></div>
+    <div class="label">NX4832T035 · 3.5" · 480×320 · resistive</div>
+  </div>
+
+  <div class="controls">
+    <div class="panel">
+      <h2>Customer</h2>
+      <div class="row">
+        <button class="c-btn coin" data-coin="1">Insert ₱1</button>
+        <button class="c-btn coin" data-coin="5">Insert ₱5</button>
+        <button class="c-btn coin" data-coin="10">Insert ₱10</button>
+        <button class="c-btn coin" data-coin="20">Insert ₱20</button>
+      </div>
+      <div class="row" style="margin-top:6px">
+        <button class="c-btn primary" id="btn-confirm">Press CONFIRM</button>
+        <button class="c-btn" id="btn-bottle">Place bottle</button>
+        <button class="c-btn" id="btn-tray">Collect from tray</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Machine</h2>
+      <div class="row"><span class="lab">Flow</span>
+        <span class="seg" id="seg-flow">
+          <button data-v="slow">slow</button><button data-v="normal">normal</button><button data-v="fast">fast</button><button data-v="stall">stall</button>
+        </span></div>
+      <div class="row" style="margin-top:6px"><span class="lab">Gallon bay</span>
+        <span class="seg" id="seg-gallon"><button data-v="full">full</button><button data-v="empty">empty</button></span></div>
+      <div class="row" style="margin-top:6px"><span class="lab">Cold tank</span>
+        <span class="seg" id="seg-tank"><button data-v="low">low</button><button data-v="mid">mid</button><button data-v="high">high</button></span></div>
+      <div class="row" style="margin-top:6px"><span class="lab">Next payout</span>
+        <select id="sel-hopper">
+          <option value="none">normal</option>
+          <option value="jam">hopper jams (miscount → CHANGE JAM)</option>
+          <option value="skip">sensor misses one coin (retry overpays)</option>
+        </select></div>
+      <div class="row" style="margin-top:6px"><span class="lab">Stock</span>
+        ₱1 <input class="num" id="in-p1" type="number" min="0" max="500" value="115">
+        <button class="c-btn" id="btn-set-p1">Set P1 stock</button>
+        ₱5 <input class="num" id="in-p5" type="number" min="0" max="500" value="34">
+        <button class="c-btn" id="btn-set-p5">Set P5 stock</button></div>
+      <div class="row" style="margin-top:6px">
+        <button class="c-btn" id="btn-chamber">Set chamber full</button>
+        <button class="c-btn" id="btn-clock">Break the clock</button>
+        <button class="c-btn" id="btn-admin">Admin gesture</button>
+      </div>
+      <div class="row" style="margin-top:6px">
+        <button class="c-btn danger" id="btn-cut">Power cut (reload preserving state)</button>
+        <button class="c-btn danger" id="btn-reset">Reset everything</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Live readout</h2>
+      <dl class="readout" id="readout"></dl>
+    </div>
+
+    <div class="panel">
+      <h2>Simulator</h2>
+      <div class="row"><span class="lab">Speed</span>
+        <span class="seg" id="seg-speed"><button data-v="1">1×</button><button data-v="2">2×</button><button data-v="5">5×</button></span></div>
+      <div class="row" style="margin-top:6px">
+        <label class="chk"><input type="checkbox" id="chk-faithful"> Reproduce src one-shot input defects (see README)</label></div>
+      <div class="row" style="margin-top:6px">
+        <label class="chk"><input type="checkbox" id="chk-fit"> Outline fields that do not fit</label>
+        <button class="c-btn" id="btn-audit">Run fit audit</button></div>
+    </div>
+  </div>
+</div>
+
+<div class="lower">
+  <div class="panel">
+    <h2>Transition log — why the machine did what it did</h2>
+    <div class="log" id="log"><table><tbody id="log-body"></tbody></table></div>
+  </div>
+  <div class="panel">
+    <h2>Fit findings at 480 × 320</h2>
+    <ul class="findings" id="findings"><li class="muted">Run the fit audit to check every page with worst-case values.</li></ul>
+  </div>
+</div>
+<pre id="audit-out"></pre>
+
+<script>
+'use strict';
+// ===========================================================================
+// include/config.h -- mirrored. Same names, same values. If config.h changes,
+// change it here in the same commit or the demo shows a machine nobody built.
+// ===========================================================================
+
+const CENTAVOS_PER_PESO = 100;
+const ML_PER_PESO = 100;
+const MAX_TRANSACTION_PESOS = 20;
+const MAX_TRANSACTION_CENTAVOS = MAX_TRANSACTION_PESOS * CENTAVOS_PER_PESO;
+const MAX_TRANSACTION_ML = MAX_TRANSACTION_PESOS * ML_PER_PESO;
+const REFUND_ROUND_ML = 100;
+
+const COIN_PULSES_P1 = 1, COIN_PULSES_P5 = 2, COIN_PULSES_P10 = 3, COIN_PULSES_P20 = 4;
+const COIN_VALUE_P1 = 1 * CENTAVOS_PER_PESO, COIN_VALUE_P5 = 5 * CENTAVOS_PER_PESO;
+const COIN_VALUE_P10 = 10 * CENTAVOS_PER_PESO, COIN_VALUE_P20 = 20 * CENTAVOS_PER_PESO;
+
+const COIN_LOCKOUT_MS = 900;
+const COIN_PULSE_GAP_MS = 200;
+const COIN_PULSE_MAX = 8;
+const COIN_OVERMAX_FAULT_MAX = 5;
+
+const HOPPER_TIMEOUT_MS = 5000;
+const HOPPER_RETRY_MAX = 3;
+const HOPPER_COUNT_DEBOUNCE_MS = 25;
+const HOPPER_SETTLE_MS = 300;
+const HOPPER_LOW_P1 = 25;
+const HOPPER_LOW_P5 = 5;
+const HOPPER_CAPACITY = 500;
+const PROFIT_CHAMBER_CAPACITY = 2000;
+const HOPPER_RESERVE_P5 = 10;
+
+const BOTTLE_WAIT_WARN1_MS = 15000;
+const BOTTLE_WAIT_WARN2_MS = 18000;
+const BOTTLE_WAIT_CANCEL_MS = 20000;
+const BUZZER_BEEP_MS = 300;
+const BOTTLE_REMOVED_GRACE_MS = 10000;
+const BOTTLE_DEBOUNCE_MS = 80;
+const CONFIRM_DEBOUNCE_MS = 50;
+
+const FLOW_PULSES_PER_LITRE = 450;
+const ML_PER_PULSE_NUM = 1000;
+const ML_PER_PULSE_DEN = FLOW_PULSES_PER_LITRE;
+const FLOW_STALL_TIMEOUT_MS = 5000;
+const VALVE_CLOSE_SETTLE_MS = 500;
+
+const FLOAT_DEBOUNCE_MS = 250;
+const FLOAT_GALLON_DEBOUNCE_MS = 500;
+const CHAMBER_DEBOUNCE_MS = 500;
+const PUMP_MIN_OFF_MS = 3000;
+const PUMP_MAX_RUN_MS = 300000;
+
+const TEMP_READ_INTERVAL_MS = 5000;
+const TEMP_INVALID_TENTHS = -1270;
+const COOL_SETPOINT_ON_C = 12;
+const COOL_SETPOINT_OFF_C = 8;
+const COMPRESSOR_MIN_OFF_MS = 180000;
+const COMPRESSOR_MAX_RUN_MS = 1800000;
+
+const RTC_READ_INTERVAL_MS = 1000;
+const HMI_THANKYOU_HOLD_MS = 8000;
+
+const TXN_RING_SLOTS = 32;
+const INFLIGHT_RING_SLOTS = 64;
+const DAILY_RING_SLOTS = 8;
+const HISTORY_ENTRIES = 20;
+
+// C integer division truncates toward zero; JavaScript's `/` does not divide
+// integers at all. Every division in the money path goes through this, so no
+// fraction of a centavo or a millilitre can ever exist here either.
+function idiv(a, b) { return Math.trunc(a / b); }
+
+// Enumerations, as in include/types.h. Numeric values match the C enums so the
+// fault bit arithmetic below is the same arithmetic.
+const COIN_NONE = 0, COIN_P1 = 1, COIN_P5 = 2, COIN_P10 = 3, COIN_P20 = 4,
+      COIN_UNKNOWN = 5, COIN_INVALID = 6;
+const DEST_P1_HOPPER = 0, DEST_P5_HOPPER = 1, DEST_PROFIT_P10 = 2,
+      DEST_PROFIT_P20 = 3, DEST_PROFIT_UNKNOWN = 4;
+const FAULT_NONE = 0, FAULT_OUT_OF_WATER = 1, FAULT_LOW_CHANGE = 2,
+      FAULT_STORAGE_FULL = 3, FAULT_CHANGE_JAM = 4, FAULT_FLOW_STALL = 5,
+      FAULT_PUMP_RUNTIME = 6, FAULT_ACCEPTOR = 7;
+const EVT_TRANSACTION = 0, EVT_COIN_UNROUTED = 1, EVT_ADMIN_EDIT = 2,
+      EVT_CHANGE_JAM = 3, EVT_FLOW_STALL = 4, EVT_DAY_CLOSE = 5, EVT_OVERPAY = 6;
+const HOPPER_P1 = 0, HOPPER_P5 = 1;
+
+const STATE_BOOT = 0, STATE_STANDBY = 1, STATE_ACCEPTING = 2, STATE_SELECTING = 3,
+      STATE_AWAITING_BOTTLE = 4, STATE_DISPENSING = 5, STATE_PAUSED = 6,
+      STATE_SETTLING = 7, STATE_COMPLETE = 8, STATE_PAYING_CHANGE = 9,
+      STATE_THANK_YOU = 10, STATE_FAULT = 11, STATE_ADMIN = 12;
+const STATE_NAMES = ['BOOT', 'STANDBY', 'ACCEPTING', 'SELECTING', 'AWAITING_BOTTLE',
+  'DISPENSING', 'PAUSED', 'SETTLING', 'COMPLETE', 'PAYING_CHANGE', 'THANK_YOU',
+  'FAULT', 'ADMIN'];
+
+// BEGIN PORT change_plan -- src/change_plan.cpp, transcribed line for line.
+// Checked against the compiled C for every input in sim/hmi/verify_port.js.
+// Returns { ok, p1, p5 } in place of the C bool + out-parameter.
+function change_plan(centavos, p1_stock, p5_stock) {
+  const out = { ok: false, p1: 0, p5: 0 };
+
+  if (centavos < 0) return out;
+
+  // Nothing owed is trivially coverable.
+  if (centavos === 0) { out.ok = true; return out; }
+
+  // Not a whole number of pesos cannot be paid AT ALL. A failure, not a round.
+  if (centavos % CENTAVOS_PER_PESO !== 0) return out;
+  const pesos = idiv(centavos, CENTAVOS_PER_PESO);
+
+  // Largest-coin-first, with a hard P5 reserve -- SPEC 3.4.
+  let p5_spendable = p5_stock - HOPPER_RESERVE_P5;
+  if (p5_spendable < 0) p5_spendable = 0;
+
+  let n5 = idiv(pesos, 5);
+  if (n5 > p5_spendable) n5 = p5_spendable;
+
+  const n1 = pesos - (n5 * 5);
+
+  // No P1 reserve. If P1 cannot cover the remainder the plan fails outright.
+  if (n1 > p1_stock) return out;
+
+  out.ok = true;
+  out.p1 = n1;
+  out.p5 = n5;
+  return out;
+}
+// END PORT change_plan
+
+// BEGIN PORT billing -- src/billing.cpp, transcribed.
+// COINS DETERMINE VOLUME. VOLUME NEVER DETERMINES COINS.
+let s_txn = { credit: 0, inserted: 0, target_ml: 0, dispensed_ml: 0, total_ml: 0, open: false };
+
+function coin_value(coin) {
+  switch (coin) {
+    case COIN_P1:  return COIN_VALUE_P1;
+    case COIN_P5:  return COIN_VALUE_P5;
+    case COIN_P10: return COIN_VALUE_P10;
+    case COIN_P20: return COIN_VALUE_P20;
+    case COIN_UNKNOWN: return COIN_VALUE_P1;   // SPEC 3.1: credit the minimum
+    default: return 0;
+  }
+}
+function billing_begin() { billing_reset(); }
+function billing_add_coin(coin) {
+  const v = coin_value(coin);
+  if (v <= 0) return;
+  if (s_txn.inserted + v > MAX_TRANSACTION_CENTAVOS) return;
+  s_txn.inserted += v;
+  s_txn.credit += v;
+}
+function billing_credit() { return s_txn.credit; }
+function billing_inserted() { return s_txn.inserted; }
+function billing_at_ceiling() { return s_txn.inserted >= MAX_TRANSACTION_CENTAVOS; }
+function billing_max_selectable_ml() {
+  return idiv(s_txn.credit, CENTAVOS_PER_PESO) * ML_PER_PESO;
+}
+function billing_price_of(target_ml) {
+  // A price-list lookup. The argument is a SELECTION, never a sensor reading.
+  return idiv(target_ml, ML_PER_PESO) * CENTAVOS_PER_PESO;
+}
+function billing_can_select(target_ml) {
+  if (target_ml <= 0) return false;
+  if (target_ml > MAX_TRANSACTION_ML) return false;
+  if (target_ml % ML_PER_PESO !== 0) return false;
+  return billing_price_of(target_ml) <= s_txn.credit;
+}
+function billing_select(target_ml) {
+  if (!billing_can_select(target_ml)) return 0;
+  // Price deducted NOW, before the valve opens.
+  s_txn.credit -= billing_price_of(target_ml);
+  s_txn.target_ml = target_ml;
+  s_txn.dispensed_ml = 0;
+  return target_ml;
+}
+function billing_round_down(measured_ml) {
+  // ALWAYS DOWN. Never to nearest, never up. 305 -> 300.
+  if (measured_ml <= 0) return 0;
+  return idiv(measured_ml, REFUND_ROUND_ML) * REFUND_ROUND_ML;
+}
+function billing_settle_partial(delivered_ml) {
+  let charged_ml = billing_round_down(delivered_ml);
+  if (charged_ml > s_txn.target_ml) charged_ml = s_txn.target_ml;
+  const paid = billing_price_of(s_txn.target_ml);   // already deducted
+  const owed = billing_price_of(charged_ml);
+  s_txn.credit += (paid - owed);
+  s_txn.total_ml += charged_ml;
+  s_txn.dispensed_ml = 0;
+  s_txn.target_ml = 0;
+}
+function billing_cancel_selection() { billing_settle_partial(0); }
+function billing_settle_complete(delivered_ml) {
+  s_txn.total_ml += s_txn.target_ml;
+  s_txn.dispensed_ml = 0;
+  s_txn.target_ml = 0;
+}
+function billing_change_due() { return s_txn.credit; }
+function billing_total_dispensed() { return s_txn.total_ml; }
+function billing_reset() {
+  s_txn = { credit: 0, inserted: 0, target_ml: 0, dispensed_ml: 0, total_ml: 0, open: false };
+}
+function billing_worst_case_change() { return MAX_TRANSACTION_CENTAVOS; }
+function billing_load(txn) { if (txn) s_txn = Object.assign({}, txn); }
+function billing_store() { return Object.assign({}, s_txn); }
+// END PORT billing
+
+// BEGIN PORT fault_mask -- src/fault_mask.cpp, transcribed.
+// THE ORDER OF THIS ARRAY IS THE PRIORITY -- SPEC 6.2.
+const PRIORITY = [FAULT_CHANGE_JAM, FAULT_FLOW_STALL, FAULT_PUMP_RUNTIME, FAULT_ACCEPTOR,
+                  FAULT_OUT_OF_WATER, FAULT_LOW_CHANGE, FAULT_STORAGE_FULL];
+function fault_bit(f) { return (f === FAULT_NONE) ? 0 : ((1 << f) & 0xFF); }
+function fault_highest(mask) {
+  for (let i = 0; i < PRIORITY.length; i++) {
+    if (mask & fault_bit(PRIORITY[i])) return PRIORITY[i];
+  }
+  return FAULT_NONE;
+}
+function fault_persistent(f) {
+  return f === FAULT_CHANGE_JAM || f === FAULT_FLOW_STALL ||
+         f === FAULT_PUMP_RUNTIME || f === FAULT_ACCEPTOR;
+}
+function fault_persistent_subset(mask) {
+  let out = 0;
+  for (let i = 0; i < PRIORITY.length; i++) {
+    const f = PRIORITY[i];
+    if ((mask & fault_bit(f)) && fault_persistent(f)) out |= fault_bit(f);
+  }
+  return out;
+}
+// END PORT fault_mask
+
+// ===========================================================================
+// Simulated time, pins and the physical world
+// ===========================================================================
+//
+// NOW is the simulated millis(). The loop runs in fixed 5 ms steps of simulated
+// time regardless of the speed setting, so every debounce and timeout below is
+// evaluated at the same granularity whether the demo runs at 1x or 5x.
+
+const TICK_MS = 5;
+let NOW = 0;
+function millis() { return NOW; }
+
+// Output pins, as the firmware drives them. true = asserted.
+const PIN = { inhibit: true, valve: false, pump: false, hop: [false, false],
+              compressor: false, buzzer: false };
+
+const EE_KEY = 'watervendo-hmi-eeprom-v2';
+const WORLD_KEY = 'watervendo-hmi-world';
+const LOG_KEY = 'watervendo-hmi-log';
+const OPT_KEY = 'watervendo-hmi-options';
+const CUT_KEY = 'watervendo-hmi-powercut';
+
+// MEM, when set, replaces localStorage -- the self-test runs against a scratch
+// store so it can never touch the EEPROM a demo has built up.
+let MEM = null;
+function store_get(k) {
+  if (MEM) return k in MEM ? JSON.parse(MEM[k]) : null;
+  try { const s = localStorage.getItem(k); return s ? JSON.parse(s) : null; } catch (e) { return null; }
+}
+function store_set(k, v) {
+  if (MEM) { MEM[k] = JSON.stringify(v); return; }
+  try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* private window: demo still runs, power cut cannot persist */ }
+}
+function store_del(k) {
+  if (MEM) { delete MEM[k]; return; }
+  try { localStorage.removeItem(k); } catch (e) { }
+}
+
+// Flow presets, mL per second. Physics only -- nothing here touches money.
+const FLOW_RATES = { slow: 10, normal: 25, fast: 50, stall: 0 };
+
+// The physical machine. Survives a power cut because it is not in the
+// controller: the bottle is still on the platform, the gallon is still empty,
+// the coins are still in the tray.
+function default_world() {
+  return { bottle: false, gallonEmpty: false, tank: 'high', chamberFull: false,
+           flow: 'normal', clockFailed: false, hopperMode: 'none', jammed: -1,
+           tray: [0, 0], returned: [], bottleWater: 0, spilled: 0, tempTenths: 48 };
+}
+let W = default_world();
+function save_world() { store_set(WORLD_KEY, W); }
+
+// Physical state that a power cut destroys along with the controller's RAM.
+const PHY = { queue: [], flowFrac: 0, tailUntil: 0, valveWas: false,
+              hopWas: [false, false], nextEject: [0, 0], skipOnce: false, armed: 'none',
+              outletLowUntil: [0, 0], confirmUntil: 0, tempAcc: 0 };
+
+function insert_coin(peso) {
+  // While its inhibit line is asserted the acceptor rejects mechanically: the
+  // coin drops to the return tray and the firmware never sees a pulse.
+  if (PIN.inhibit) {
+    W.returned.push(peso);
+    save_world();
+    sim_note(`₱${peso} coin returned to tray — acceptor inhibited`, 'warn');
+    return;
+  }
+  const n = { 1: COIN_PULSES_P1, 5: COIN_PULSES_P5, 10: COIN_PULSES_P10, 20: COIN_PULSES_P20 }[peso];
+  // One pulse per 40 ms, well inside COIN_PULSE_GAP_MS, as a real acceptor bursts.
+  for (let i = 0; i < n; i++) PHY.queue.push({ t: NOW + 30 + i * 40, fn: coin_isr });
+  sim_note(`₱${peso} coin inserted (${n} pulse${n > 1 ? 's' : ''})`);
+}
+
+function press_confirm() {
+  PHY.confirmUntil = NOW + 150;   // held 150 ms, comfortably past the 50 ms debounce
+  sim_note('CONFIRM button pressed');
+}
+
+// Called by the hopper port when a payout starts, so "next payout" means the
+// next payout rather than the next motor start (a retry restarts the motor).
+function phy_payout_started(hopper) {
+  PHY.armed = W.hopperMode;
+  PHY.skipOnce = (W.hopperMode === 'skip');
+  if (W.hopperMode !== 'none') { W.hopperMode = 'none'; save_world(); sync_controls(); }
+}
+
+let s_temp_acc = 0;
+function world_tick(dt) {
+  // Scheduled pulses (coin acceptor bursts).
+  if (PHY.queue.length) {
+    PHY.queue.sort((a, b) => a.t - b.t);
+    while (PHY.queue.length && PHY.queue[0].t <= NOW) PHY.queue.shift().fn();
+  }
+
+  // Water. Flows while the valve is open, plus a short tail of water already in
+  // the outlet when it closes -- which is why the firmware has a settle window.
+  if (PHY.valveWas && !PIN.valve) PHY.tailUntil = NOW + 120;
+  PHY.valveWas = PIN.valve;
+  if (PIN.valve || NOW < PHY.tailUntil) {
+    const rate = FLOW_RATES[W.flow];
+    const ml = rate * dt / 1000;
+    if (W.bottle) W.bottleWater += ml; else W.spilled += ml;
+    PHY.flowFrac += ml * FLOW_PULSES_PER_LITRE / 1000;
+    while (PHY.flowFrac >= 1) { PHY.flowFrac -= 1; flow_isr(); }
+  }
+
+  // Hoppers. 200 ms spin-up, then one coin per 125 ms (8/s, inside SPEC 1.1's 5-10/s).
+  for (let h = 0; h < 2; h++) {
+    if (PIN.hop[h] && !PHY.hopWas[h]) PHY.nextEject[h] = NOW + 200;
+    PHY.hopWas[h] = PIN.hop[h];
+    if (PIN.hop[h] && NOW >= PHY.nextEject[h]) {
+      PHY.nextEject[h] += 125;
+      if (W.jammed === h) continue;                 // motor turns, nothing comes out
+      W.tray[h]++;
+      if (PHY.armed === 'jam') { W.jammed = h; PHY.armed = 'none'; }
+      if (PHY.skipOnce) { PHY.skipOnce = false; continue; }   // coin out, sensor blind
+      PHY.outletLowUntil[h] = NOW + 30;
+    }
+  }
+
+  // Water temperature. Compressor pulls it down, ambient pushes it up.
+  s_temp_acc += dt;
+  const step = PIN.compressor ? 1500 : 8000;
+  while (s_temp_acc >= step) { s_temp_acc -= step; W.tempTenths += PIN.compressor ? -1 : 1; }
+}
+
+// Raw input levels, as digitalRead() would see them. true = asserted (LOW on the pin).
+function raw_bottle() { return W.bottle; }
+function raw_float_mid() { return W.tank === 'low'; }       // LOW = below mid
+function raw_float_high() { return W.tank === 'high'; }     // LOW = at high
+function raw_float_gallon() { return W.gallonEmpty; }       // LOW = empty
+function raw_chamber_full() { return W.chamberFull; }
+function raw_confirm() { return NOW < PHY.confirmUntil; }
+function outlet_level(h) { return NOW < PHY.outletLowUntil[h] ? 0 : 1; }   // 0 = LOW
+
+// ===========================================================================
+// persist.* -- the EEPROM, kept in localStorage
+// ===========================================================================
+//
+// What is modelled: every record the firmware writes, written at the same
+// moments, plus the cumulative ring write counters Admin reports. What is not:
+// slot positions, CRC framing and cell wear. Those are covered by test_eeprom
+// on the host; here a ring is its newest valid value and its write count.
+
+let EE = null;
+let s_initialised = false;
+function ee_commit() { store_set(EE_KEY, EE); }
+
+function persist_begin() {
+  EE = store_get(EE_KEY) || {};
+  s_initialised = false;
+  if (!EE.inventory) {
+    // Virgin chip. Zero, not 0xFF: the machine must not believe it holds
+    // change it does not have. LOW CHANGE follows at the gate -- SPEC 7.3.
+    EE.inventory = { p1_count: 0, p5_count: 0, profit_p10: 0, profit_p20: 0, profit_unknown: 0 };
+    s_initialised = true;
+  }
+  if (!EE.txn) EE.txn = { seq: 0, txn: { credit: 0, inserted: 0, target_ml: 0, dispensed_ml: 0, total_ml: 0, open: false } };
+  if (!EE.inflight) EE.inflight = { seq: 0, coin: COIN_NONE };
+  if (!EE.daily) EE.daily = { seq: 0, profit: 0, volume: 0, txns: 0 };
+  if (!EE.history) { EE.history = []; EE.hist_seq = 0; }
+  if (EE.faults === undefined) EE.faults = 0;
+  ee_commit();
+}
+function persist_update() { }
+function persist_was_initialised() { return s_initialised; }
+function persist_inventory() { return EE.inventory; }
+
+function inv_field(dest) {
+  switch (dest) {
+    case DEST_P1_HOPPER: return ['p1_count', HOPPER_CAPACITY];
+    case DEST_P5_HOPPER: return ['p5_count', HOPPER_CAPACITY];
+    case DEST_PROFIT_P10: return ['profit_p10', PROFIT_CHAMBER_CAPACITY];
+    case DEST_PROFIT_P20: return ['profit_p20', PROFIT_CHAMBER_CAPACITY];
+    case DEST_PROFIT_UNKNOWN: return ['profit_unknown', PROFIT_CHAMBER_CAPACITY];
+    default: return null;
+  }
+}
+function persist_inventory_add(dest, delta) {
+  const f = inv_field(dest); if (!f) return;
+  const next = EE.inventory[f[0]] + delta;
+  EE.inventory[f[0]] = next < 0 ? 0 : (next > f[1] ? f[1] : next);   // clamp, never wrap
+  ee_commit();
+}
+function persist_inventory_set(dest, count) {
+  const f = inv_field(dest); if (!f) return;
+  if (count > f[1]) count = f[1];
+  const before = EE.inventory[f[0]];
+  EE.inventory[f[0]] = count;
+  ee_commit();
+  // persist.cpp stamps this with millis()/1000 -- seconds since BOOT, not RTC.
+  persist_history_add({ timestamp: idiv(millis(), 1000), ts_kind: 'boot', tag: EVT_ADMIN_EDIT,
+                        denomination: dest, amount_in: before, volume_out: 0, change_out: count });
+}
+
+function persist_txn_open(txn) { EE.txn.txn = Object.assign({}, txn, { open: true }); EE.txn.seq++; ee_commit(); }
+function persist_txn_update(txn) {
+  if (!EE.txn.txn.open) return;
+  EE.txn.txn = Object.assign({}, txn, { open: true }); EE.txn.seq++; ee_commit();
+}
+function persist_txn_close() { EE.txn.txn.open = false; EE.txn.seq++; ee_commit(); }
+function persist_txn_ring_writes() { return EE.txn.seq; }
+function persist_inflight_ring_writes() { return EE.inflight.seq; }
+function persist_has_open_txn() { return !!EE.txn.txn.open; }
+function persist_open_txn() { return EE.txn.txn; }
+
+function persist_mark_coin_in_flight(coin) { EE.inflight.coin = coin; EE.inflight.seq++; ee_commit(); }
+function persist_clear_coin_in_flight() { EE.inflight.coin = COIN_NONE; EE.inflight.seq++; ee_commit(); }
+function persist_coin_in_flight() { return EE.inflight.coin; }
+
+function persist_reconcile_unrouted_coin(coin) {
+  if (coin === COIN_NONE || coin === COIN_INVALID) return;
+  // SPEC 3.3: assume the PROFIT CHAMBER, never a hopper. Tag it so a technician
+  // sees why a physical count differs rather than suspecting theft.
+  persist_history_add({ timestamp: idiv(millis(), 1000), ts_kind: 'boot', tag: EVT_COIN_UNROUTED,
+                        denomination: coin, amount_in: coin_value(coin), volume_out: 0, change_out: 0 });
+  if (coin === COIN_P10) persist_inventory_add(DEST_PROFIT_P10, +1);
+  else if (coin === COIN_P20) persist_inventory_add(DEST_PROFIT_P20, +1);
+  else persist_inventory_add(DEST_PROFIT_UNKNOWN, +1);
+  persist_clear_coin_in_flight();
+}
+
+function persist_fault_flags() { return EE.faults | 0; }
+function persist_fault_flags_set(flags) { EE.faults = flags; ee_commit(); }
+
+function persist_daily_profit() { return EE.daily.profit; }
+function persist_daily_volume() { return EE.daily.volume; }
+function persist_daily_transactions() { return EE.daily.txns; }
+function persist_daily_add(profit, volume) {
+  EE.daily.profit += profit; EE.daily.volume += volume; EE.daily.txns++; EE.daily.seq++;
+  ee_commit();
+}
+function persist_daily_reset(timestamp, ts_kind) {
+  // Write-then-zero through the one choke point -- SPEC 7.4.
+  persist_history_add({ timestamp, ts_kind, tag: EVT_ADMIN_EDIT, denomination: 0xFF,
+                        amount_in: EE.daily.profit, volume_out: EE.daily.volume, change_out: EE.daily.txns });
+  EE.daily.profit = 0; EE.daily.volume = 0; EE.daily.txns = 0; EE.daily.seq++;
+  ee_commit();
+}
+function persist_history_add(e) {
+  EE.hist_seq++;
+  EE.history.unshift(Object.assign({ seq: EE.hist_seq }, e));
+  if (EE.history.length > HISTORY_ENTRIES) EE.history.length = HISTORY_ENTRIES;
+  ee_commit();
+}
+
+// ===========================================================================
+// Real-time clock -- rtc.* (DS3231). Battery-backed, so its failed/set state is
+// part of the physical world and survives a power cut.
+// ===========================================================================
+let rtc_s_ok = false, rtc_last = 0;
+function rtc_begin() { rtc_s_ok = !W.clockFailed; rtc_last = millis(); }
+function rtc_update() {
+  if (millis() - rtc_last < RTC_READ_INTERVAL_MS) return;
+  rtc_last = millis();
+  rtc_s_ok = !W.clockFailed;
+}
+function rtc_ok() { return rtc_s_ok; }
+function rtc_now() { return rtc_s_ok ? new Date() : null; }
+function rtc_timestamp() { return rtc_s_ok ? Math.floor(Date.now() / 1000) : 0; }
+
+// ===========================================================================
+// coin_acceptor.* -- ported
+// ===========================================================================
+const ACC = { pulses: 0, last: 0, win: false, fault: true, pending: COIN_NONE,
+              avail: false, overmax: 0, discarded: 0 };
+function coin_isr() { ACC.pulses++; ACC.last = millis(); }
+function acc_apply_inhibit() { PIN.inhibit = ACC.win || ACC.fault; }
+function acc_drain() { ACC.pulses = 0; }
+function acc_resolve(p) {
+  switch (p) {
+    case COIN_PULSES_P1: return COIN_P1;
+    case COIN_PULSES_P5: return COIN_P5;
+    case COIN_PULSES_P10: return COIN_P10;
+    case COIN_PULSES_P20: return COIN_P20;
+    default: return COIN_UNKNOWN;
+  }
+}
+function coin_acceptor_begin() {
+  ACC.fault = true; ACC.win = false; acc_apply_inhibit();
+}
+function coin_acceptor_update() {
+  if (ACC.win || ACC.fault) { acc_drain(); return; }   // REJECT, NEVER QUEUE
+  const pulses = ACC.pulses, last = ACC.last;
+  if (pulses === 0) return;
+  if (millis() - last < COIN_PULSE_GAP_MS) return;
+  acc_drain();
+  if (pulses > COIN_PULSE_MAX) {
+    ACC.discarded++;
+    if (ACC.overmax < 0xFF) ACC.overmax++;
+    if (ACC.overmax >= COIN_OVERMAX_FAULT_MAX) faults_raise(FAULT_ACCEPTOR);
+    return;
+  }
+  ACC.overmax = 0;
+  ACC.pending = acc_resolve(pulses);
+  ACC.avail = true;
+}
+function coin_acceptor_available() { return ACC.avail; }
+function coin_acceptor_take_coin() {
+  if (!ACC.avail) return COIN_NONE;
+  ACC.avail = false;
+  const c = ACC.pending; ACC.pending = COIN_NONE; return c;
+}
+function coin_acceptor_inhibit() {
+  ACC.fault = true; acc_apply_inhibit(); acc_drain(); ACC.avail = false; ACC.pending = COIN_NONE;
+}
+function coin_acceptor_uninhibit() { ACC.fault = false; acc_apply_inhibit(); }
+function coin_acceptor_window_inhibit() { ACC.win = true; acc_apply_inhibit(); }
+function coin_acceptor_window_release() { ACC.win = false; acc_drain(); acc_apply_inhibit(); }
+
+// ===========================================================================
+// coin_diverter.* -- ported. The mechanism is abstracted to a destination:
+// fabrication drawing Rev B replaces the three-position servo with two cascaded
+// gates, and this port deliberately models neither until that work order lands.
+// ===========================================================================
+const DIV = { moving: false, started: 0, coin: COIN_NONE, dest: DEST_PROFIT_UNKNOWN };
+function coin_destination(coin) {
+  switch (coin) {
+    case COIN_P1: return DEST_P1_HOPPER;
+    case COIN_P5: return DEST_P5_HOPPER;
+    case COIN_P10: return DEST_PROFIT_P10;
+    case COIN_P20: return DEST_PROFIT_P20;
+    default: return DEST_PROFIT_UNKNOWN;
+  }
+}
+function coin_diverter_begin() { DIV.moving = false; DIV.coin = COIN_NONE; DIV.dest = DEST_PROFIT_UNKNOWN; }
+function coin_diverter_update() {
+  if (!DIV.moving) return;
+  if (millis() - DIV.started < COIN_LOCKOUT_MS) return;
+  // Physically committed only now. Inventory increments HERE and nowhere else.
+  persist_inventory_add(coin_destination(DIV.coin), +1);
+  persist_clear_coin_in_flight();
+  DIV.moving = false; DIV.coin = COIN_NONE;
+  coin_acceptor_window_release();
+}
+function coin_diverter_route(coin) {
+  if (DIV.moving) return;
+  if (coin === COIN_NONE || coin === COIN_INVALID) return;
+  coin_acceptor_window_inhibit();          // inhibit BEFORE the move
+  persist_mark_coin_in_flight(coin);       // intent BEFORE the move
+  DIV.coin = coin; DIV.dest = coin_destination(coin);
+  DIV.started = millis(); DIV.moving = true;
+}
+function coin_diverter_is_busy() { return DIV.moving; }
+
+// ===========================================================================
+// coin_hopper.* -- ported
+// ===========================================================================
+const HOP_IDLE = 0, HOP_RUNNING = 1, HOP_SETTLING = 2, HOP_DONE = 3;
+const PAYOUT_IDLE = 0, PAYOUT_RUNNING = 1, PAYOUT_COMPLETE = 2, PAYOUT_JAMMED = 3;
+const HOP = { phase: HOP_IDLE, hopper: HOPPER_P1, commanded: 0, counted: 0, retry: 0,
+              attempt_ms: 0, settle_ms: 0, result: PAYOUT_IDLE, last_level: 1, last_edge_ms: 0 };
+function hop_motor(on) { PIN.hop[HOP.hopper] = on; }
+function hop_motors_all_off() { PIN.hop[0] = false; PIN.hop[1] = false; }
+function hop_poll_outlet() {
+  const level = outlet_level(HOP.hopper), now = millis();
+  if (level === HOP.last_level) return;
+  if (now - HOP.last_edge_ms < HOPPER_COUNT_DEBOUNCE_MS) return;
+  HOP.last_level = level; HOP.last_edge_ms = now;
+  if (level === 0) HOP.counted++;          // falling edge = one coin out
+}
+function hop_finish(jammed) {
+  hop_motors_all_off();
+  // Inventory decrements by coins COUNTED, never by coins commanded.
+  if (HOP.counted > 0) persist_inventory_add(HOP.hopper === HOPPER_P1 ? DEST_P1_HOPPER : DEST_P5_HOPPER, -HOP.counted);
+  if (jammed) {
+    persist_history_add({ timestamp: idiv(millis(), 1000), ts_kind: 'boot', tag: EVT_CHANGE_JAM,
+                          denomination: HOP.hopper === HOPPER_P1 ? COIN_P1 : COIN_P5,
+                          amount_in: HOP.commanded, volume_out: 0, change_out: HOP.counted });
+  }
+  HOP.result = jammed ? PAYOUT_JAMMED : PAYOUT_COMPLETE;
+  HOP.phase = HOP_DONE;
+}
+function hop_start_attempt() {
+  HOP.attempt_ms = millis(); HOP.last_level = outlet_level(HOP.hopper); HOP.last_edge_ms = millis();
+  hop_motor(true); HOP.phase = HOP_RUNNING;
+}
+function coin_hopper_begin() { hop_motors_all_off(); HOP.phase = HOP_IDLE; HOP.result = PAYOUT_IDLE; }
+function coin_hopper_update() {
+  switch (HOP.phase) {
+    case HOP_RUNNING:
+      hop_poll_outlet();
+      if (HOP.counted >= HOP.commanded) { hop_motor(false); HOP.settle_ms = millis(); HOP.phase = HOP_SETTLING; return; }
+      if (millis() - HOP.attempt_ms >= HOPPER_TIMEOUT_MS) { hop_motor(false); HOP.settle_ms = millis(); HOP.phase = HOP_SETTLING; }
+      return;
+    case HOP_SETTLING:
+      hop_poll_outlet();
+      if (millis() - HOP.settle_ms < HOPPER_SETTLE_MS) return;
+      if (HOP.counted >= HOP.commanded) { hop_finish(false); return; }
+      if (HOP.retry >= HOPPER_RETRY_MAX) { hop_finish(true); return; }
+      HOP.retry++;                          // retry the SHORTFALL only
+      sim_note(`hopper ₱${HOP.hopper === HOPPER_P1 ? 1 : 5} short ${HOP.commanded - HOP.counted} — retry ${HOP.retry}/${HOPPER_RETRY_MAX}`, 'warn');
+      hop_start_attempt();
+      return;
+    default: return;
+  }
+}
+function coin_hopper_dispense(hopper, count) {
+  if (HOP.phase !== HOP_IDLE) return;
+  if (count === 0) return;
+  HOP.hopper = hopper; HOP.commanded = count; HOP.counted = 0; HOP.retry = 0;
+  HOP.result = PAYOUT_RUNNING;
+  phy_payout_started(hopper);               // [SIM] arms the "next payout" control
+  hop_start_attempt();
+}
+function coin_hopper_status() { return HOP.result; }
+function coin_hopper_counted() { return HOP.counted; }
+function coin_hopper_clear() {
+  if (HOP.phase !== HOP_DONE) return;
+  HOP.phase = HOP_IDLE; HOP.result = PAYOUT_IDLE; HOP.commanded = 0; HOP.counted = 0; HOP.retry = 0;
+}
+function coin_hopper_is_busy() { return HOP.phase === HOP_RUNNING || HOP.phase === HOP_SETTLING; }
+function coin_hopper_count(h) { return h === HOPPER_P1 ? EE.inventory.p1_count : EE.inventory.p5_count; }
+function coin_hopper_can_cover(centavos) {
+  return change_plan(centavos, coin_hopper_count(HOPPER_P1), coin_hopper_count(HOPPER_P5)).ok;
+}
+
+// ===========================================================================
+// flow.* -- ported, remainder carry and all (SPEC 5.1)
+// ===========================================================================
+const FLW = { pulses: 0, converted: 0, ml: 0, carry: 0, valve_open: false, last_flow_ms: 0 };
+function flow_isr() { FLW.pulses++; }
+function flow_begin() { flow_reset(); }
+function flow_update() {
+  const now = millis(), pulses = FLW.pulses;
+  if (pulses !== FLW.converted) {
+    const fresh = pulses - FLW.converted;
+    FLW.converted = pulses;
+    const scaled = fresh * ML_PER_PULSE_NUM + FLW.carry;
+    FLW.ml += idiv(scaled, ML_PER_PULSE_DEN);
+    FLW.carry = scaled % ML_PER_PULSE_DEN;
+    FLW.last_flow_ms = now;
+  }
+}
+function flow_reset() {
+  FLW.pulses = 0; FLW.converted = 0; FLW.ml = 0; FLW.carry = 0; FLW.last_flow_ms = millis();
+}
+function flow_ml() { return FLW.ml; }
+function flow_is_stalled() {
+  if (!FLW.valve_open) return false;
+  return millis() - FLW.last_flow_ms >= FLOW_STALL_TIMEOUT_MS;
+}
+function flow_set_valve_open(open) {
+  if (open && !FLW.valve_open) FLW.last_flow_ms = millis();
+  FLW.valve_open = open;
+}
+
+// ===========================================================================
+// dispense.* -- ported. NO PRICE IS COMPUTED HERE.
+// ===========================================================================
+const DISPENSE_IDLE = 0, DISPENSE_RUNNING = 1, DISPENSE_PAUSED = 2,
+      DISPENSE_COMPLETE = 3, DISPENSE_STALLED = 4;
+const DSP = { status: DISPENSE_IDLE, target: 0, banked: 0, valve_open: false, settle_started: 0, settling: false };
+function valve_write(open) { PIN.valve = open; DSP.valve_open = open; flow_set_valve_open(open); }
+function delivered_now() { return DSP.banked + ((DSP.valve_open || DSP.settling) ? flow_ml() : 0); }
+function bank_and_close() {
+  if (DSP.valve_open || DSP.settling) DSP.banked += flow_ml();
+  valve_write(false); DSP.settling = false;
+}
+function dispense_begin() { valve_write(false); DSP.status = DISPENSE_IDLE; DSP.target = 0; DSP.banked = 0; DSP.settling = false; }
+function dispense_update() {
+  switch (DSP.status) {
+    case DISPENSE_RUNNING:
+      if (flow_is_stalled()) { bank_and_close(); DSP.status = DISPENSE_STALLED; return; }
+      if (delivered_now() >= DSP.target) {
+        PIN.valve = false; DSP.valve_open = false;   // digitalWrite only, as in src
+        DSP.settling = true; DSP.settle_started = millis(); DSP.status = DISPENSE_COMPLETE;
+      }
+      return;
+    case DISPENSE_COMPLETE:
+      if (!DSP.settling) return;
+      if (millis() - DSP.settle_started < VALVE_CLOSE_SETTLE_MS) return;
+      DSP.banked += flow_ml(); DSP.settling = false; flow_set_valve_open(false);
+      return;
+    default: return;
+  }
+}
+function dispense_start(target_ml) {
+  if (target_ml <= 0) return;
+  if (DSP.status === DISPENSE_RUNNING) return;
+  DSP.target = target_ml; DSP.banked = 0; DSP.settling = false; DSP.status = DISPENSE_RUNNING;
+  flow_reset(); valve_write(true);
+}
+function dispense_pause() {
+  if (DSP.status !== DISPENSE_RUNNING) return;
+  bank_and_close(); DSP.status = DISPENSE_PAUSED;
+}
+function dispense_resume() {
+  if (DSP.status !== DISPENSE_PAUSED) return;
+  flow_reset(); valve_write(true); DSP.status = DISPENSE_RUNNING;
+}
+function dispense_status() { return DSP.status; }
+function dispense_delivered() { return delivered_now(); }
+function dispense_clear() { bank_and_close(); DSP.status = DISPENSE_IDLE; DSP.target = 0; DSP.banked = 0; }
+
+// ===========================================================================
+// bottle.* -- ported. One-shot edge flags, consumed by their reader.
+// `set_in` records the state each edge was raised in, purely so the log can
+// say when an edge is consumed somewhere other than where it happened.
+// ===========================================================================
+const BOT = { present: false, candidate: false, since: 0, just_placed: false, just_removed: false,
+              placed_in: -1, removed_in: -1 };
+function bottle_begin() {
+  BOT.present = raw_bottle(); BOT.candidate = BOT.present; BOT.since = millis();
+  BOT.just_placed = false; BOT.just_removed = false;
+}
+function bottle_update() {
+  const raw = raw_bottle(), now = millis();
+  if (raw !== BOT.candidate) { BOT.candidate = raw; BOT.since = now; return; }
+  if (raw === BOT.present) return;
+  if (now - BOT.since < BOTTLE_DEBOUNCE_MS) return;
+  BOT.present = raw;
+  if (BOT.present) { BOT.just_placed = true; BOT.placed_in = S.state; }
+  else { BOT.just_removed = true; BOT.removed_in = S.state; }
+}
+function bottle_present() { return BOT.present; }
+function bottle_just_placed() {
+  const e = BOT.just_placed; BOT.just_placed = false;
+  if (e && BOT.placed_in !== S.state) stale_edge('bottle-placed', BOT.placed_in);
+  return e;
+}
+function bottle_just_removed() {
+  const e = BOT.just_removed; BOT.just_removed = false;
+  if (e && BOT.removed_in !== S.state) stale_edge('bottle-removed', BOT.removed_in);
+  return e;
+}
+
+// ===========================================================================
+// water_level.* -- ported (floats, pump_write choke point, cooling)
+// ===========================================================================
+function mk_db(rawfn, win) { return { rawfn, win, state: false, candidate: false, since: 0 }; }
+const WL = { mid: mk_db(raw_float_mid, FLOAT_DEBOUNCE_MS), high: mk_db(raw_float_high, FLOAT_DEBOUNCE_MS),
+             gallon: mk_db(raw_float_gallon, FLOAT_GALLON_DEBOUNCE_MS),
+             // [SPEC, src TODO 5-9] The chamber beam has no reader in src yet.
+             chamber: mk_db(raw_chamber_full, CHAMBER_DEBOUNCE_MS),
+             pump_on: false, pump_off_since: 0, pump_on_since: 0, pump_overrun: false,
+             temp: TEMP_INVALID_TENTHS, conv_pending: false, conv_started: 0, last_read: -TEMP_READ_INTERVAL_MS,
+             cooling: false, cool_off_since: 0, cool_on_since: 0 };
+function db_begin(d) { d.state = d.rawfn(); d.candidate = d.state; d.since = millis(); }
+function db_update(d) {
+  const raw = d.rawfn(), now = millis();
+  if (raw !== d.candidate) { d.candidate = raw; d.since = now; return; }
+  if (raw === d.state) return;
+  if (now - d.since < d.win) return;
+  d.state = raw;
+}
+// THE SINGLE CHOKE POINT FOR THE PUMP OUTPUT -- SPEC 5.3, invariant 1.
+function pump_write(want_on) {
+  const now = millis();
+  if (WL.gallon.state) {                     // 1. safety interlock, first, unconditional
+    PIN.pump = false;
+    if (WL.pump_on) { WL.pump_on = false; WL.pump_off_since = now; }
+    return;
+  }
+  if (want_on && WL.pump_on && now - WL.pump_on_since >= PUMP_MAX_RUN_MS) {   // 2. run ceiling
+    PIN.pump = false; WL.pump_on = false; WL.pump_off_since = now;
+    if (!WL.pump_overrun) { WL.pump_overrun = true; faults_latch(FAULT_PUMP_RUNTIME); }
+    return;
+  }
+  if (want_on && !WL.pump_on && now - WL.pump_off_since < PUMP_MIN_OFF_MS) return;   // 3. rest
+  if (want_on === WL.pump_on) return;
+  PIN.pump = want_on; WL.pump_on = want_on;
+  if (want_on) WL.pump_on_since = now; else WL.pump_off_since = now;
+}
+function compressor_write(want_on) {
+  const now = millis();
+  if (want_on && !WL.cooling && now - WL.cool_off_since < COMPRESSOR_MIN_OFF_MS) return;
+  if (want_on && WL.cooling && now - WL.cool_on_since >= COMPRESSOR_MAX_RUN_MS) want_on = false;
+  if (want_on === WL.cooling) return;
+  PIN.compressor = want_on; WL.cooling = want_on;
+  if (want_on) WL.cool_on_since = now; else WL.cool_off_since = now;
+}
+function temperature_update() {
+  const now = millis();
+  if (!WL.conv_pending) {
+    if (now - WL.last_read < TEMP_READ_INTERVAL_MS) return;
+    WL.conv_pending = true; WL.conv_started = now; return;
+  }
+  if (now - WL.conv_started < 800) return;
+  WL.temp = W.tempTenths; WL.conv_pending = false; WL.last_read = now;
+}
+function cooling_update() {
+  if (WL.temp === TEMP_INVALID_TENTHS) { compressor_write(false); return; }
+  if (WL.temp >= COOL_SETPOINT_ON_C * 10) compressor_write(true);
+  else if (WL.temp <= COOL_SETPOINT_OFF_C * 10) compressor_write(false);
+}
+function water_level_begin() {
+  db_begin(WL.mid); db_begin(WL.high); db_begin(WL.gallon); db_begin(WL.chamber);
+  WL.pump_on = false; WL.pump_overrun = false; WL.pump_off_since = millis();
+  WL.cooling = false; WL.cool_off_since = millis() - COMPRESSOR_MIN_OFF_MS;
+  WL.temp = W.tempTenths;   // [SIM] first conversion assumed done during boot
+  pump_write(false);
+}
+function water_level_update() {
+  db_update(WL.mid); db_update(WL.high); db_update(WL.gallon); db_update(WL.chamber);
+  let want = WL.pump_on;
+  if (WL.high.state) want = false; else if (WL.mid.state) want = true;
+  pump_write(want);
+  temperature_update(); cooling_update();
+}
+function water_tank_level() { return WL.high.state ? 'HIGH' : (WL.mid.state ? 'LOW' : 'MID'); }
+function water_is_locked_out() { return WL.gallon.state; }
+function chamber_is_full() { return WL.chamber.state; }
+
+// ===========================================================================
+// faults.* -- ported, except faults_update() which is TODO(M5) in src
+// ===========================================================================
+let s_mask = 0, s_latched = 0;
+function f_commit_persistent() { persist_fault_flags_set(fault_persistent_subset(s_mask)); }
+function faults_begin() {
+  s_mask = fault_persistent_subset(persist_fault_flags()); s_latched = 0;
+  if (s_mask !== 0) coin_acceptor_inhibit();
+}
+// [SPEC, src TODO 5-7] SPEC 6.1 / 6.1.1: transient faults clear the moment
+// their condition has gone. This function only CLEARS; raising happens at the
+// STANDBY gate, so nothing here can lock a user out mid-transaction.
+function faults_update() {
+  if ((s_mask & fault_bit(FAULT_OUT_OF_WATER)) && !water_is_locked_out()) faults_clear(FAULT_OUT_OF_WATER);
+  if ((s_mask & fault_bit(FAULT_STORAGE_FULL)) && !chamber_is_full()) faults_clear(FAULT_STORAGE_FULL);
+  if ((s_mask & fault_bit(FAULT_LOW_CHANGE)) && coin_hopper_can_cover(billing_worst_case_change())) faults_clear(FAULT_LOW_CHANGE);
+}
+function faults_active() { return fault_highest(s_mask); }
+function faults_is_locked() { return s_mask !== 0; }
+function faults_raise(fault) {
+  if (fault === FAULT_NONE) return;
+  coin_acceptor_inhibit();                   // ACCEPTOR FIRST. ALWAYS.
+  const before = s_mask;
+  s_mask |= fault_bit(fault);
+  if (fault_persistent_subset(s_mask) !== fault_persistent_subset(before)) f_commit_persistent();
+  if (s_mask !== before) { buzzer_play('triple'); sim_note(`fault raised: ${FAULT_NAMES[fault]}`, 'bad'); }
+}
+function faults_latch(fault) {
+  if (fault === FAULT_NONE) return;
+  if (fault === FAULT_CHANGE_JAM) { faults_raise(fault); return; }
+  if (!(s_latched & fault_bit(fault))) sim_note(`fault latched (not yet locking): ${FAULT_NAMES[fault]}`, 'warn');
+  s_latched |= fault_bit(fault);
+}
+function faults_has_latched() { return s_latched !== 0; }
+function faults_release_latched() {
+  if (s_latched === 0) return;
+  const to_raise = s_latched; s_latched = 0;
+  coin_acceptor_inhibit();
+  const before = s_mask; s_mask |= to_raise;
+  if (fault_persistent_subset(s_mask) !== fault_persistent_subset(before)) f_commit_persistent();
+  buzzer_play('triple');
+  sim_note(`latched fault released and raised: ${mask_names(to_raise)}`, 'bad');
+}
+function faults_clear(fault) {
+  if (fault === FAULT_NONE) return;
+  const before = s_mask;
+  s_mask &= ~fault_bit(fault) & 0xFF;
+  s_latched &= ~fault_bit(fault) & 0xFF;
+  if (fault_persistent_subset(s_mask) !== fault_persistent_subset(before)) f_commit_persistent();
+  if (s_mask !== before) sim_note(`fault cleared: ${FAULT_NAMES[fault]}`);
+}
+const FAULT_NAMES = ['NONE', 'OUT OF WATER', 'LOW CHANGE', 'STORAGE FULL', 'CHANGE JAM',
+                     'FLOW STALL', 'PUMP', 'ACCEPTOR'];
+function mask_names(m) {
+  const out = [];
+  for (const f of PRIORITY) if (m & fault_bit(f)) out.push(FAULT_NAMES[f]);
+  return out.join(', ') || '—';
+}
+
+// ===========================================================================
+// Buzzer -- [SPEC, src TODO 5-11] SPEC 6.3 patterns, non-blocking. Active
+// buzzer per decision D-9, so a pattern is timing only.
+// ===========================================================================
+const BUZZ = { segs: [], at: 0, label: '' };
+const BUZZ_PATTERNS = { single: [300], double: [300, 200, 300], long: [1200],
+                        triple: [300, 200, 300, 200, 300] };
+function buzzer_play(name) { BUZZ.segs = BUZZ_PATTERNS[name].slice(); BUZZ.at = millis(); BUZZ.label = name; }
+function buzzer_update() {
+  let t = millis() - BUZZ.at, on = false;
+  for (let i = 0; i < BUZZ.segs.length; i++) {
+    if (t < BUZZ.segs[i]) { on = (i % 2 === 0); break; }
+    t -= BUZZ.segs[i];
+    if (i === BUZZ.segs.length - 1) BUZZ.segs = [];
+  }
+  PIN.buzzer = on;
+}
+
+// ===========================================================================
+// src/main.cpp -- the state machine, ported
+// ===========================================================================
+
+const OPT = { faithful: true, speed: 1, showfit: false };
+
+const S = { state: STATE_BOOT, prev: STATE_BOOT, since: 0, target_ml: 0,
+            pay_p1: 0, pay_p5: 0, pay_leg: 2, change_paid: 0, change_due: 0,
+            warned: 0, last_pause_beep: 0, fault_change: null, halted: false };
+function state_elapsed() { return millis() - S.since; }
+
+// Confirm button -- ported. One-shot latch, consumed only by ACCEPTING.
+const CNF = { state: false, candidate: false, since: 0, pressed: false, pressed_in: -1 };
+function confirm_update() {
+  const raw = raw_confirm(), now = millis();
+  if (raw !== CNF.candidate) { CNF.candidate = raw; CNF.since = now; return; }
+  if (raw === CNF.state) return;
+  if (now - CNF.since < CONFIRM_DEBOUNCE_MS) return;
+  CNF.state = raw;
+  if (raw) { CNF.pressed = true; CNF.pressed_in = S.state; }
+}
+function confirm_take() {
+  const p = CNF.pressed; CNF.pressed = false;
+  if (p && CNF.pressed_in !== S.state) stale_edge('confirm', CNF.pressed_in);
+  return p;
+}
+
+// Touch events. hmi.h: "true for one update() cycle" -- an event nobody reads
+// in the pass it arrives is gone, unlike the confirm latch above.
+const HMI = { queue: [], event: null, view: null, adminTab: 'history', draft: null,
+              histPage: 0, resetArm: 0, longpress: 0 };
+function hmi_update() { HMI.event = HMI.queue.length ? HMI.queue.shift() : null; }
+function hmi_take_event() { const e = HMI.event; HMI.event = null; return e || { type: 'NONE' }; }
+function hmi_send(type, payload) { HMI.queue.push({ type, payload }); }
+
+// The legal transition table -- src/main.cpp LEGAL[], copied as it stands.
+const LEGAL = [
+  [STATE_BOOT, STATE_STANDBY], [STATE_BOOT, STATE_COMPLETE], [STATE_BOOT, STATE_FAULT],
+  [STATE_STANDBY, STATE_ACCEPTING], [STATE_STANDBY, STATE_ADMIN], [STATE_STANDBY, STATE_FAULT],
+  [STATE_ACCEPTING, STATE_SELECTING],
+  [STATE_SELECTING, STATE_AWAITING_BOTTLE], [STATE_SELECTING, STATE_PAYING_CHANGE],
+  [STATE_AWAITING_BOTTLE, STATE_DISPENSING], [STATE_AWAITING_BOTTLE, STATE_PAYING_CHANGE],
+  [STATE_DISPENSING, STATE_SETTLING], [STATE_DISPENSING, STATE_PAUSED],
+  [STATE_PAUSED, STATE_DISPENSING], [STATE_PAUSED, STATE_SETTLING],
+  [STATE_SETTLING, STATE_COMPLETE], [STATE_SETTLING, STATE_PAYING_CHANGE],
+  [STATE_COMPLETE, STATE_SELECTING], [STATE_COMPLETE, STATE_PAYING_CHANGE],
+  [STATE_PAYING_CHANGE, STATE_THANK_YOU], [STATE_PAYING_CHANGE, STATE_FAULT],
+  [STATE_THANK_YOU, STATE_STANDBY],
+  [STATE_FAULT, STATE_STANDBY], [STATE_FAULT, STATE_ADMIN],
+  [STATE_ADMIN, STATE_STANDBY]
+];
+function transition_is_legal(from, to) { return LEGAL.some(r => r[0] === from && r[1] === to); }
+
+function accepting_state(s) { return s === STATE_STANDBY || s === STATE_ACCEPTING; }
+
+// THE TRANSITION CHOKE POINT. Nothing else assigns S.state.
+function transition_to(next, why) {
+  if (next === S.state) return;
+  if (!transition_is_legal(S.state, next)) {
+    // A DEBUG build halts here. The sim behaves as a release build and carries
+    // on, but says so: this is a defect in src, not in the demo.
+    log_row(S.state, next, why + ' — NOT IN src LEGAL[]: a DEBUG build halts here', 'bad');
+  } else {
+    log_row(S.state, next, why);
+  }
+  on_exit(S.state);
+  S.prev = S.state;
+  S.state = next;
+  S.since = millis();
+  if (accepting_state(next)) coin_acceptor_uninhibit(); else coin_acceptor_inhibit();
+
+  // [SIM option] src keeps one-shot input latches across transitions, so an
+  // edge raised in one state is consumed by a later one. Unticking "reproduce"
+  // drops them here -- the one-line fix proposed for Part C.
+  if (!OPT.faithful) { CNF.pressed = false; BOT.just_placed = false; BOT.just_removed = false; }
+
+  HMI.view = null;           // a state change always shows the state's own page
+  HMI.resetArm = 0;
+  on_enter(next);
+}
+
+function on_enter(s) {
+  switch (s) {
+    case STATE_STANDBY:
+      billing_reset(); S.target_ml = 0; S.change_paid = 0; S.change_due = 0;
+      faults_release_latched();          // Case 20 path (d)
+      break;
+    case STATE_ACCEPTING:
+      persist_txn_open(billing_store());
+      break;
+    case STATE_AWAITING_BOTTLE:
+      S.warned = 0;
+      break;
+    case STATE_DISPENSING:
+      if (S.prev === STATE_PAUSED) dispense_resume(); else dispense_start(S.target_ml);
+      break;
+    case STATE_PAUSED:
+      dispense_pause();
+      buzzer_play('single'); S.last_pause_beep = millis();
+      break;
+    case STATE_PAYING_CHANGE: {
+      S.pay_p1 = 0; S.pay_p5 = 0; S.pay_leg = 2; S.change_paid = 0;
+      const due = billing_change_due();
+      S.change_due = due;
+      if (due <= 0) break;
+      const plan = change_plan(due, coin_hopper_count(HOPPER_P1), coin_hopper_count(HOPPER_P5));
+      if (!plan.ok) { faults_raise(FAULT_CHANGE_JAM); break; }
+      S.pay_p1 = plan.p1; S.pay_p5 = plan.p5; S.pay_leg = 0;
+      sim_note(`change plan for ₱${due / 100}: ₱5 × ${plan.p5}, ₱1 × ${plan.p1}`);
+      break;
+    }
+    case STATE_ADMIN:
+      HMI.adminTab = 'history'; HMI.histPage = 0;
+      HMI.draft = { p1: EE.inventory.p1_count, p5: EE.inventory.p5_count };
+      break;
+    default: break;
+  }
+}
+function on_exit(s) { }
+
+function accept_pending_coin() {
+  if (!coin_acceptor_available()) return;
+  if (coin_diverter_is_busy()) return;
+  const c = coin_acceptor_take_coin();
+  if (c === COIN_NONE) return;
+  billing_add_coin(c);
+  coin_diverter_route(c);
+  persist_txn_update(billing_store());
+}
+
+function commit_transaction() {
+  persist_history_add({ timestamp: rtc_timestamp(), ts_kind: rtc_ok() ? 'rtc' : 'invalid',
+                        tag: EVT_TRANSACTION, denomination: 0, amount_in: billing_inserted(),
+                        volume_out: billing_total_dispensed(), change_out: S.change_paid });
+  persist_daily_add(billing_inserted() - S.change_paid, billing_total_dispensed());
+  persist_txn_close();
+}
+
+function state_update(s) {
+  switch (s) {
+
+    case STATE_BOOT: {
+      // [SPEC, src TODO 5-1] src/main.cpp currently always goes BOOT -> STANDBY.
+      // This is the three BOOT rows of SPEC 2.2 plus the SPEC 3.3 reconcile.
+      const c = persist_coin_in_flight();
+      if (c !== COIN_NONE) {
+        // NOT re-credited. accept_pending_coin() writes the open transaction
+        // right after marking the coin, so the restored credit already holds it.
+        // See README, finding P-2.
+        persist_reconcile_unrouted_coin(c);
+        sim_note(`boot: coin in flight reconciled to profit chamber (${['', '₱1', '₱5', '₱10', '₱20', 'unknown'][c]})`, 'warn');
+      }
+      if (faults_is_locked()) { transition_to(STATE_FAULT, 'persistent fault in eeprom'); break; }
+      if (persist_has_open_txn()) {
+        billing_load(persist_open_txn());
+        S.target_ml = 0;
+        transition_to(STATE_COMPLETE, 'open txn restored');
+        break;
+      }
+      transition_to(STATE_STANDBY, 'restore ok');
+      break;
+    }
+
+    case STATE_STANDBY: {
+      if (faults_is_locked()) { transition_to(STATE_FAULT, 'fault raised while idle'); break; }
+      // [SPEC, src TODO 5-7/5-9] Transient conditions checked at the same gate
+      // as LOW CHANGE, so they can never strand a user mid-transaction.
+      if (water_is_locked_out()) { faults_raise(FAULT_OUT_OF_WATER); transition_to(STATE_FAULT, 'fault raised while idle'); break; }
+      if (chamber_is_full()) { faults_raise(FAULT_STORAGE_FULL); transition_to(STATE_FAULT, 'fault raised while idle'); break; }
+      // THE LOW CHANGE GATE -- SPEC 6.1.1. Full ceiling, before the first coin.
+      if (!coin_hopper_can_cover(billing_worst_case_change())) {
+        faults_raise(FAULT_LOW_CHANGE);
+        transition_to(STATE_FAULT, 'fault raised while idle');
+        break;
+      }
+      const e = hmi_take_event();
+      if (e.type === 'ADMIN_ENTER') { transition_to(STATE_ADMIN, 'admin gesture'); break; }   // [SPEC, src TODO]
+      if (coin_acceptor_available()) transition_to(STATE_ACCEPTING, 'first coin accepted');
+      break;
+    }
+
+    case STATE_ACCEPTING:
+      accept_pending_coin();
+      if (billing_at_ceiling()) { transition_to(STATE_SELECTING, 'credit at ceiling'); break; }
+      if (confirm_take()) transition_to(STATE_SELECTING, 'confirm pressed');
+      break;
+
+    case STATE_SELECTING: {
+      const e = hmi_take_event();
+      if (e.type === 'SELECT_VOLUME') {
+        if (billing_can_select(e.payload)) {
+          S.target_ml = billing_select(e.payload);
+          persist_txn_update(billing_store());
+          transition_to(STATE_AWAITING_BOTTLE, 'target chosen');
+        }
+        break;
+      }
+      if (e.type === 'FINISH' || e.type === 'BACK') transition_to(STATE_PAYING_CHANGE, 'finish without pour');
+      break;
+    }
+
+    case STATE_AWAITING_BOTTLE: {
+      if (bottle_present()) { transition_to(STATE_DISPENSING, 'bottle detected'); break; }
+      const e = hmi_take_event();
+      if (e.type === 'BACK') {
+        billing_cancel_selection();
+        S.target_ml = 0;
+        persist_txn_update(billing_store());
+        // src passes TRIG_CONFIRM_PRESSED here; the log says what happened.
+        transition_to(STATE_SELECTING, 'back pressed (src logs it as "confirm pressed")');
+        break;
+      }
+      // [SPEC, src TODO 5-12] Buzzer ladder: silent to 15 s, beep, beep, cancel.
+      const t = state_elapsed();
+      if (t >= BOTTLE_WAIT_WARN1_MS && S.warned < 1) { S.warned = 1; buzzer_play('single'); sim_note('bottle wait: first buzzer (15 s)', 'warn'); }
+      if (t >= BOTTLE_WAIT_WARN2_MS && S.warned < 2) { S.warned = 2; buzzer_play('double'); sim_note('bottle wait: second buzzer (18 s)', 'warn'); }
+      if (t >= BOTTLE_WAIT_CANCEL_MS) {
+        buzzer_play('long');
+        billing_cancel_selection();
+        S.target_ml = 0;
+        transition_to(STATE_PAYING_CHANGE, 'bottle wait timeout');
+      }
+      break;
+    }
+
+    case STATE_DISPENSING:
+      if (dispense_status() === DISPENSE_STALLED) {
+        faults_latch(FAULT_FLOW_STALL);
+        transition_to(STATE_SETTLING, 'flow stall (latched)');
+        break;
+      }
+      if (bottle_just_removed()) { transition_to(STATE_PAUSED, 'bottle removed'); break; }
+      if (dispense_status() === DISPENSE_COMPLETE) transition_to(STATE_SETTLING, 'target reached');
+      break;
+
+    case STATE_PAUSED:
+      if (bottle_just_placed()) { transition_to(STATE_DISPENSING, 'bottle replaced in grace'); break; }
+      if (state_elapsed() >= BOTTLE_REMOVED_GRACE_MS) { transition_to(STATE_SETTLING, 'grace expired'); break; }
+      // [SPEC, src TODO 5-11] single short, repeated every 2 s during grace.
+      if (millis() - S.last_pause_beep >= 2000) { buzzer_play('single'); S.last_pause_beep = millis(); }
+      break;
+
+    case STATE_SETTLING: {
+      if (state_elapsed() < VALVE_CLOSE_SETTLE_MS) break;
+      const delivered = dispense_delivered();
+      if (delivered >= S.target_ml && S.target_ml > 0) {
+        billing_settle_complete(delivered);
+      } else {
+        billing_settle_partial(delivered);
+        sim_note(`partial pour: measured ${delivered} mL, billed ${billing_round_down(delivered)} mL (rounded down)`);
+      }
+      S.last_measured = delivered;
+      dispense_clear();
+      S.target_ml = 0;
+      persist_txn_update(billing_store());
+      if (faults_has_latched()) { transition_to(STATE_PAYING_CHANGE, 'settle tail elapsed'); break; }
+      transition_to(STATE_COMPLETE, 'settle tail elapsed');
+      break;
+    }
+
+    case STATE_COMPLETE: {
+      if (billing_credit() <= 0) { transition_to(STATE_PAYING_CHANGE, 'credit exhausted'); break; }
+      const e = hmi_take_event();
+      if (e.type === 'DISPENSE_AGAIN') transition_to(STATE_SELECTING, 'user chose dispense more');
+      else if (e.type === 'FINISH' || e.type === 'BACK') transition_to(STATE_PAYING_CHANGE, 'user chose finish');
+      break;
+    }
+
+    case STATE_PAYING_CHANGE: {
+      if (faults_is_locked() && faults_active() === FAULT_CHANGE_JAM) {
+        S.fault_change = { paid: S.change_paid, unpaid: S.change_due - S.change_paid };
+        transition_to(STATE_FAULT, 'payout short after retries');
+        break;
+      }
+      if (coin_hopper_is_busy()) break;
+      const r = coin_hopper_status();
+      if (r === PAYOUT_JAMMED) {
+        S.change_paid += coin_hopper_counted() * (S.pay_leg === 0 ? 500 : 100);
+        coin_hopper_clear();
+        faults_raise(FAULT_CHANGE_JAM);
+        S.fault_change = { paid: S.change_paid, unpaid: S.change_due - S.change_paid };
+        transition_to(STATE_FAULT, 'payout short after retries');
+        break;
+      }
+      if (r === PAYOUT_COMPLETE) {
+        S.change_paid += coin_hopper_counted() * (S.pay_leg === 0 ? 500 : 100);
+        coin_hopper_clear();
+        S.pay_leg++;
+      }
+      if (S.pay_leg === 0) {
+        if (S.pay_p5 > 0) { coin_hopper_dispense(HOPPER_P5, S.pay_p5); break; }
+        S.pay_leg = 1;
+      }
+      if (S.pay_leg === 1) {
+        if (S.pay_p1 > 0) { coin_hopper_dispense(HOPPER_P1, S.pay_p1); break; }
+        S.pay_leg = 2;
+      }
+      commit_transaction();
+      if (faults_has_latched()) {
+        faults_release_latched();
+        S.fault_change = { paid: S.change_paid, unpaid: 0 };
+        transition_to(STATE_FAULT, 'latched fault released');
+        break;
+      }
+      transition_to(STATE_THANK_YOU, S.change_paid > 0 ? 'payout counted out' : 'no change due');
+      break;
+    }
+
+    case STATE_THANK_YOU:
+      if (state_elapsed() >= HMI_THANKYOU_HOLD_MS || bottle_just_removed()) {
+        transition_to(STATE_STANDBY, 'thank you dismissed');
+      }
+      break;
+
+    case STATE_FAULT: {
+      const e = hmi_take_event();
+      if (e.type === 'ADMIN_ENTER') { transition_to(STATE_ADMIN, 'admin gesture'); break; }
+      if (!faults_is_locked()) transition_to(STATE_STANDBY, 'fault cleared');
+      break;
+    }
+
+    case STATE_ADMIN: {
+      // [SPEC, src TODO 5-16] The five Admin functions of SPEC 8.
+      const e = hmi_take_event();
+      if (e.type === 'ADMIN_CONFIRM') {
+        // Explicit confirm, immediate commit -- the one path that can desync
+        // EEPROM from the physical hoppers, so it leaves a history trail.
+        if (HMI.draft.p1 !== EE.inventory.p1_count) persist_inventory_set(DEST_P1_HOPPER, HMI.draft.p1);
+        if (HMI.draft.p5 !== EE.inventory.p5_count) persist_inventory_set(DEST_P5_HOPPER, HMI.draft.p5);
+        sim_note(`admin: change float committed (₱1 × ${HMI.draft.p1}, ₱5 × ${HMI.draft.p5})`);
+      } else if (e.type === 'ADMIN_CANCEL') {
+        HMI.draft = { p1: EE.inventory.p1_count, p5: EE.inventory.p5_count };
+      } else if (e.type === 'ADMIN_CLEAR_FAULT') {
+        for (const f of PRIORITY) if (fault_persistent(f)) faults_clear(f);
+        W.jammed = -1; save_world();     // [SIM] the technician cleared the hopper
+      } else if (e.type === 'ADMIN_RESET_DAILY') {
+        persist_daily_reset(rtc_timestamp(), rtc_ok() ? 'rtc' : 'invalid');
+        sim_note('admin: daily totals written to history, then zeroed');
+      } else if (e.type === 'ADMIN_EXIT') {
+        transition_to(STATE_STANDBY, 'admin exit');
+      }
+      break;
+    }
+    default: break;
+  }
+}
+
+function setup() {
+  // Init order as src/main.cpp: persist, acceptor, faults first.
+  persist_begin();
+  coin_acceptor_begin();
+  faults_begin();
+  rtc_begin();
+  coin_diverter_begin();
+  coin_hopper_begin();
+  flow_begin();
+  bottle_begin();
+  water_level_begin();
+  dispense_begin();
+  billing_begin();
+  CNF.state = raw_confirm(); CNF.candidate = CNF.state; CNF.since = millis();
+  S.state = STATE_BOOT; S.since = millis();
+}
+
+function loop_once() {
+  NOW += TICK_MS;
+  world_tick(TICK_MS);
+  persist_update(); rtc_update(); coin_acceptor_update(); coin_diverter_update();
+  coin_hopper_update(); flow_update(); bottle_update(); water_level_update();
+  dispense_update(); hmi_update(); faults_update(); confirm_update();
+  state_update(S.state);
+  HMI.event = null;
+  buzzer_update();
+}
+
+// ===========================================================================
+// Transition log
+// ===========================================================================
+let LOG = [];
+function fmt_t(ms) {
+  const s = Math.floor(ms / 1000), m = Math.floor(s / 60);
+  return `${String(m).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}.${String(ms % 1000).padStart(3, '0').slice(0, 1)}`;
+}
+function log_push(row) {
+  LOG.push(row);
+  if (LOG.length > 400) LOG.shift();
+  log_dirty = true;
+}
+function log_row(from, to, why, cls) {
+  log_push({ t: fmt_t(millis()), s: `${STATE_NAMES[from]} → ${STATE_NAMES[to]}`, m: why, c: cls || '' });
+}
+function sim_note(msg, cls) { log_push({ t: fmt_t(millis()), s: '·', m: msg, c: 'ev ' + (cls || '') }); }
+function stale_edge(name, set_in) {
+  sim_note(`one-shot "${name}" raised in ${STATE_NAMES[set_in] || '?'} consumed in ${STATE_NAMES[S.state]} — src defect, see README P-1`, 'bad');
+}
+
+// ===========================================================================
+// HMI rendering
+// ===========================================================================
+//
+// Everything below is what the NEXTION does, not the Mega. Every object sits
+// at an absolute x/y/w/h exactly as a Nextion page places them, so these
+// coordinates transcribe straight into docs/hmi_spec.md. Text fields never
+// wrap and never scale: one that is too small is clipped and reported.
+
+const SCREEN = document.getElementById('screen');
+
+function peso(c) {
+  const neg = c < 0; c = Math.abs(c);
+  return (neg ? '-' : '') + '₱' + grp(idiv(c, 100)) + '.' + String(c % 100).padStart(2, '0');
+}
+function grp(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
+function mlx(v) { return grp(v) + ' mL'; }
+function litres(v) { return `(${grp(idiv(v, 1000))}.${idiv(v % 1000, 100)} Liters)`; }
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August',
+                'September', 'October', 'November', 'December'];
+function fmt_datetime(d) {
+  let h = d.getHours(); const ap = h >= 12 ? 'PM' : 'AM'; h = h % 12 || 12;
+  return `${MONTHS[d.getMonth()].slice(0, 3)} ${d.getDate()}, ${d.getFullYear()} • ${h}:${String(d.getMinutes()).padStart(2, '0')} ${ap}`;
+}
+function fmt_date(d) {
+  return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}/${d.getFullYear()}`;
+}
+function fmt_temp(t) {
+  if (t === TEMP_INVALID_TENTHS) return 'NO PROBE';
+  const neg = t < 0; t = Math.abs(t);
+  return `${neg ? '-' : ''}${idiv(t, 10)}.${t % 10} °C`;
+}
+
+// ---- Icons (inline SVG, no assets) -----------------------------------------
+const IC = {
+  drop: (w, c, fill) => `<svg width="${w}" height="${Math.round(w * 1.3)}" viewBox="0 0 20 26"><path d="M10 1.5C10 1.5 2 11.5 2 17a8 8 0 0 0 16 0C18 11.5 10 1.5 10 1.5Z" fill="${fill ? c : 'none'}" stroke="${c}" stroke-width="2"/>${fill ? '' : `<path d="M6.5 17.5a3.5 3.5 0 0 0 3.5 3.5" fill="none" stroke="${c}" stroke-width="1.6"/>`}</svg>`,
+  coins: (w, c) => `<svg width="${w}" height="${Math.round(w * .85)}" viewBox="0 0 40 34" fill="none" stroke="${c}" stroke-width="2.2"><ellipse cx="20" cy="7" rx="14" ry="5"/><path d="M6 7v7c0 2.8 6.3 5 14 5s14-2.2 14-5V7"/><path d="M6 14v7c0 2.8 6.3 5 14 5s14-2.2 14-5v-7"/><path d="M6 21v6c0 2.8 6.3 5 14 5s14-2.2 14-5v-6"/></svg>`,
+  bottle: (w, c) => `<svg width="${w}" height="${w * 2}" viewBox="0 0 20 40" fill="none" stroke="${c}" stroke-width="1.8"><rect x="7" y="1" width="6" height="4" rx="1"/><path d="M7.5 5v3C4 10 3 12 3 15v21a3 3 0 0 0 3 3h8a3 3 0 0 0 3-3V15c0-3-1-5-4.5-7V5"/></svg>`,
+  check: (w, c) => `<svg width="${w}" height="${w}" viewBox="0 0 44 44" fill="none" stroke="${c}" stroke-width="3"><circle cx="22" cy="22" r="19"/><path d="M13 22.5l6 6 12-13"/></svg>`,
+  home: (c) => `<svg width="20" height="18" viewBox="0 0 20 18" fill="${c}"><path d="M10 1L1 9h3v8h5v-5h2v5h5V9h3z"/></svg>`,
+  bars: (c, w = 22) => `<svg width="${w}" height="${Math.round(w * .82)}" viewBox="0 0 22 18" fill="${c}"><rect x="1" y="10" width="5" height="8"/><rect x="8.5" y="5" width="5" height="13"/><rect x="16" y="0" width="5" height="18"/></svg>`,
+  gear: (c, w = 20) => `<svg width="${w}" height="${w}" viewBox="0 0 24 24" fill="${c}"><path d="M19.4 13a7.6 7.6 0 0 0 0-2l2.1-1.6-2-3.4-2.5 1a7.4 7.4 0 0 0-1.7-1L15 3.3h-4l-.4 2.7a7.4 7.4 0 0 0-1.7 1l-2.5-1-2 3.4L6.6 11a7.6 7.6 0 0 0 0 2l-2.1 1.6 2 3.4 2.5-1c.5.4 1.1.7 1.7 1l.4 2.7h4l.4-2.7c.6-.3 1.2-.6 1.7-1l2.5 1 2-3.4zM13 15.5A3.5 3.5 0 1 1 13 8.5a3.5 3.5 0 0 1 0 7z"/></svg>`,
+  stack: (c, w = 22) => `<svg width="${w}" height="${Math.round(w * .82)}" viewBox="0 0 22 18" fill="${c}"><rect x="3" y="0" width="16" height="4" rx="2"/><rect x="1" y="5" width="16" height="4" rx="2"/><rect x="5" y="10" width="16" height="4" rx="2"/><rect x="2" y="14.5" width="16" height="3.5" rx="1.75"/></svg>`,
+  warn: (w, c) => `<svg width="${w}" height="${Math.round(w * .9)}" viewBox="0 0 40 36" fill="none" stroke="${c}" stroke-width="3" stroke-linejoin="round"><path d="M20 3L2 33h36z"/><path d="M20 14v9M20 27v2"/></svg>`,
+  thermo: (c) => `<svg width="20" height="48" viewBox="0 0 20 48" fill="none" stroke="#e8e8e8" stroke-width="2"><rect x="6" y="2" width="8" height="32" rx="4"/><circle cx="10" cy="39" r="7" fill="${c}" stroke="#e8e8e8"/><rect x="8.5" y="14" width="3" height="22" fill="${c}" stroke="none"/></svg>`,
+  snow: (c) => `<svg width="34" height="34" viewBox="0 0 34 34" stroke="${c}" stroke-width="2.6" stroke-linecap="round"><path d="M17 2v30M4 9.5l26 15M4 24.5l26-15"/><path d="M13 5l4 4 4-4M13 29l4-4 4 4M3.5 15l5.5-1.5L7.5 8M30.5 19l-5.5 1.5 1.5 5.5M3.5 19l5.5 1.5L7.5 26M30.5 15l-5.5-1.5L26.5 8"/></svg>`,
+  tank: (c, frac) => `<svg width="44" height="56" viewBox="0 0 44 56"><rect x="2" y="2" width="40" height="52" rx="4" fill="none" stroke="${c}" stroke-width="2"/><rect x="5" y="${5 + Math.round(46 * (1 - frac))}" width="34" height="${Math.round(46 * frac)}" rx="2" fill="${c}"/></svg>`,
+  circ: (w, bg, glyph) => `<svg width="${w}" height="${w}" viewBox="0 0 44 44"><circle cx="22" cy="22" r="21" fill="${bg}"/>${glyph}</svg>`,
+  cal: () => `<svg width="30" height="30" viewBox="0 0 30 30"><circle cx="15" cy="15" r="15" fill="#4c86c6"/><rect x="7" y="9" width="16" height="13" rx="2" fill="#fff"/><rect x="7" y="9" width="16" height="4" fill="#1f4f86"/></svg>`,
+  bag: (c) => `<svg width="44" height="54" viewBox="0 0 44 54"><path d="M14 4h16l-5 9h-6z" fill="${c}"/><path d="M19 13h6c11 6 17 16 17 26 0 10-8 13-20 13S2 49 2 39c0-10 6-20 17-26z" fill="${c}"/><text x="22" y="42" font-size="18" font-weight="bold" text-anchor="middle" fill="#fff" font-family="Arial">P</text></svg>`
+};
+
+// ---- Layout helpers --------------------------------------------------------
+function pos(x, y, w, h) { return `left:${x}px;top:${y}px;width:${w}px;height:${h}px;`; }
+// A text field. `n` is its object name -- what docs/hmi_spec.md will call it.
+function T(n, x, y, w, h, size, cls, text, st) {
+  return `<div class="fld ${cls || ''}" data-f="${n}" style="${pos(x, y, w, h)}font-size:${size}px;${st || ''}">${text == null ? '' : text}</div>`;
+}
+function BOX(x, y, w, h, st, inner, attrs) {
+  return `<div class="box" ${attrs || ''} style="${pos(x, y, w, h)}${st || ''}">${inner || ''}</div>`;
+}
+function BTN(x, y, w, h, ev, inner, st, attrs) {
+  return `<div class="btn" data-ev="${ev}" ${attrs || ''} style="${pos(x, y, w, h)}${st || ''}">${inner || ''}</div>`;
+}
+function ICON(x, y, svg, attrs) { return `<div ${attrs || ''} style="left:${x}px;top:${y}px;">${svg}</div>`; }
+function LINE(x, y, w, h, c) { return `<div style="${pos(x, y, w, h)}background:${c || 'var(--s-line)'}"></div>`; }
+function G(name, inner) { return `<div data-g="${name}" style="left:0;top:0;width:480px;height:320px;pointer-events:none"><div style="pointer-events:auto">${inner}</div></div>`; }
+
+const NAV_TABS = [
+  { k: 'home', label: 'HOME', c: '#1e88ff', icon: c => IC.home(c) },
+  { k: 'stats', label: 'STATISTICS', c: '#19b3a3', icon: c => IC.bars(c, 20) },
+  { k: 'status', label: 'STATUS', c: '#ff7a1a', icon: c => IC.gear(c, 18) },
+  { k: 'inv', label: 'INVENTORY', c: '#9b5cff', icon: c => IC.stack(c, 20) }
+];
+function NAV(sel) {
+  return `<div class="nav" data-navbar>` + NAV_TABS.map((t, i) =>
+    `<div class="tab ${t.k === sel ? 'sel' : ''}" data-nav="${t.k}" style="left:${i * 120}px">` +
+    `<div style="left:50px;top:5px">${t.icon(t.c)}</div>` +
+    T('nav_' + t.k, 0, 26, 120, 12, 9, 'c b', t.label, `color:${t.c};left:0`) + `</div>`).join('') + `</div>`;
+}
+const ADMIN_TABS = [['history', 'HISTORY'], ['change', 'CHANGE'], ['service', 'SERVICE'], ['exit', 'EXIT']];
+function ADMIN_NAV(sel) {
+  return `<div class="nav">` + ADMIN_TABS.map((t, i) =>
+    `<div class="tab ${t[0] === sel ? 'sel' : ''}" data-admintab="${t[0]}" style="left:${i * 120}px">` +
+    T('atab_' + t[0], 0, 12, 120, 16, 13, 'c b', t[1], `color:${t[0] === 'exit' ? '#ff7a7a' : '#cfd8e3'}`) + `</div>`).join('') + `</div>`;
+}
+
+// ---- Page builders ---------------------------------------------------------
+// Each returns static markup. Live values are written into the named fields
+// by the matching updater, so a page is built once and never re-laid-out.
+
+const VOLUMES = Array.from({ length: 20 }, (_, i) => (i + 1) * 100);
+
+const PAGES = {
+  welcome: () =>
+    ICON(220, 22, IC.drop(40, '#1e88ff'), 'data-lp="admin" title="Hold 3 s: admin"') +
+    T('_welcome', 0, 84, 480, 46, 40, 'c b', 'WELCOME') +
+    T('_insert', 0, 134, 480, 20, 16, 'c bl', 'Insert coin to start dispensing.') +
+    ICON(214, 166, IC.coins(52, '#ffffff')) +
+    G('clk', BOX(80, 226, 320, 28, 'border-color:var(--s-amber)') +
+      T('clk', 80, 232, 320, 18, 12, 'c b', 'CLOCK NOT SET — date and totals unavailable', 'color:var(--s-amber)')) +
+    NAV('home'),
+
+  select: () =>
+    G('back', BTN(6, 5, 112, 32, 'BACK',
+      T('_back1', 6, 2, 100, 14, 11, 'b', '◀ FINISH &') + T('_back2', 6, 16, 100, 14, 11, 'b', 'GET CHANGE'))) +
+    T('title', 120, 4, 240, 20, 17, 'c b') +
+    T('sub', 120, 24, 240, 16, 12, 'c bl') +
+    VOLUMES.map((v, i) => {
+      const c = i % 4, r = Math.floor(i / 4);
+      return BTN(8 + c * 116, 44 + r * 40, 110, 36, 'SELECT_VOLUME',
+        ICON(6, 8, IC.drop(12, '#4fb0ff')) +
+        T('v' + v, 24, 3, 82, 16, 13, 'b', mlx(v)) +
+        T('p' + v, 24, 19, 82, 14, 11, 'mu', peso(billing_price_of(v))), '', `data-p="${v}"`);
+    }).join('') +
+    BOX(8, 246, 464, 28) + ICON(16, 251, IC.coins(20, '#4fb0ff')) +
+    T('ins', 42, 252, 200, 16, 12, 'b') + T('bal', 256, 252, 208, 16, 12, 'r b') +
+    NAV('home'),
+
+  bottle: () =>
+    BTN(6, 5, 80, 30, 'BACK', T('_back', 0, 7, 80, 16, 12, 'c b', '◀ BACK')) +
+    T('_title', 100, 6, 280, 26, 21, 'c b', 'INSERT BOTTLE') +
+    T('_place', 0, 36, 480, 18, 15, 'c bl', 'Place your bottle') +
+    T('_auto', 0, 56, 480, 16, 12, 'c', 'Bottle will be detected automatically.') +
+    `<div style="${pos(196, 78, 88, 100)}border:2px solid #4fb0ff;border-radius:3px;clip-path:polygon(0 0,22% 0,22% 4%,78% 4%,78% 0,100% 0,100% 22%,96% 22%,96% 78%,100% 78%,100% 100%,78% 100%,78% 96%,22% 96%,22% 100%,0 100%,0 78%,4% 78%,4% 22%,0 22%)"></div>` +
+    ICON(222, 88, IC.bottle(36, '#ffffff')) +
+    G('warn', T('warn', 0, 162, 480, 18, 13, 'c b', '', 'color:var(--s-amber)')) +
+    BOX(16, 184, 448, 88, 'border-color:#2a5f9a') +
+    ICON(30, 208, IC.drop(26, '#1e88ff', true)) +
+    T('_sv', 66, 194, 170, 14, 11, 'b', 'SELECTED VOLUME') +
+    T('vol', 66, 210, 170, 28, 24, 'b bl') + T('price', 66, 242, 170, 14, 11, 'mu') +
+    LINE(248, 196, 1, 64) +
+    T('_bal', 268, 194, 180, 14, 11, 'b', 'BALANCE') + T('bal', 268, 210, 180, 28, 24, 'b bl') +
+    NAV('home'),
+
+  disp: () =>
+    T('title', 0, 6, 480, 24, 20, 'c b') +
+    T('_sv', 20, 40, 200, 14, 11, 'b', 'SELECTED VOLUME') + T('sv', 20, 56, 210, 32, 28, 'b') +
+    T('svp', 20, 90, 200, 16, 13, 'mu') +
+    T('_bal', 20, 114, 200, 14, 11, 'b', 'BALANCE') + T('bal', 20, 130, 210, 28, 24, 'b bl') +
+    T('_wd', 260, 40, 200, 14, 11, 'b', 'WATER DISPENSED') + T('wd', 260, 56, 210, 32, 28, 'b bl') +
+    T('_tg', 260, 98, 200, 14, 11, 'b', 'TARGET') + T('tg', 260, 114, 210, 28, 22, 'b') +
+    `<div style="${pos(20, 168, 390, 16)}background:#0f1b2b;border:1px solid #2b4566;border-radius:3px"><div data-pfill style="left:0;top:0;height:14px;width:0;background:#1e88ff;border-radius:2px"></div></div>` +
+    T('pct', 418, 166, 52, 20, 16, 'b') +
+    G('run', T('f1', 0, 202, 480, 18, 15, 'c bl', 'Thank you!') +
+      T('f2', 0, 224, 480, 18, 14, 'c', 'Please wait until dispensing is complete.')) +
+    G('paused', BOX(20, 194, 440, 80, 'border:2px solid var(--s-amber)') +
+      T('pz1', 32, 202, 300, 18, 15, 'b', 'Put your bottle back within', 'color:var(--s-amber)') +
+      T('pz2', 32, 224, 300, 18, 13, '') + T('pz3', 32, 246, 300, 18, 12, 'mu', 'If not, your balance is kept for you.') +
+      T('cd', 340, 206, 110, 56, 44, 'c b', '', 'color:var(--s-amber)')) +
+    G('complete',
+      BTN(20, 196, 210, 76, 'DISPENSE_AGAIN', T('_more', 0, 16, 210, 24, 19, 'c b', 'DISPENSE MORE') +
+        T('_more2', 0, 44, 210, 16, 12, 'c mu', 'Choose another volume')) +
+      BTN(250, 196, 210, 76, 'FINISH', T('_fin', 0, 14, 210, 24, 19, 'c b', 'FINISH') +
+        T('fc', 0, 42, 210, 20, 15, 'c'), 'border-color:var(--s-green)')) +
+    NAV('home'),
+
+  paying: () =>
+    T('_title', 0, 14, 480, 26, 22, 'c b', 'DISPENSING YOUR CHANGE') +
+    ICON(210, 50, IC.coins(60, '#ffcc1a')) +
+    T('amt', 0, 106, 480, 52, 44, 'c b', '', 'color:var(--s-amber)') +
+    T('paid', 0, 162, 480, 18, 14, 'c') + T('plan', 0, 184, 480, 16, 12, 'c mu') +
+    BOX(40, 208, 400, 64, 'border:2px solid var(--s-amber)') +
+    T('_col1', 40, 216, 400, 24, 19, 'c b', 'Collect your coins', 'color:var(--s-amber)') +
+    T('_col2', 40, 244, 400, 18, 14, 'c', 'from the change tray below.') +
+    NAV('home'),
+
+  thanks: () =>
+    ICON(96, 8, IC.check(44, '#1e88ff')) +
+    T('_ty', 0, 56, 236, 32, 28, 'c b bl', 'THANK YOU!') +
+    T('_done', 0, 90, 236, 16, 13, 'c', 'Dispensing is complete.') +
+    ICON(104, 110, IC.bottle(28, '#ffffff')) +
+    T('_ty1', 0, 170, 236, 14, 11, 'c', 'Thank you for using our') +
+    T('_ty2', 0, 184, 236, 14, 11, 'c', 'water dispensing station.') +
+    LINE(240, 10, 1, 182) +
+    T('_vd', 252, 8, 216, 13, 10, 'b mu', 'VOLUME DISPENSED') + T('vd', 252, 22, 216, 24, 20, 'b bl') +
+    T('vdp', 252, 46, 216, 14, 11, 'mu') + LINE(252, 62, 216, 1) +
+    T('_ai', 252, 66, 216, 13, 10, 'b mu', 'AMOUNT INSERTED') + T('ai', 252, 80, 216, 24, 20, 'b bl') +
+    LINE(252, 106, 216, 1) +
+    T('_cd', 252, 110, 216, 13, 10, 'b mu', 'CHANGE DISPENSED') + T('cd', 252, 124, 216, 24, 20, 'b bl') +
+    LINE(252, 150, 216, 1) +
+    T('_dt', 252, 154, 216, 13, 10, 'b mu', 'DATE & TIME') + T('dt', 252, 168, 216, 16, 12, '') +
+    // The change prompt is the MORE prominent of the two -- decisions.md.
+    BOX(8, 198, 464, 46, 'border:2px solid var(--s-amber)', '', 'data-chgbox') +
+    ICON(18, 206, IC.coins(32, '#ffcc1a')) +
+    T('cp1', 60, 203, 400, 22, 18, 'b', '', 'color:var(--s-amber)') +
+    T('cp2', 60, 226, 400, 14, 12, '') +
+    BOX(8, 248, 464, 28) + ICON(20, 250, IC.bottle(11, '#ffffff')) +
+    T('_bp', 44, 254, 420, 16, 13, '', 'Please take your bottle.  Have a nice day!') +
+    NAV('home'),
+
+  fault: () =>
+    `<div data-fband style="${pos(0, 0, 480, 6)}"></div>` +
+    `<div data-ficon style="left:24px;top:22px"></div>` +
+    T('ft', 96, 20, 370, 34, 28, 'b') + T('fs', 96, 56, 370, 20, 16, 'b') +
+    T('l1', 24, 92, 432, 18, 14, '') + T('l2', 24, 112, 432, 18, 14, '') +
+    T('op', 24, 140, 432, 16, 12, 'mu') +
+    G('chg', BOX(24, 186, 432, 86, 'border:2px solid var(--s-amber)') +
+      T('c1', 36, 196, 408, 22, 17, 'b', '', 'color:var(--s-amber)') +
+      T('c2', 36, 222, 408, 18, 13, '') + T('c3', 36, 244, 408, 18, 13, 'b', '', 'color:#ff8a8a')) +
+    NAV('home'),
+
+  stats: () =>
+    BOX(6, 4, 468, 272, 'border-color:#1e8a86;border-radius:10px;background:#081a1f') +
+    ICON(20, 14, IC.bars('#7fc4ff', 26)) + T('_h', 56, 14, 300, 22, 18, 'b', 'DAILY STATISTICS') +
+    LINE(14, 44, 452, 1, '#1e6e6c') +
+    ICON(20, 56, IC.circ(44, '#1e6fd0', `<path d="M22 9C22 9 14 19 14 25a8 8 0 0 0 16 0C30 19 22 9 22 9Z" fill="none" stroke="#fff" stroke-width="2.4"/>`)) +
+    T('_w', 76, 52, 380, 16, 13, 'b', 'WATER CONSUMED TODAY') + T('w', 76, 70, 380, 34, 30, 'b bl') +
+    T('wl', 76, 104, 380, 16, 13, 'mu') +
+    LINE(14, 126, 452, 1, '#1e6e6c') +
+    ICON(20, 142, IC.circ(44, '#1fa34a', `<text x="22" y="30" font-size="22" font-weight="bold" text-anchor="middle" fill="#fff" font-family="Arial">₱</text>`)) +
+    T('_p', 76, 138, 380, 16, 13, 'b', 'TOTAL PROFIT TODAY') + T('p', 76, 156, 380, 34, 30, 'b', '', 'color:var(--s-green)') +
+    LINE(14, 198, 452, 1, '#1e6e6c') +
+    ICON(20, 206, IC.cal()) + T('_d', 60, 212, 60, 18, 14, 'b', 'DATE:') +
+    T('d', 118, 210, 340, 22, 18, 'b', '', 'color:var(--s-yellow)') +
+    T('dn', 20, 244, 440, 16, 11, 'b', '', 'color:var(--s-amber)') +
+    NAV('stats'),
+
+  status: () =>
+    `<div style="${pos(0, 0, 480, 280)}background:#24150a"></div>` +
+    ICON(16, 10, IC.gear('#ffffff', 24)) + T('_h', 52, 12, 300, 24, 18, 'b', 'SYSTEM STATUS') +
+    LINE(12, 44, 456, 1, '#7a3d12') +
+    T('_wl', 20, 58, 200, 16, 12, 'c b', 'WATER LEVEL') +
+    `<div data-tank style="left:30px;top:88px"></div>` +
+    T('lv', 84, 92, 150, 30, 26, 'b bl') + T('lvs', 84, 124, 150, 16, 12, '') +
+    LINE(240, 56, 1, 160, '#7a3d12') +
+    ICON(258, 56, IC.thermo('#e53935')) +
+    T('_t', 290, 58, 170, 16, 12, 'b', 'TEMPERATURE') + T('t', 290, 76, 170, 30, 26, 'b bl') +
+    LINE(256, 124, 210, 1, '#7a3d12') +
+    ICON(254, 142, IC.snow('#4fb0ff')) +
+    T('_c', 300, 138, 170, 16, 12, 'b', 'COOLING STATUS') + T('c', 300, 156, 170, 26, 22, 'b') +
+    LINE(12, 222, 456, 1, '#7a3d12') +
+    T('n1', 20, 226, 440, 16, 12, '') + T('n2', 20, 244, 440, 16, 12, 'b', '', 'color:var(--s-amber)') +
+    T('n3', 20, 262, 440, 15, 11, 'b', '', 'color:var(--s-amber)') +
+    NAV('status'),
+
+  inv: () =>
+    `<div style="${pos(0, 0, 480, 280)}background:#140d26"></div>` +
+    ICON(16, 12, IC.stack('#ffffff', 26)) + T('_h', 52, 12, 300, 24, 18, 'b', 'COIN INVENTORY') +
+    LINE(12, 44, 456, 1, '#4b2d8a') +
+    ICON(24, 56, IC.circ(36, '#8a8a8a', `<text x="22" y="29" font-size="18" font-weight="bold" text-anchor="middle" fill="#fff" font-family="Arial">P1</text>`)) +
+    T('_1', 72, 64, 220, 18, 14, 'b', 'P1 COINS AVAILABLE') +
+    T('p1', 296, 56, 124, 32, 28, 'b r', '', 'color:var(--s-yellow)') +
+    T('_pcs1', 424, 68, 40, 16, 13, '', 'pcs', 'color:var(--s-yellow)') +
+    T('l1', 72, 84, 220, 14, 11, 'b', '', 'color:var(--s-red)') +
+    LINE(12, 106, 456, 1, '#4b2d8a') +
+    ICON(24, 118, IC.circ(36, '#b08a1e', `<text x="22" y="29" font-size="18" font-weight="bold" text-anchor="middle" fill="#fff" font-family="Arial">P5</text>`)) +
+    T('_5', 72, 126, 220, 18, 14, 'b', 'P5 COINS AVAILABLE') +
+    T('p5', 296, 118, 124, 32, 28, 'b r', '', 'color:var(--s-yellow)') +
+    T('_pcs5', 424, 130, 40, 16, 13, '', 'pcs', 'color:var(--s-yellow)') +
+    T('l5', 72, 146, 220, 14, 11, 'b', '', 'color:var(--s-red)') +
+    LINE(12, 168, 456, 1, '#4b2d8a') +
+    T('_t', 24, 184, 300, 18, 15, 'b', 'TOTAL CHANGE AVAILABLE') +
+    T('tot', 60, 210, 320, 40, 34, 'b', '', 'color:var(--s-purple)') +
+    ICON(404, 190, IC.bag('#7b4fd6')) +
+    NAV('inv'),
+
+  'admin:history': () =>
+    T('ah', 12, 6, 456, 22, 17, 'b', 'ADMIN — TRANSACTION HISTORY') +
+    [0, 1, 2, 3, 4].map(i => BOX(8, 32 + i * 40, 464, 38) +
+      T(`h${i}a`, 16, 35 + i * 40, 448, 15, 12, 'b') + T(`h${i}b`, 16, 51 + i * 40, 448, 15, 11, 'mu')).join('') +
+    BTN(8, 238, 80, 36, 'A_PREV', T('_prev', 0, 9, 80, 18, 15, 'c b', '◀')) +
+    T('hp', 96, 247, 288, 18, 13, 'c') +
+    BTN(392, 238, 80, 36, 'A_NEXT', T('_next', 0, 9, 80, 18, 15, 'c b', '▶')) +
+    ADMIN_NAV('history'),
+
+  'admin:change': () =>
+    T('ah', 12, 6, 456, 22, 17, 'b', 'ADMIN — LOAD CHANGE') +
+    [['1', 40], ['5', 92]].map(([d, y]) =>
+      T(`_a${d}`, 16, y + 8, 110, 20, 15, 'b', `₱${d} COINS`) +
+      T(`a${d}`, 126, y + 2, 100, 32, 28, 'b r', '', 'color:var(--s-yellow)') +
+      [[-10, 240], [-1, 296], [1, 352], [10, 408]].map(([n, x]) =>
+        BTN(x, y, 52, 38, 'A_ADJ', T(`_j${d}${n}`, 0, 10, 52, 18, 15, 'c b', (n > 0 ? '+' : '−') + Math.abs(n)), '',
+            `data-d="${d}" data-n="${n}"`)).join('')).join('') +
+    T('at', 16, 146, 448, 20, 15, 'b') + T('an', 16, 170, 448, 16, 12, 'b') +
+    BTN(16, 198, 216, 74, 'ADMIN_CONFIRM', T('_conf', 0, 26, 216, 22, 18, 'c b', 'CONFIRM'), 'border-color:var(--s-green)') +
+    BTN(248, 198, 216, 74, 'ADMIN_CANCEL', T('_canc', 0, 26, 216, 22, 18, 'c b', 'CANCEL')) +
+    ADMIN_NAV('change'),
+
+  'admin:service': () =>
+    T('ah', 12, 6, 456, 22, 17, 'b', 'ADMIN — SERVICE') +
+    T('sf', 16, 34, 448, 18, 13, 'b') + T('sl', 16, 54, 448, 16, 12, 'mu') +
+    BTN(16, 74, 216, 34, 'ADMIN_CLEAR_FAULT', T('_clr', 0, 9, 216, 16, 13, 'c b', 'CLEAR PERSISTENT FAULT')) +
+    T('sd', 16, 116, 448, 16, 12, '') +
+    BTN(16, 136, 216, 34, 'A_RESET', T('rs', 0, 9, 216, 16, 13, 'c b')) +
+    T('sw1', 16, 178, 448, 16, 12, '') + T('sw2', 16, 196, 448, 16, 12, '') +
+    T('sc', 16, 216, 448, 16, 12, '') + T('sk', 16, 236, 448, 16, 12, '') +
+    T('sv', 16, 256, 448, 16, 11, 'mu') +
+    ADMIN_NAV('service')
+};
+
+// ---- What the screen shows -------------------------------------------------
+// gather() reads the simulated machine into one plain object; every updater
+// reads only that object. The fit audit feeds the same updaters worst-case
+// objects instead, so it checks exactly the code the demo runs.
+
+const POUR = { valid: false, target: 0, delivered: 0 };
+function nav_dim(st) { return st === STATE_BOOT || (st >= STATE_SELECTING && st <= STATE_PAYING_CHANGE); }
+
+function gather() {
+  const st = S.state;
+  if (st === STATE_DISPENSING || st === STATE_PAUSED || st === STATE_SETTLING) {
+    POUR.valid = true; POUR.target = DSP.target || S.target_ml; POUR.delivered = dispense_delivered();
+  } else if (st === STATE_STANDBY || st === STATE_SELECTING || st === STATE_AWAITING_BOTTLE) {
+    POUR.valid = false;
+  }
+  const inLeg = HOP.phase !== HOP_IDLE ? HOP.counted * (S.pay_leg === 0 ? 500 : 100) : 0;
+  return {
+    state: st, prev: S.prev, elapsed: state_elapsed(),
+    view: HMI.view, adminTab: HMI.adminTab,
+    credit: billing_credit(), inserted: billing_inserted(), target: S.target_ml,
+    selectable: VOLUMES.map(v => st === STATE_SELECTING && billing_can_select(v)),
+    pour: { valid: POUR.valid, target: POUR.target, delivered: POUR.delivered },
+    change_due: S.change_due, paid_so_far: S.change_paid + inLeg, plan: { p1: S.pay_p1, p5: S.pay_p5 },
+    change_paid: S.change_paid, total_ml: billing_total_dispensed(),
+    clock: rtc_now(), fault: faults_active(),
+    fault_change: S.prev === STATE_PAYING_CHANGE ? S.fault_change : null,
+    daily: { profit: persist_daily_profit(), volume: persist_daily_volume(), txns: persist_daily_transactions() },
+    level: water_tank_level(), pump: PIN.pump, temp: WL.temp, cooling: WL.cooling,
+    gallon: water_is_locked_out(), chamber: chamber_is_full(),
+    inv: Object.assign({}, EE.inventory), hist: EE.history.slice(), histPage: HMI.histPage,
+    draft: HMI.draft ? Object.assign({}, HMI.draft) : { p1: 0, p5: 0 },
+    mask: s_mask, latched: s_latched, resetArm: !!HMI.resetArm,
+    txnw: persist_txn_ring_writes(), infw: persist_inflight_ring_writes()
+  };
+}
+
+function page_key(d) {
+  if (d.state === STATE_ADMIN) return 'admin:' + d.adminTab;
+  if (d.view && !nav_dim(d.state)) return d.view;
+  switch (d.state) {
+    case STATE_ACCEPTING: case STATE_SELECTING: return 'select';
+    case STATE_AWAITING_BOTTLE: return 'bottle';
+    case STATE_DISPENSING: case STATE_PAUSED: case STATE_SETTLING: case STATE_COMPLETE: return 'disp';
+    case STATE_PAYING_CHANGE: return 'paying';
+    case STATE_THANK_YOU: return 'thanks';
+    case STATE_FAULT: return 'fault';
+    default: return 'welcome';
+  }
+}
+
+function q(sel) { return SCREEN.querySelector(sel); }
+function set(n, txt) { const el = q(`[data-f="${n}"]`); if (el && el.textContent !== txt) el.textContent = txt; }
+function show(g, on) { const el = q(`[data-g="${g}"]`); if (el) el.style.display = on ? '' : 'none'; }
+function color(n, c) { const el = q(`[data-f="${n}"]`); if (el) el.style.color = c; }
+
+const FAULT_TEXT = {
+  [FAULT_OUT_OF_WATER]: ['OUT OF WATER', 'PLEASE REFILL', 'The water supply is empty.',
+    'This machine is not accepting coins right now.', 'Operator: replace the gallon. The machine resumes by itself.', '#1e88ff'],
+  [FAULT_LOW_CHANGE]: ['LOW CHANGE', 'SERVICE REQUIRED', 'This machine is not broken. It cannot make change,',
+    'so it is not accepting coins right now.', 'Operator: load ₱1 and ₱5 coins, then confirm the count in Admin.', '#ffb020'],
+  [FAULT_STORAGE_FULL]: ['COIN STORAGE FULL', 'SERVICE REQUIRED', 'The coin box is full.',
+    'This machine is not accepting coins right now.', 'Operator: empty the coin box. The machine resumes by itself.', '#9b5cff'],
+  [FAULT_CHANGE_JAM]: ['CHANGE JAM', 'SERVICE REQUIRED', 'The machine could not pay out change.',
+    'It is not accepting coins until it is serviced.', 'Operator: clear the hopper, then clear the fault in Admin.', '#ff4d4d'],
+  [FAULT_FLOW_STALL]: ['SERVICE REQUIRED', 'WATER FLOW STOPPED', 'Water stopped flowing during a pour.',
+    'It is not accepting coins until it is serviced.', 'Operator: check the line, tap and flow sensor, then clear in Admin.', '#ff4d4d'],
+  [FAULT_PUMP_RUNTIME]: ['SERVICE REQUIRED', 'PUMP PROTECTION', 'The pump ran too long without filling the tank.',
+    'It is not accepting coins until it is serviced.', 'Operator: check the pump and floats, then clear in Admin.', '#ff4d4d'],
+  [FAULT_ACCEPTOR]: ['SERVICE REQUIRED', 'COIN ACCEPTOR', 'The coin acceptor is sending invalid signals.',
+    'It is not accepting coins until it is serviced.', 'Operator: check the acceptor and its wiring, then clear in Admin.', '#ff4d4d']
+};
+
+function hist_lines(e) {
+  if (!e) return ['', ''];
+  let ts;
+  if (e.ts_kind === 'rtc') {
+    const d = new Date(e.timestamp * 1000);
+    ts = `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  } else if (e.ts_kind === 'boot') ts = `boot+${e.timestamp}s`;
+  else ts = 'NO CLOCK';
+  const head = `#${e.seq}  `;
+  switch (e.tag) {
+    case EVT_TRANSACTION:
+      return [`${head}SALE   ${ts}`, `in ${peso(e.amount_in)} · ${mlx(e.volume_out)} · change ${peso(e.change_out)}`];
+    case EVT_COIN_UNROUTED:
+      return [`${head}UNROUTED COIN   ${ts}`, `${peso(e.amount_in)} credited, counted in coin box (power loss)`];
+    case EVT_CHANGE_JAM:
+      return [`${head}CHANGE JAM   ${ts}`, `₱${e.denomination === COIN_P1 ? 1 : 5} hopper: ${e.amount_in} commanded, ${e.change_out} counted out`];
+    case EVT_ADMIN_EDIT:
+      if (e.denomination === 0xFF) return [`${head}DAILY RESET   ${ts}`, `closed ${peso(e.amount_in)} · ${mlx(e.volume_out)} · ${e.change_out} sales`];
+      return [`${head}STOCK EDIT   ${ts}`, `₱${e.denomination === DEST_P1_HOPPER ? 1 : 5} hopper ${e.amount_in} → ${e.change_out} pcs`];
+    default:
+      return [`${head}EVENT ${e.tag}   ${ts}`, ''];
+  }
+}
+
+const UPD = {
+  welcome(d) { show('clk', !d.clock); },
+
+  select(d) {
+    const acc = d.state === STATE_ACCEPTING;
+    show('back', !acc);
+    set('title', acc ? 'INSERT COINS' : 'SELECT VOLUME');
+    set('sub', acc ? 'Press CONFIRM when you are done' : '100 mL = ₱1.00');
+    SCREEN.querySelectorAll('[data-ev="SELECT_VOLUME"]').forEach((b, i) => b.classList.toggle('dis', !d.selectable[i]));
+    set('ins', `INSERTED AMOUNT: ${peso(d.inserted)}`);
+    set('bal', `BALANCE: ${peso(d.credit)}`);
+  },
+
+  bottle(d) {
+    set('vol', mlx(d.target));
+    set('price', `(${peso(billing_price_of(d.target))})`);
+    set('bal', peso(d.credit));
+    const warn = d.state === STATE_AWAITING_BOTTLE && d.elapsed >= BOTTLE_WAIT_WARN1_MS;
+    show('warn', warn);
+    if (warn) set('warn', `Place your bottle now — cancelling in ${Math.max(0, Math.ceil((BOTTLE_WAIT_CANCEL_MS - d.elapsed) / 1000))} s`);
+  },
+
+  disp(d) {
+    const st = d.state, p = d.pour;
+    const resumed = st === STATE_COMPLETE && d.prev === STATE_BOOT;
+    const titles = { [STATE_DISPENSING]: 'DISPENSING...', [STATE_PAUSED]: 'BOTTLE REMOVED',
+                     [STATE_SETTLING]: 'DISPENSING...', [STATE_COMPLETE]: resumed ? 'WELCOME BACK — BALANCE RESTORED' : 'DISPENSING COMPLETE' };
+    set('title', titles[st] || '');
+    color('title', st === STATE_PAUSED ? 'var(--s-amber)' : '');
+    const has = p.valid && !resumed;
+    set('sv', has ? mlx(p.target) : '—');
+    set('svp', has ? `(${peso(billing_price_of(p.target))})` : '');
+    set('wd', has ? mlx(p.delivered) : '—');
+    set('tg', has ? mlx(p.target) : '—');
+    set('bal', peso(d.credit));
+    const pct = has && p.target > 0 ? Math.min(100, idiv(p.delivered * 100, p.target)) : 0;
+    set('pct', `${pct}%`);
+    const fill = q('[data-pfill]'); if (fill) fill.style.width = Math.round(388 * pct / 100) + 'px';
+    show('run', st === STATE_DISPENSING || st === STATE_SETTLING);
+    show('paused', st === STATE_PAUSED);
+    show('complete', st === STATE_COMPLETE);
+    set('f2', st === STATE_SETTLING ? 'Finishing…' : 'Please wait until dispensing is complete.');
+    set('pz2', `Dispensing continues from ${mlx(p.delivered)}.`);
+    set('cd', `${Math.max(0, Math.ceil((BOTTLE_REMOVED_GRACE_MS - d.elapsed) / 1000))} s`);
+    set('fc', `Get change ${peso(d.credit)}`);
+  },
+
+  paying(d) {
+    set('amt', peso(d.change_due));
+    set('paid', `Paid so far ${peso(d.paid_so_far)} of ${peso(d.change_due)}`);
+    set('plan', `₱5 × ${d.plan.p5}   ·   ₱1 × ${d.plan.p1}`);
+  },
+
+  thanks(d) {
+    set('vd', mlx(d.total_ml));
+    set('vdp', `(${peso(billing_price_of(d.total_ml))})`);
+    set('ai', peso(d.inserted));
+    set('cd', peso(d.change_paid));
+    set('dt', d.clock ? fmt_datetime(d.clock) : 'CLOCK NOT SET');
+    color('dt', d.clock ? '' : 'var(--s-amber)');
+    const chg = d.change_paid > 0;
+    set('cp1', chg ? `PLEASE TAKE YOUR CHANGE: ${peso(d.change_paid)}` : 'EXACT AMOUNT — NO CHANGE DUE');
+    color('cp1', chg ? 'var(--s-amber)' : 'var(--s-muted)');
+    set('cp2', chg ? 'Your coins are in the change tray below.' : '');
+    const box = q('[data-chgbox]'); if (box) box.style.borderColor = chg ? 'var(--s-amber)' : 'var(--s-line)';
+  },
+
+  fault(d) {
+    const t = FAULT_TEXT[d.fault] || ['', '', '', '', '', '#888'];
+    set('ft', t[0]); set('fs', t[1]); set('l1', t[2]); set('l2', t[3]); set('op', t[4]);
+    color('ft', t[5]); color('fs', t[5]);
+    const band = q('[data-fband]'); if (band) band.style.background = t[5];
+    const ic = q('[data-ficon]'); if (ic && ic.dataset.c !== t[5]) { ic.innerHTML = IC.warn(56, t[5]); ic.dataset.c = t[5]; }
+    const fc = d.fault_change;
+    show('chg', !!fc && (fc.paid > 0 || fc.unpaid > 0));
+    if (fc) {
+      set('c1', fc.paid > 0 ? `PLEASE TAKE YOUR CHANGE: ${peso(fc.paid)}` : 'YOUR CHANGE COULD NOT BE PAID');
+      set('c2', fc.paid > 0 ? 'Your coins are in the change tray below.' : '');
+      set('c3', fc.unpaid > 0 ? `${peso(fc.unpaid)} still owed. Please contact the operator.` : '');
+    }
+  },
+
+  stats(d) {
+    set('w', mlx(d.daily.volume)); set('wl', litres(d.daily.volume));
+    set('p', peso(d.daily.profit));
+    set('d', d.clock ? fmt_date(d.clock) : 'CLOCK NOT SET');
+    color('d', d.clock ? 'var(--s-yellow)' : 'var(--s-amber)');
+    set('dn', d.clock ? '' : 'Totals keep adding up and do not reset until the clock is set.');
+  },
+
+  status(d) {
+    const frac = { LOW: .22, MID: .55, HIGH: .92 }[d.level];
+    const tk = q('[data-tank]'); if (tk && tk.dataset.l !== d.level) { tk.innerHTML = IC.tank('#1e88ff', frac); tk.dataset.l = d.level; }
+    set('lv', d.level);
+    set('lvs', { LOW: d.pump ? '(Pump filling)' : '(Tank Low)', MID: '(Tank Half)', HIGH: '(Tank Full)' }[d.level]);
+    set('t', fmt_temp(d.temp));
+    set('c', d.cooling ? 'COOLING' : 'IDLE');
+    color('c', d.cooling ? 'var(--s-green)' : 'var(--s-muted)');
+    set('n1', `Water supply (gallon bay): ${d.gallon ? 'EMPTY' : 'OK'}`);
+    color('n1', d.gallon ? 'var(--s-red)' : '');
+    // D-8: the beam sits below the fill line, so "full" here is a scheduled collection.
+    set('n2', d.chamber ? 'COLLECTION DUE — the coin box is nearly full' : '');
+    set('n3', d.clock ? '' : 'CLOCK NOT SET — dates are unavailable');
+  },
+
+  inv(d) {
+    set('p1', String(d.inv.p1_count)); set('p5', String(d.inv.p5_count));
+    set('l1', d.inv.p1_count < HOPPER_LOW_P1 ? `LOW — below ${HOPPER_LOW_P1}` : '');
+    set('l5', d.inv.p5_count < HOPPER_LOW_P5 ? `LOW — below ${HOPPER_LOW_P5}` : '');
+    set('tot', peso(d.inv.p1_count * COIN_VALUE_P1 + d.inv.p5_count * COIN_VALUE_P5));
+  },
+
+  'admin:history'(d) {
+    const pages = Math.max(1, Math.ceil(d.hist.length / 5));
+    const pg = Math.min(d.histPage, pages - 1);
+    for (let i = 0; i < 5; i++) {
+      const [a, b] = hist_lines(d.hist[pg * 5 + i]);
+      set(`h${i}a`, a); set(`h${i}b`, b);
+    }
+    set('hp', d.hist.length ? `Page ${pg + 1} of ${pages}  ·  ${d.hist.length} of ${HISTORY_ENTRIES} entries` : 'No history yet');
+  },
+
+  'admin:change'(d) {
+    set('a1', String(d.draft.p1)); set('a5', String(d.draft.p5));
+    set('at', `Total change: ${peso(d.draft.p1 * COIN_VALUE_P1 + d.draft.p5 * COIN_VALUE_P5)}`);
+    const dirty = d.draft.p1 !== d.inv.p1_count || d.draft.p5 !== d.inv.p5_count;
+    set('an', dirty ? 'NOT SAVED — press CONFIRM to commit this count' : 'Matches the stored count');
+    color('an', dirty ? 'var(--s-amber)' : 'var(--s-green)');
+  },
+
+  'admin:service'(d) {
+    // Highest first, then a count: seven fault names do not fit on one line at
+    // 480 px, and the highest is the one the technician acts on (SPEC 6.2).
+    const top = (m) => { const n = PRIORITY.filter(f => m & fault_bit(f)).length;
+      return n === 0 ? '—' : FAULT_NAMES[fault_highest(m)] + (n > 1 ? ` (+${n - 1} more)` : ''); };
+    set('sf', `Active faults: ${top(d.mask)}`);
+    set('sl', `Latched, raised after payout: ${top(d.latched)}`);
+    set('sd', `Today: ${peso(d.daily.profit)} · ${mlx(d.daily.volume)} · ${d.daily.txns} sales`);
+    set('rs', d.resetArm ? 'TAP AGAIN TO CONFIRM' : 'RESET DAILY TOTALS');
+    const pct = (w, slots) => { const bp = idiv(w * 10000, slots * 100000); return `${idiv(bp, 100)}.${String(bp % 100).padStart(2, '0')}%`; };
+    set('sw1', `EEPROM transaction ring: ${grp(d.txnw)} writes (${pct(d.txnw, TXN_RING_SLOTS)} of life)`);
+    set('sw2', `EEPROM coin-in-flight ring: ${grp(d.infw)} writes (${pct(d.infw, INFLIGHT_RING_SLOTS)} of life)`);
+    const val = d.inv.profit_p10 * COIN_VALUE_P10 + d.inv.profit_p20 * COIN_VALUE_P20;
+    set('sc', `Coin box: ₱10 × ${d.inv.profit_p10}, ₱20 × ${d.inv.profit_p20}, unknown × ${d.inv.profit_unknown} = ${peso(val)}`);
+    set('sk', d.clock ? `Clock: OK — ${fmt_datetime(d.clock)}` : 'Clock: NOT SET');
+    color('sk', d.clock ? '' : 'var(--s-amber)');
+  }
+};
+
+let cur_key = null;
+function draw(d) {
+  const key = page_key(d);
+  if (key !== cur_key) { SCREEN.innerHTML = PAGES[key](); cur_key = key; }
+  UPD[key](d);
+  const nb = q('[data-navbar]'); if (nb) nb.classList.toggle('dim', nav_dim(d.state));
+  return key;
+}
+
+// ---- Fit audit -------------------------------------------------------------
+function fit_check(label) {
+  const out = [], sr = SCREEN.getBoundingClientRect();
+  SCREEN.querySelectorAll('.fld').forEach(el => {
+    if (el.offsetParent === null) { el.classList.remove('over'); return; }
+    if (!el.textContent) { el.classList.remove('over'); return; }
+    const r = el.getBoundingClientRect();
+    const wide = el.scrollWidth > el.clientWidth + 1, tall = el.scrollHeight > el.clientHeight + 1;
+    const outside = r.right > sr.right + 0.5 || r.bottom > sr.bottom + 0.5;
+    const bad = wide || tall || outside;
+    el.classList.toggle('over', bad);
+    if (bad) out.push({ page: label, field: el.dataset.f, text: el.textContent,
+                        need_w: el.scrollWidth, have_w: el.clientWidth, need_h: el.scrollHeight,
+                        have_h: el.clientHeight, outside });
+  });
+  return out;
+}
+
+function audit_cases() {
+  const base = gather();
+  const clk = new Date(2026, 8, 30, 12, 59);   // longest month name, two-digit day
+  const worst = Object.assign({}, base, {
+    credit: 2000, inserted: 2000, target: 2000, change_due: 2000, paid_so_far: 1500, change_paid: 1900,
+    total_ml: 2000, clock: clk, plan: { p1: 10, p5: 2 }, elapsed: BOTTLE_WAIT_WARN1_MS,
+    pour: { valid: true, target: 2000, delivered: 1999 },
+    // A month of trade with a failed clock never rolls over -- SPEC 7.4.
+    daily: { profit: 6000000, volume: 6000000, txns: 3000 },
+    inv: { p1_count: 500, p5_count: 500, profit_p10: 2000, profit_p20: 2000, profit_unknown: 2000 },
+    draft: { p1: 500, p5: 499 }, mask: 0x7E, latched: 0x60, txnw: 3200000, infw: 6400000,
+    level: 'HIGH', temp: -127, cooling: true, gallon: true, chamber: true,
+    hist: Array.from({ length: 20 }, (_, i) => ({ seq: 99999 - i, ts_kind: 'rtc', timestamp: Math.floor(clk / 1000),
+      tag: [EVT_TRANSACTION, EVT_COIN_UNROUTED, EVT_CHANGE_JAM, EVT_ADMIN_EDIT][i % 4],
+      denomination: i % 4 === 3 ? (i % 8 === 3 ? 0xFF : DEST_P5_HOPPER) : COIN_P20,
+      amount_in: i % 4 === 3 ? 6000000 : 2000, volume_out: 2000, change_out: 1900 })),
+    histPage: 0, view: null, prev: STATE_SELECTING, resetArm: true
+  });
+  const v = (o) => Object.assign({}, worst, o);
+  const cases = [
+    ['welcome · clock not set', v({ state: STATE_STANDBY, clock: null })],
+    ['select · ACCEPTING', v({ state: STATE_ACCEPTING })],
+    ['select · SELECTING', v({ state: STATE_SELECTING, selectable: VOLUMES.map(() => true) })],
+    ['bottle · warning', v({ state: STATE_AWAITING_BOTTLE })],
+    ['disp · DISPENSING', v({ state: STATE_DISPENSING })],
+    ['disp · PAUSED', v({ state: STATE_PAUSED, elapsed: 0 })],
+    ['disp · SETTLING', v({ state: STATE_SETTLING })],
+    ['disp · COMPLETE', v({ state: STATE_COMPLETE, credit: 1900 })],
+    ['disp · COMPLETE resumed', v({ state: STATE_COMPLETE, prev: STATE_BOOT })],
+    ['paying', v({ state: STATE_PAYING_CHANGE })],
+    ['thanks · change', v({ state: STATE_THANK_YOU })],
+    ['thanks · no change, no clock', v({ state: STATE_THANK_YOU, change_paid: 0, clock: null })],
+    ...PRIORITY.map(f => [`fault · ${FAULT_NAMES[f]}`, v({ state: STATE_FAULT, fault: f, prev: STATE_PAYING_CHANGE,
+      fault_change: { paid: 1500, unpaid: 500 } })]),
+    ['stats', v({ state: STATE_STANDBY, view: 'stats' })],
+    ['stats · clock not set', v({ state: STATE_STANDBY, view: 'stats', clock: null })],
+    ['status', v({ state: STATE_STANDBY, view: 'status', clock: null })],
+    ['status · LOW', v({ state: STATE_STANDBY, view: 'status', level: 'LOW', pump: true, temp: 48 })],
+    ['inv', v({ state: STATE_STANDBY, view: 'inv' })],
+    ['inv · low', v({ state: STATE_STANDBY, view: 'inv', inv: Object.assign({}, worst.inv, { p1_count: 3, p5_count: 2 }) })],
+    ['admin · history', v({ state: STATE_ADMIN, adminTab: 'history' })],
+    ['admin · change', v({ state: STATE_ADMIN, adminTab: 'change' })],
+    ['admin · service', v({ state: STATE_ADMIN, adminTab: 'service' })]
+  ];
+  return cases;
+}
+
+function fit_audit() {
+  const showing = SCREEN.classList.contains('showfit');
+  const all = [];
+  for (const [label, d] of audit_cases()) { cur_key = null; draw(d); all.push(...fit_check(label)); }
+  cur_key = null;
+  SCREEN.classList.toggle('showfit', showing);
+  const ul = document.getElementById('findings');
+  ul.innerHTML = all.length
+    ? all.map(f => `<li><b>${f.page}</b> · <code>${f.field}</code> needs ${f.need_w}×${f.need_h}px, has ${f.have_w}×${f.have_h}px${f.outside ? ' (off screen)' : ''} — “${escapeHtml(f.text)}”</li>`).join('')
+    : `<li>All ${audit_cases().length} page variants fit at 480 × 320 with worst-case values.</li>`;
+  return all;
+}
+function escapeHtml(s) { return s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+// ---- Touch input -----------------------------------------------------------
+SCREEN.addEventListener('click', ev => {
+  const nav = ev.target.closest('[data-nav]');
+  if (nav) {
+    // Dimmed means deliberately unavailable -- not silently ignored, visibly off.
+    if (nav_dim(S.state)) return;
+    HMI.view = nav.dataset.nav === 'home' ? null : nav.dataset.nav;
+    return;
+  }
+  const at = ev.target.closest('[data-admintab]');
+  if (at) {
+    if (at.dataset.admintab === 'exit') hmi_send('ADMIN_EXIT');
+    else { HMI.adminTab = at.dataset.admintab; HMI.histPage = 0; HMI.resetArm = 0; }
+    return;
+  }
+  const b = ev.target.closest('[data-ev]');
+  if (!b || b.classList.contains('dis')) return;
+  const e = b.dataset.ev;
+  // Page-local actions: the Nextion handles these itself and sends nothing.
+  if (e === 'A_PREV') { HMI.histPage = Math.max(0, HMI.histPage - 1); return; }
+  if (e === 'A_NEXT') { HMI.histPage = Math.min(Math.ceil(EE.history.length / 5) - 1, HMI.histPage + 1); return; }
+  if (e === 'A_ADJ') {
+    const k = b.dataset.d === '1' ? 'p1' : 'p5';
+    HMI.draft[k] = Math.max(0, Math.min(HOPPER_CAPACITY, HMI.draft[k] + Number(b.dataset.n)));
+    return;
+  }
+  if (e === 'A_RESET') {
+    if (HMI.resetArm && performance.now() - HMI.resetArm < 4000) { hmi_send('ADMIN_RESET_DAILY'); HMI.resetArm = 0; }
+    else HMI.resetArm = performance.now();
+    return;
+  }
+  hmi_send(e, b.dataset.p ? Number(b.dataset.p) : 0);
+  sim_note(`touch: ${e}${b.dataset.p ? ' ' + b.dataset.p + ' mL' : ''}`);
+});
+// Admin gesture: hold the welcome drop for 3 s. Not reachable by a tap.
+SCREEN.addEventListener('pointerdown', ev => { if (ev.target.closest('[data-lp]')) HMI.longpress = performance.now(); });
+['pointerup', 'pointerleave', 'pointercancel'].forEach(t => SCREEN.addEventListener(t, () => { HMI.longpress = 0; }));
+
+// ---- Control panel -----------------------------------------------------------
+function $(id) { return document.getElementById(id); }
+function seg(id, cur) { $(id).querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === String(cur))); }
+function sync_controls() {
+  seg('seg-flow', W.flow); seg('seg-gallon', W.gallonEmpty ? 'empty' : 'full');
+  seg('seg-tank', W.tank); seg('seg-speed', OPT.speed);
+  $('sel-hopper').value = W.hopperMode;
+  $('btn-bottle').textContent = W.bottle ? 'Remove bottle' : 'Place bottle';
+  $('btn-bottle').classList.toggle('on', W.bottle);
+  $('btn-chamber').textContent = W.chamberFull ? 'Empty the chamber' : 'Set chamber full';
+  $('btn-clock').textContent = W.clockFailed ? 'Fix the clock' : 'Break the clock';
+  $('chk-faithful').checked = OPT.faithful;
+  $('chk-fit').checked = OPT.showfit;
+  SCREEN.classList.toggle('showfit', OPT.showfit);
+}
+function save_opts() { store_set(OPT_KEY, OPT); }
+
+document.querySelectorAll('[data-coin]').forEach(b => b.addEventListener('click', () => insert_coin(Number(b.dataset.coin))));
+$('btn-confirm').addEventListener('click', press_confirm);
+$('btn-bottle').addEventListener('click', () => {
+  W.bottle = !W.bottle; save_world(); sync_controls();
+  sim_note(W.bottle ? 'bottle placed' : 'bottle removed');
+});
+$('btn-tray').addEventListener('click', () => {
+  const r = W.returned.reduce((a, b) => a + b, 0);
+  sim_note(`tray collected: change ₱1 × ${W.tray[0]}, ₱5 × ${W.tray[1]}${r ? `; returned coins ₱${r}` : ''}`);
+  W.tray = [0, 0]; W.returned = []; save_world();
+});
+$('seg-flow').addEventListener('click', e => { const v = e.target.dataset.v; if (!v) return; W.flow = v; save_world(); sync_controls(); sim_note(`flow set to ${v}`); });
+$('seg-gallon').addEventListener('click', e => { const v = e.target.dataset.v; if (!v) return; W.gallonEmpty = v === 'empty'; save_world(); sync_controls(); sim_note(`gallon bay ${v}`); });
+$('seg-tank').addEventListener('click', e => { const v = e.target.dataset.v; if (!v) return; W.tank = v; save_world(); sync_controls(); sim_note(`cold tank ${v}`); });
+$('seg-speed').addEventListener('click', e => { const v = e.target.dataset.v; if (!v) return; OPT.speed = Number(v); save_opts(); sync_controls(); });
+$('sel-hopper').addEventListener('change', e => { W.hopperMode = e.target.value; save_world(); sim_note(`next payout: ${e.target.selectedOptions[0].text}`); });
+function set_stock(dest, id) {
+  const n = Math.max(0, Math.min(HOPPER_CAPACITY, Math.floor(Number($(id).value) || 0)));
+  // Stands in for the operator's Admin entry: same write path, same history trail.
+  persist_inventory_set(dest, n);
+  if (HMI.draft) HMI.draft[dest === DEST_P1_HOPPER ? 'p1' : 'p5'] = n;
+  sim_note(`operator set ₱${dest === DEST_P1_HOPPER ? 1 : 5} stock to ${n}`);
+}
+$('btn-set-p1').addEventListener('click', () => set_stock(DEST_P1_HOPPER, 'in-p1'));
+$('btn-set-p5').addEventListener('click', () => set_stock(DEST_P5_HOPPER, 'in-p5'));
+$('btn-chamber').addEventListener('click', () => { W.chamberFull = !W.chamberFull; save_world(); sync_controls(); sim_note(W.chamberFull ? 'coin box beam broken (full)' : 'coin box emptied'); });
+$('btn-clock').addEventListener('click', () => {
+  W.clockFailed = !W.clockFailed; save_world(); sync_controls();
+  sim_note(W.clockFailed ? 'clock broken (oscillator-stop flag set)' : 'clock set from this computer\'s time');
+});
+$('btn-admin').addEventListener('click', () => { hmi_send('ADMIN_ENTER'); sim_note('admin gesture'); });
+$('btn-cut').addEventListener('click', power_cut);
+$('btn-reset').addEventListener('click', () => {
+  if (!window.confirm('Erase the simulated EEPROM and the physical machine state?')) return;
+  [EE_KEY, WORLD_KEY, LOG_KEY, CUT_KEY].forEach(store_del);
+  location.reload();
+});
+$('chk-faithful').addEventListener('change', e => { OPT.faithful = e.target.checked; save_opts(); sim_note(OPT.faithful ? 'reproducing src one-shot input defects' : 'one-shot inputs cleared on every transition (proposed fix)'); });
+$('chk-fit').addEventListener('change', e => { OPT.showfit = e.target.checked; save_opts(); sync_controls(); });
+$('btn-audit').addEventListener('click', () => { const r = fit_audit(); sim_note(`fit audit: ${r.length} field(s) do not fit`, r.length ? 'warn' : ''); });
+
+function power_cut() {
+  // RAM is lost; the EEPROM (already written at every commit point) and the
+  // physical world are kept. The page reloads and boots from them, exactly as
+  // the Mega would.
+  save_world();
+  log_push({ t: fmt_t(millis()), s: '', m: '⚡ POWER CUT — controller RAM lost, rebooting from EEPROM', c: 'cut' });
+  store_set(LOG_KEY, LOG);
+  store_set(CUT_KEY, true);
+  location.reload();
+}
+
+// ---- Readout and log -------------------------------------------------------
+function readout() {
+  const inv = EE.inventory;
+  const rows = [
+    ['State', STATE_NAMES[S.state], 'state'],
+    ['Credit', peso(billing_credit())],
+    ['Inserted', peso(billing_inserted())],
+    ['Target', S.target_ml ? mlx(S.target_ml) : '—'],
+    ['Dispensed', DSP.status !== DISPENSE_IDLE ? `${mlx(dispense_delivered())} (sensor)` : '—'],
+    ['Change', S.state === STATE_PAYING_CHANGE || S.change_paid ? `${peso(S.change_paid)} paid of ${peso(S.change_due)}` : '—'],
+    ['₱1 stock', `${inv.p1_count} pcs`, inv.p1_count < HOPPER_LOW_P1 ? 'warn' : ''],
+    ['₱5 stock', `${inv.p5_count} pcs`, inv.p5_count < HOPPER_LOW_P5 ? 'warn' : ''],
+    ['Coin box', `₱10×${inv.profit_p10} ₱20×${inv.profit_p20} ?×${inv.profit_unknown}`],
+    ['Faults', mask_names(s_mask), s_mask ? 'bad' : ''],
+    ['Latched', mask_names(s_latched), s_latched ? 'warn' : ''],
+    ['Acceptor', PIN.inhibit ? (ACC.win ? 'inhibited (diverter window)' : 'inhibited') : 'ENABLED'],
+    ['Valve / pump', `${PIN.valve ? 'OPEN' : 'closed'} / ${PIN.pump ? 'RUNNING' : 'off'}`],
+    ['Diverter', DIV.moving ? `moving → ${['₱1 hopper', '₱5 hopper', 'coin box', 'coin box', 'coin box'][DIV.dest]}` : 'settled'],
+    ['Hopper', HOP.phase === HOP_IDLE ? 'idle' : `₱${HOP.hopper === HOPPER_P1 ? 1 : 5}: ${HOP.counted}/${HOP.commanded} counted, retry ${HOP.retry}`],
+    ['Tray', `change ₱1×${W.tray[0]} ₱5×${W.tray[1]}${W.returned.length ? `, returned ₱${W.returned.reduce((a, b) => a + b, 0)}` : ''}`],
+    ['In bottle', `${Math.floor(W.bottleWater)} mL actual${W.spilled >= 1 ? `, ${Math.floor(W.spilled)} mL spilled` : ''}`],
+    ['Clock', rtc_ok() ? 'OK' : 'NOT SET', rtc_ok() ? '' : 'warn'],
+    ['Buzzer', PIN.buzzer ? `BEEP (${BUZZ.label})` : '—', PIN.buzzer ? 'warn' : '']
+  ];
+  $('readout').innerHTML = rows.map(r => `<dt>${r[0]}</dt><dd class="${r[2] || ''}">${escapeHtml(r[1])}</dd>`).join('');
+  $('buzz').classList.toggle('on', PIN.buzzer);
+}
+let log_dirty = true;
+function draw_log() {
+  if (!log_dirty) return;
+  log_dirty = false;
+  const box = $('log');
+  const atEnd = box.scrollTop + box.clientHeight >= box.scrollHeight - 8;
+  $('log-body').innerHTML = LOG.map(r => `<tr class="${r.c}"><td class="t">${r.t}</td><td class="s">${r.s}</td><td>${escapeHtml(r.m)}</td></tr>`).join('');
+  if (atEnd) box.scrollTop = box.scrollHeight;
+}
+
+// ---- Main loop -------------------------------------------------------------
+let last_real = 0, acc_ms = 0, last_draw = 0;
+function frame(now) {
+  if (!last_real) last_real = now;
+  acc_ms += Math.min(now - last_real, 250) * OPT.speed;
+  last_real = now;
+  while (acc_ms >= TICK_MS) { loop_once(); acc_ms -= TICK_MS; }
+  if (HMI.longpress && now - HMI.longpress >= 3000) { HMI.longpress = 0; hmi_send('ADMIN_ENTER'); sim_note('admin gesture (long press)'); }
+  if (now - last_draw >= 50) {
+    last_draw = now;
+    draw(gather());
+    if (OPT.showfit) fit_check('live');
+    readout();
+    draw_log();
+  }
+  requestAnimationFrame(frame);
+}
+
+// RAM, as a reboot finds it. A page reload does this for free; the self-test
+// needs it explicitly to reboot without reloading.
+function ram_reset() {
+  NOW = 0;
+  Object.assign(ACC, { pulses: 0, last: 0, win: false, fault: true, pending: COIN_NONE, avail: false, overmax: 0, discarded: 0 });
+  Object.assign(S, { state: STATE_BOOT, prev: STATE_BOOT, since: 0, target_ml: 0, pay_p1: 0, pay_p5: 0,
+                     pay_leg: 2, change_paid: 0, change_due: 0, warned: 0, last_pause_beep: 0, fault_change: null });
+  Object.assign(HOP, { phase: HOP_IDLE, commanded: 0, counted: 0, retry: 0, result: PAYOUT_IDLE });
+  Object.assign(HMI, { queue: [], event: null, view: null, adminTab: 'history', draft: null, histPage: 0, resetArm: 0, longpress: 0 });
+  Object.assign(CNF, { state: false, candidate: false, since: 0, pressed: false, pressed_in: -1 });
+  Object.assign(PHY, { queue: [], flowFrac: 0, tailUntil: 0, valveWas: false, hopWas: [false, false],
+                       nextEject: [0, 0], skipOnce: false, armed: 'none', outletLowUntil: [0, 0], confirmUntil: 0 });
+  BUZZ.segs = []; s_latched = 0; s_mask = 0; POUR.valid = false;
+  Object.assign(PIN, { inhibit: true, valve: false, pump: false, hop: [false, false], compressor: false, buzzer: false });
+}
+
+// ===========================================================================
+// Self-test -- open with ?selftest. Drives scripted scenarios through the port
+// at full speed against a scratch store, then runs the fit audit. Results land
+// in the findings panel and in #audit-out for a headless browser to read.
+// Checks marked DEFECT assert that a known src defect IS reproduced in faithful
+// mode; they are there so a fix in src shows up as a change here.
+// ===========================================================================
+function run_selftest() {
+  const results = [];
+  const check = (name, cond, detail) => results.push({ name, pass: !!cond, detail: detail === undefined ? '' : String(detail) });
+  const run = ms => { for (let t = 0; t < ms; t += TICK_MS) loop_once(); };
+  const until = (pred, max) => { for (let t = 0; t < max; t += TICK_MS) { if (pred()) return true; loop_once(); } return pred(); };
+  const is = st => () => S.state === st;
+  const reboot = () => { ram_reset(); setup(); run(20); };
+  const fresh = faithful => { MEM = {}; W = default_world(); LOG = []; OPT.faithful = faithful; reboot(); };
+  const tap = (type, p) => { hmi_send(type, p || 0); run(20); };
+  const stock = (p1, p5) => { persist_inventory_set(DEST_P1_HOPPER, p1); persist_inventory_set(DEST_P5_HOPPER, p5); run(20); };
+  const coin = (p, settle) => { insert_coin(p); run(settle || 1200); };
+  const logHas = s => LOG.some(r => (r.s + ' ' + r.m).includes(s));
+  const toStandby = () => { W.bottle = false; until(is(STATE_STANDBY), 20000); };
+  // Coins in, confirm, select, and optionally put a bottle down.
+  const buy = (coins, ml, bottle) => {
+    coins.forEach(c => coin(c));
+    if (S.state === STATE_ACCEPTING) { press_confirm(); until(is(STATE_SELECTING), 1000); }
+    tap('SELECT_VOLUME', ml);
+    if (bottle) { W.bottle = true; until(is(STATE_DISPENSING), 1000); }
+  };
+
+  // --- Virgin EEPROM -> LOW CHANGE, SPEC 7.3 -------------------------------
+  fresh(true);
+  check('virgin EEPROM locks on LOW CHANGE', S.state === STATE_FAULT && faults_active() === FAULT_LOW_CHANGE, STATE_NAMES[S.state]);
+  stock(115, 34);
+  check('loading the float clears LOW CHANGE', until(is(STATE_STANDBY), 500), STATE_NAMES[S.state]);
+
+  // --- The walkthrough: P20, 500 mL, P15 change -------------------------------
+  coin(20, 1500);
+  check('P20 reaches the ceiling and goes straight to SELECTING', S.state === STATE_SELECTING && billing_credit() === 2000, peso(billing_credit()));
+  check('greyed options: all 20 affordable at P20', VOLUMES.every(v => billing_can_select(v)));
+  tap('SELECT_VOLUME', 500);
+  check('500 mL selected, P5 deducted before the valve opens', S.state === STATE_AWAITING_BOTTLE && billing_credit() === 1500, peso(billing_credit()));
+  W.bottle = true;
+  check('bottle detected -> DISPENSING', until(is(STATE_DISPENSING), 500));
+  check('pour completes', until(is(STATE_COMPLETE), 60000), STATE_NAMES[S.state]);
+  check('COMPLETE: balance P15, 500 mL billed', billing_credit() === 1500 && billing_total_dispensed() === 500);
+  tap('FINISH');
+  check('payout reaches THANK_YOU', until(is(STATE_THANK_YOU), 20000), STATE_NAMES[S.state]);
+  check('change P15 paid as 3 x P5', S.change_paid === 1500 && W.tray[1] === 3 && W.tray[0] === 0, `${peso(S.change_paid)} tray ${W.tray}`);
+  check('inventory: P5 34 -> 31 by COUNTED coins, P20 in coin box', EE.inventory.p5_count === 31 && EE.inventory.profit_p20 === 1, JSON.stringify(EE.inventory));
+  check('history + daily written after payout', EE.history[0].tag === EVT_TRANSACTION && EE.history[0].change_out === 1500 && EE.daily.profit === 500 && EE.daily.volume === 500);
+  check('open transaction closed', !persist_has_open_txn());
+  toStandby();
+  W.tray = [0, 0];
+
+  // --- Case 7: no bottle, 15/18/20 s, full refund ------------------------------
+  buy([5], 300, false);
+  run(BOTTLE_WAIT_WARN1_MS + 50);
+  check('first buzzer at 15 s', S.warned === 1);
+  run(BOTTLE_WAIT_WARN2_MS - BOTTLE_WAIT_WARN1_MS);
+  check('second buzzer at 18 s', S.warned === 2);
+  check('cancel at 20 s refunds the full P5', until(is(STATE_THANK_YOU), 10000) && S.change_paid === 500, peso(S.change_paid));
+  toStandby();
+
+  // --- Back from INSERT BOTTLE --------------------------------------------------
+  buy([5], 300, false);
+  tap('BACK');
+  check('back from INSERT BOTTLE restores credit in full', S.state === STATE_SELECTING && billing_credit() === 500, peso(billing_credit()));
+  check('DEFECT P-3: AWAITING_BOTTLE -> SELECTING missing from src LEGAL[]', logHas('NOT IN src LEGAL'));
+  tap('BACK');
+  until(is(STATE_THANK_YOU), 10000);
+  toStandby();
+
+  // --- Case 8, with the proposed fix: remove, replace, resume ----------------
+  OPT.faithful = false;
+  buy([10], 1000, true);
+  run(5000);
+  W.bottle = false;
+  check('[fixed] bottle removed -> PAUSED', until(is(STATE_PAUSED), 500));
+  run(3000);
+  check('[fixed] stays PAUSED with no bottle', S.state === STATE_PAUSED);
+  W.bottle = true;
+  check('[fixed] replaced in grace -> DISPENSING', until(is(STATE_DISPENSING), 500));
+  check('[fixed] resumes to the ORIGINAL target', until(is(STATE_THANK_YOU), 60000) && billing_total_dispensed() === 1000, mlx(billing_total_dispensed()));
+  toStandby();
+
+  // --- Case 8, faithful: the stale placed edge --------------------------------
+  OPT.faithful = true;
+  W.bottleWater = 0; W.spilled = 0;
+  buy([10], 1000, true);
+  run(5000);
+  W.bottle = false;
+  until(is(STATE_PAUSED), 500); run(200);
+  check('DEFECT P-1: faithful port leaves PAUSED with NO bottle (stale placed edge)', S.state === STATE_DISPENSING && !W.bottle, STATE_NAMES[S.state]);
+  until(is(STATE_THANK_YOU), 60000);
+  check('DEFECT P-1: water poured onto the drip tray', W.spilled > 100, `${Math.floor(W.spilled)} mL`);
+  run(HMI_THANKYOU_HOLD_MS + 100);
+
+  // --- Partial pour rounds DOWN -----------------------------------------------
+  OPT.faithful = false;
+  buy([5], 500, true);
+  until(() => dispense_delivered() >= 305, 60000);
+  W.bottle = false;
+  until(is(STATE_PAUSED), 500);
+  check('grace expires -> settles', until(is(STATE_COMPLETE), BOTTLE_REMOVED_GRACE_MS + 2000), STATE_NAMES[S.state]);
+  const billed = billing_round_down(S.last_measured);
+  check('partial pour billed rounded DOWN, refund to credit',
+        billing_credit() === 500 - billing_price_of(billed) && billed < S.last_measured,
+        `measured ${S.last_measured} mL, billed ${billed} mL, credit ${peso(billing_credit())}`);
+  tap('FINISH');
+  until(is(STATE_THANK_YOU), 20000);
+  toStandby();
+
+  // --- Case 19: stall -> settle -> pay -> lock ------------------------------
+  W.flow = 'stall';
+  buy([5], 500, true);
+  check('stall: user paid first, then FAULT', until(is(STATE_FAULT), 30000) && faults_active() === FAULT_FLOW_STALL && S.change_paid === 500,
+        `${STATE_NAMES[S.state]} ${peso(S.change_paid)}`);
+  check('stall: PAYING_CHANGE -> FAULT (settle first, lock second)', logHas('PAYING_CHANGE → FAULT'));
+  check('stall: fault screen carries the change prompt', gather().fault_change && gather().fault_change.paid === 500);
+  W.flow = 'normal';
+  tap('ADMIN_ENTER'); tap('ADMIN_CLEAR_FAULT'); tap('ADMIN_EXIT');
+  check('admin clears the persistent fault', until(is(STATE_STANDBY), 500), STATE_NAMES[S.state]);
+  W.bottle = false; run(200);
+
+  // --- Case 11: hopper jam ------------------------------------------------------
+  W.hopperMode = 'jam'; W.tray = [0, 0];
+  const p5_pre_jam = EE.inventory.p5_count;
+  buy([20], 100, true);
+  until(is(STATE_COMPLETE), 30000);
+  tap('FINISH');
+  check('jam: retries then CHANGE JAM', until(is(STATE_FAULT), 60000) && faults_active() === FAULT_CHANGE_JAM && logHas('retry 3/3'));
+  check('jam: inventory decremented by the ONE coin counted', EE.inventory.p5_count === p5_pre_jam - 1 && W.tray[1] === 1, `P5 ${p5_pre_jam} -> ${EE.inventory.p5_count}, tray ${W.tray}`);
+  check('jam: screen says what is still owed', gather().fault_change && gather().fault_change.unpaid === 1400, JSON.stringify(gather().fault_change));
+  check('jam persists in EEPROM', (EE.faults & fault_bit(FAULT_CHANGE_JAM)) !== 0);
+  reboot();
+  check('jam survives a power cycle: BOOT -> FAULT', S.state === STATE_FAULT && faults_active() === FAULT_CHANGE_JAM, STATE_NAMES[S.state]);
+  tap('ADMIN_ENTER'); tap('ADMIN_CLEAR_FAULT'); tap('ADMIN_EXIT');
+  until(is(STATE_STANDBY), 500);
+  W.bottle = false;
+  reboot();
+  check('FINDING P-5: jammed transaction left open; next reboot resumes it',
+        S.state === STATE_COMPLETE && billing_credit() === 1900, `${STATE_NAMES[S.state]} credit ${peso(billing_credit())}`);
+  tap('FINISH'); until(is(STATE_THANK_YOU), 20000); toStandby();
+
+  // --- Case 12: power cut mid-transaction -------------------------------------
+  fresh(false); stock(115, 34);
+  // 1500 ms apart: closer than lockout + pulse gap (~1.1 s) and the acceptor
+  // returns the second coin -- Case 14, working as designed.
+  coin(10, 1500); coin(5, 1500);
+  check('two coins in', S.state === STATE_ACCEPTING && billing_credit() === 1500);
+  reboot();
+  check('power cut: BOOT -> COMPLETE with P15 restored', S.state === STATE_COMPLETE && billing_credit() === 1500, `${STATE_NAMES[S.state]} ${peso(billing_credit())}`);
+  tap('FINISH');
+  check('restored credit is paid out', until(is(STATE_THANK_YOU), 20000) && S.change_paid === 1500);
+  toStandby();
+
+  // --- Case 13: power cut while the diverter is moving --------------------------
+  coin(5, 300);
+  check('coin is in flight', DIV.moving && persist_coin_in_flight() === COIN_P5);
+  const p5_before = EE.inventory.p5_count;
+  reboot();
+  check('in-flight coin: assumed coin box, never the hopper',
+        EE.inventory.profit_unknown === 1 && EE.inventory.p5_count === p5_before && EE.history[0].tag === EVT_COIN_UNROUTED);
+  check('in-flight coin: credited exactly once (P-2)', S.state === STATE_COMPLETE && billing_credit() === 500, peso(billing_credit()));
+  tap('FINISH'); until(is(STATE_THANK_YOU), 20000); toStandby();
+
+  // --- Case 14: coin during the lockout window -----------------------------------
+  W.returned = [];
+  coin(1, 300);
+  insert_coin(5); run(1500);
+  check('coin during diverter lockout is returned, not queued', W.returned.includes(5) && billing_credit() === 100, `credit ${peso(billing_credit())}`);
+  press_confirm(); until(is(STATE_SELECTING), 500); tap('BACK');
+  until(is(STATE_THANK_YOU), 20000); toStandby();
+
+  // --- Stale one-shots, faithful ---------------------------------------------
+  OPT.faithful = true;
+  press_confirm(); run(300);                  // pressed in STANDBY, nobody reads it
+  coin(1, 600);
+  check('DEFECT P-1: stale CONFIRM ends coin entry after one P1', S.state === STATE_SELECTING && billing_credit() === 100, `${STATE_NAMES[S.state]} ${peso(billing_credit())}`);
+  tap('SELECT_VOLUME', 100); W.bottle = true;
+  until(is(STATE_THANK_YOU), 30000);
+  toStandby();
+  buy([5], 100, true);
+  until(is(STATE_COMPLETE), 30000);
+  W.bottle = false; run(200);                 // takes the bottle, then taps finish
+  tap('FINISH');
+  until(is(STATE_THANK_YOU), 20000); run(50);
+  check('DEFECT P-1: stale removed edge dismisses THANK YOU instantly', S.state === STATE_STANDBY, STATE_NAMES[S.state]);
+
+  // --- Out of water and storage full lock only at the gate ---------------------------
+  OPT.faithful = false;
+  buy([5], 500, true);
+  W.gallonEmpty = true;
+  until(is(STATE_COMPLETE), 30000);
+  check('gallon empty mid-pour does not strand the user', S.state === STATE_COMPLETE);
+  tap('FINISH'); until(is(STATE_THANK_YOU), 20000); toStandby();
+  run(100);
+  check('then locks at the gate: OUT OF WATER', S.state === STATE_FAULT && faults_active() === FAULT_OUT_OF_WATER);
+  W.gallonEmpty = false;
+  check('and clears itself when refilled', until(is(STATE_STANDBY), 2000));
+
+  OPT.faithful = true;
+  const fit = fit_audit();
+  return { results, fit };
+}
+
+// ===========================================================================
+// Boot
+// ===========================================================================
+function boot() {
+  Object.assign(OPT, store_get(OPT_KEY) || {});
+  if (/[?&]selftest/.test(location.search)) {
+    MEM = {};
+    const r = run_selftest();
+    const failed = r.results.filter(x => !x.pass);
+    $('findings').innerHTML =
+      `<li><b>Self-test: ${r.results.length - failed.length}/${r.results.length} passed</b></li>` +
+      r.results.map(x => `<li style="color:${x.pass ? 'var(--chrome-good)' : 'var(--chrome-bad)'}">${x.pass ? 'PASS' : 'FAIL'} — ${escapeHtml(x.name)}${x.detail ? ` <span class="muted">(${escapeHtml(x.detail)})</span>` : ''}</li>`).join('') +
+      `<li><b>Fit audit: ${r.fit.length} field(s) do not fit</b></li>` +
+      r.fit.map(f => `<li>${f.page} · <code>${f.field}</code> needs ${f.need_w}×${f.need_h}, has ${f.have_w}×${f.have_h} — “${escapeHtml(f.text)}”</li>`).join('');
+    $('audit-out').textContent = JSON.stringify(r);
+    document.title = `selftest ${r.results.length - failed.length}/${r.results.length}`;
+    draw_log();
+    return;
+  }
+  // ?shot=N freezes the screen on fit-audit case N, for screenshots of every
+  // page variant without playing through to it.
+  const shot = /[?&]shot=(\d+)/.exec(location.search);
+  if (shot) {
+    MEM = {}; W = default_world(); setup();
+    const c = audit_cases()[Number(shot[1])];
+    if (c) { cur_key = null; draw(c[1]); document.title = c[0]; }
+    return;
+  }
+  W = Object.assign(default_world(), store_get(WORLD_KEY) || {});
+  if (store_get(CUT_KEY)) {
+    store_del(CUT_KEY);
+    LOG = store_get(LOG_KEY) || [];
+    store_del(LOG_KEY);
+    sim_note('power restored — booting from EEPROM', 'warn');
+  }
+  setup();
+  sync_controls();
+  sim_note(persist_was_initialised()
+    ? 'boot: EEPROM blank — hopper contents unknown, so LOW CHANGE follows (SPEC 7.3). Load the float to start.'
+    : 'boot: EEPROM restored');
+  window.addEventListener('beforeunload', save_world);
+  requestAnimationFrame(frame);
+}
+boot();
+</script>
+</body>
+</html>
