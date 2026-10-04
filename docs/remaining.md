@@ -15,6 +15,59 @@ block.
 
 ---
 
+## Live status — WO-008 §5, as of 2026-10-04 (supersedes the WO-005 table below)
+
+| # | Item | Status |
+|---|---|---|
+| 1 | Triage the independent test report (37 findings, build 2026-10-04.3); apply F8, F9, F19, F25 | **Blocked / partial.** The test report has not been received, so triage has not started. The four rulings are recorded in `decisions.md`. **No code changed yet:** F8 and F9 each have an open point raised with project management, and F19/F25 land with them in one money-path change |
+| 2 | Reworked animations (no ripple, percentage beside the bottle, baked stream), remaining icons, scan sweep, frame exporter | Not started. The simulator at build 2026-10-04.3 still has the CSS versions |
+| 3 | `docs/hmi_spec.md`, money-field format left open until the ₱ glyph test | Not started. **Critical path** |
+| 4 | Defects P-1 to P-7 plus whatever triage adds | Not started |
+| 5 | Rev B two-gate diverter and R-7 spec corrections | Not started |
+| 6 | Part C, Part D, `hmi.cpp`, bench mode | Not started |
+
+Done so far: open-transaction record, layout 3 (`4b7b4c2`); coin icons and first
+animation pass in the simulator (`3e124ba`); simulator build string (`0474a08`);
+animation feasibility on the NX4832T035 (reported, accepted in WO-008).
+
+**Waiting on a person:** the ₱ glyph test in Nextion Editor.
+
+### F8 lockout analysis (2026-10-04)
+
+Question: if credit may reach ₱39, what does a ₱39 worst-case change do to the
+LOW CHANGE LOCKOUT gate?
+
+**The gate itself.** Minimum ₱1 coins needed to pass, by ₱5 stock (reserve 10):
+
+| ₱5 in hopper | ≤10 | 11 | 12 | 13 | 14 | 15 | 16 | ≥17 |
+|---|---|---|---|---|---|---|---|---|
+| ₱20 gate (today) | 20 | 15 | 10 | 5 | 0 | 0 | 0 | 0 |
+| ₱39 gate | 39 | 34 | 29 | 24 | 19 | 14 | 9 | 4 |
+
+**Transactions before lockout**, median of 3,000 simulated runs with no operator
+visit. ASSUMPTIONS, not data: each sale 3–10 pesos; payer either uses exact
+coins, one ₱10, or one ₱20 in the proportions shown.
+
+| Float | Mostly exact (60/20/20) | Even (34/33/33) | Mostly big coins (20/30/50) |
+|---|---|---|---|
+| ₱1×115, ₱5×34 (client mockup) | >1000 → >1000 | 61 → 57 | 33 → 30 |
+| ₱1×80, ₱5×20 | >1000 → >1000 | 31 → 26 | 17 → 14 |
+| ₱1×50, ₱5×15 | >1000 → 162 | 16 → 10 | 9 → 6 |
+| ₱1×30, ₱5×12 | 36 → 3 | 6 → 1 | 3 → 1 |
+| ₱1×25, ₱5×10 | 5 → 0 | 2 → 0 | 1 → 0 |
+
+Each cell is "₱20 gate → ₱39 gate".
+
+**Reading it.** At the client's float the stricter gate costs about four
+transactions. It only bites hard when the float is already nearly gone. **The
+larger finding is the other columns: unless most users pay with exact coins, the
+mockup float lasts 30 to 60 sales whichever gate is used,** because every ₱10
+and ₱20 goes to the coin box and its change comes out of the hoppers. That is
+SPEC §10 Case 18, sustained ₱5 drain, and it is a float-size and service-interval
+question, not a gate question.
+
+---
+
 ## Current sequence — WO-005 §3, as of 2026-10-04
 
 **This section is the live status. Sections further down predate it and are kept
