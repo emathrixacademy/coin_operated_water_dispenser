@@ -752,6 +752,40 @@ modes and is host tested; the four firmware variants build.
 COLLECT_ALL (roughly 160 coins a day against 65 at 100 sales a day), so the
 collection interval must be stated per mode.
 
+### Credit is written before the coin is counted (WO-014)
+
+**Write the credit first, then count the coin.** With the present order
+(count, then credit) a power cut between the two takes the user's money and
+leaves no record. Reversed, a cut leaves the credit saved and the coin
+uncounted: the coin is physically in the box or the hopper, so the stored count
+is low, and an understated count locks the machine early rather than promising
+change it cannot pay. The error falls on the machine, not on the person in
+front of it.
+
+Applies in both routing modes. To be carried into the defect work, where it
+interacts with when the acceptor is held off.
+
+### F18, F21 and F22 are prerequisites, not queue items (WO-014)
+
+The lockout figures assume the hopper counts are accurate. Two findings show
+they drift **upward**:
+
+- **F18:** a power cut mid-payout pays change twice and leaves the count higher
+  than the hopper holds.
+- **F21:** a coin missed by the outlet sensor overpays and leaves the count one
+  high.
+
+In RECIRCULATE the drift is partly washed out as coins flow back in. **In
+COLLECT_ALL nothing refills, so the error is permanent and compounds.** A count
+that is too high lets the ₱39 gate pass when it should not, and the machine
+ends in the change-short-with-money-owed case.
+
+- **F22:** the coin-box beam not firing mid-transaction. COLLECT_ALL depends on
+  that beam as its only fullness signal, and at roughly 160 coins a day it moves
+  from rare to likely.
+
+All three must be fixed before either build handles money.
+
 ### Notes for fabrication drawing Rev C
 
 - Sheet 2 gives a power-off position for Gate A only. **Gate B needs one.**
@@ -760,8 +794,24 @@ collection interval must be stated per mode.
 - **Gate A's pinned position depends on the mode:** toward the coin box for
   COLLECT_ALL. The Sheet 2 note "Gate A defaults to the HOPPER path with power
   off" describes RECIRCULATE with a failed servo, and should say so.
-- Converting a unit to RECIRCULATE means unpinning both flaps, fitting both
-  servos, measuring the four angles, reflashing, and re-entering the counts.
+
+### Converting a unit from COLLECT_ALL to RECIRCULATE · procedure
+
+1. **Empty the coin box and take the coins away.** Reflashing zeroes the stored
+   box counts, which is only correct if the box is empty at that moment.
+2. Empty both hoppers and count what was in them. Record it.
+3. Unpin both flaps.
+4. Fit both gate servos and their pushrods.
+5. Measure the four travel angles against the hard stops and enter them in
+   `config.h`. Measure the gate travel time for `COIN_LOCKOUT_MS`.
+6. Flash a RECIRCULATE build (`release`, not `release_collect`).
+7. The machine boots locked on low change with a "mode changed" history entry.
+   That is correct: the saved counts were written in the other mode.
+8. Load the hoppers, count them, and enter the counts in Admin.
+9. Drop-test each coin through each path before returning the unit to service.
+
+The reverse conversion is the same with steps 3 to 5 replaced by removing the
+servos and pinning both flaps, Gate A toward the coin box.
 
 ### The client requires recirculation (confirmed in chat, 2026-10-04)
 

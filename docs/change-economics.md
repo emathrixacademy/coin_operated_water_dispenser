@@ -315,6 +315,22 @@ this study. If the machine is assessed in that build, there is no recirculation 
 | Collection build | 73 | 45 | 32 |
 | Recirculating build | does not stop | 56 | 30 |
 
+**This row is the strongest reason to measure before deciding.** Under mix C the collection
+build lasts as long as the recirculating one, which would make the gate motors look
+unnecessary. Under mix A recirculation is the difference between a machine that never stops
+and one that stops after 73 sales. Which of those is true for your machine depends on one
+number the study has not yet measured: the share of customers who pay the exact amount. That
+measurement takes one lunch break of watching how students pay (Section 7). It should be done
+before the gate motors are fitted, not after.
+
+**These figures are upper limits for now.** They assume the machine's count of the coins in
+each hopper is always correct. Two known software faults can leave the count higher than
+what the hopper really holds: a power cut while change is being paid, and a coin that leaves
+the hopper without being seen by its sensor. In the collection build nothing refills the
+hoppers, so an error of that kind is never corrected and each one adds to the last. Both
+faults are scheduled to be fixed before the machine is used. Until they are, expect fewer
+sales than the table shows.
+
 Two things follow from that table.
 
 **Recirculation reduces refilling. It does not remove it.** Under mix A it is the difference
