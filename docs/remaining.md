@@ -15,7 +15,33 @@ block.
 
 ---
 
-## Live status — WO-009 §4, as of 2026-10-04 (supersedes the WO-005 table below)
+## Live status — WO-013 §5, as of 2026-10-04 (supersedes every table below)
+
+| # | Item | Status |
+|---|---|---|
+| 1 | Mode-dependent ₱5 reserve, `box_*` rename, layout 4, COLLECT_ALL | **Done 2026-10-04.** 134/134 host tests; `release`, `debug`, `release_collect`, `debug_collect` all build. Not run on hardware |
+| 2 | Triage the 37 findings; then F8, F9, F19, F25 in one money-path change | **Blocked: the test report has not been received.** The four rulings are recorded and unblocked |
+| 3 | Reworked animations, remaining icons, scan sweep, frame exporter | Not started |
+| 4 | `docs/hmi_spec.md`, gated on the ₱ glyph test | Not started. **Critical path.** Waiting on a person for the glyph test |
+| 5 | Defects P-1 to P-7, Rev B two-gate diverter, Part C, Part D, `hmi.cpp`, bench mode | Not started |
+
+**Host tests: 134/134 across six suites**, re-run 2026-10-04.
+
+**Known stale:**
+
+- `sim/hmi/watervendo-hmi.html` (build 2026-10-04.3) still models the layout-2
+  record, `profit_*` names, a fixed reserve of 10 and RECIRCULATE only. Its
+  money-path port still matches `src/` in the default mode (`verify_port.js`
+  passes). Brought up to date in item 3.
+- The mode is shown in the DEBUG boot trace only. Showing it on the Admin
+  screen waits for Admin (Part C).
+- `CLAUDE.md`, `README.md`, `wiring.md` and SPEC §1.3/§3.2 still describe the
+  Rev A single servo. Rev B pass, item 5.
+- `coin_diverter.cpp` RECIRCULATE path still drives one three-position servo.
+
+---
+
+## Earlier status — WO-009 §4 (superseded)
 
 **`docs/change-economics.md` written 2026-10-04 and awaiting review.** The client
 decides the remedy for the change drain; nothing in firmware addresses it.

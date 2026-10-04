@@ -725,6 +725,33 @@ Accepted with it:
 - **The in-flight ring stays in place**, unused in COLLECT_ALL.
 - **The coin-box counters are kept and extended** to all denominations.
 
+### The ₱5 reserve is mode-dependent (WO-013)
+
+**`HOPPER_RESERVE_P5` is 10 in RECIRCULATE and 0 in COLLECT_ALL.** The reserve
+exists because ₱5 arrives slowly and leaves fast; that reasoning is entirely
+about refill. With no refill, ten held-back coins are ₱50 of float the machine
+never spends: 36 sales against 45 on the mockup float under the even mix. The
+code comment says the zero is deliberate.
+
+### Coin-box counters renamed and extended · layout version 4 (WO-013)
+
+`profit_p10/p20/unknown` became `box_p1, box_p5, box_p10, box_p20, box_unknown`.
+The box holds takings, not profit. The inventory record carries the routing
+mode and is 16 bytes; the fault flags moved from address 32 to 40.
+
+A coin whose routing was interrupted by a power cut is now counted in the box
+**under its own denomination**, where before a ₱1 or ₱5 went to "unknown". The
+location is still assumed; the value is known. This supersedes the wording of
+P-2 above ("incrementing `profit_unknown`") without changing its rule: boot
+still never credits from the routing intent.
+
+**COLLECT_ALL is built** (WO-013): `coin_route()` holds the truth table for both
+modes and is host tested; the four firmware variants build.
+
+**For the operator manual, when written:** the coin box fills faster in
+COLLECT_ALL (roughly 160 coins a day against 65 at 100 sales a day), so the
+collection interval must be stated per mode.
+
 ### Notes for fabrication drawing Rev C
 
 - Sheet 2 gives a power-off position for Gate A only. **Gate B needs one.**

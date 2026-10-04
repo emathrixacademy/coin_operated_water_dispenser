@@ -56,8 +56,8 @@ static void test_round_trip_preserves_payload() {
   inventory_t src;
   src.p1_count = 100;
   src.p5_count = 42;
-  src.profit_p10 = 7;
-  src.profit_p20 = 3;
+  src.box_p10 = 7;
+  src.box_p20 = 3;
 
   uint8_t buf[RECORD_OVERHEAD + sizeof(inventory_t)];
   record_pack(buf, (const uint8_t *)&src, sizeof(src));
@@ -68,8 +68,8 @@ static void test_round_trip_preserves_payload() {
 
   TEST_ASSERT_EQUAL_UINT16(100, dst.p1_count);
   TEST_ASSERT_EQUAL_UINT16(42, dst.p5_count);
-  TEST_ASSERT_EQUAL_UINT16(7, dst.profit_p10);
-  TEST_ASSERT_EQUAL_UINT16(3, dst.profit_p20);
+  TEST_ASSERT_EQUAL_UINT16(7, dst.box_p10);
+  TEST_ASSERT_EQUAL_UINT16(3, dst.box_p20);
 }
 
 static void test_round_trip_of_an_all_zero_payload() {
@@ -96,8 +96,8 @@ static void test_corrupt_payload_is_rejected() {
   inventory_t src;
   src.p1_count = 100;
   src.p5_count = 100;
-  src.profit_p10 = 0;
-  src.profit_p20 = 0;
+  src.box_p10 = 0;
+  src.box_p20 = 0;
 
   uint8_t buf[RECORD_OVERHEAD + sizeof(inventory_t)];
   record_pack(buf, (const uint8_t *)&src, sizeof(src));
@@ -116,8 +116,8 @@ static void test_every_single_bit_flip_in_payload_is_caught() {
   inventory_t src;
   src.p1_count = 100;
   src.p5_count = 55;
-  src.profit_p10 = 12;
-  src.profit_p20 = 9;
+  src.box_p10 = 12;
+  src.box_p20 = 9;
 
   uint8_t good[RECORD_OVERHEAD + sizeof(inventory_t)];
   record_pack(good, (const uint8_t *)&src, sizeof(src));
@@ -222,6 +222,39 @@ static void test_transaction_round_trip() {
   TEST_ASSERT_EQUAL_UINT8(TXN_PHASE_POUR, dst.phase);
   TEST_ASSERT_EQUAL_UINT8(1, dst.leg_hopper);
   TEST_ASSERT_EQUAL_UINT8(3, dst.leg_count);
+}
+
+static void test_inventory_record_is_sixteen_bytes() {
+  // 16 payload + 4 framing = 20, at address 16, so the fault flags start at 40.
+  TEST_ASSERT_EQUAL_size_t(16, sizeof(inventory_t));
+}
+
+static void test_inventory_carries_all_five_box_counters_and_the_mode() {
+  inventory_t src;
+  memset(&src, 0, sizeof(src));
+  src.p1_count = 115; src.p5_count = 34;
+  src.box_p1 = 1; src.box_p5 = 2; src.box_p10 = 3; src.box_p20 = 4; src.box_unknown = 5;
+  src.routing_mode = COIN_ROUTING_COLLECT_ALL;
+
+  uint8_t buf[RECORD_OVERHEAD + sizeof(inventory_t)];
+  record_pack(buf, (const uint8_t *)&src, sizeof(src));
+  inventory_t dst;
+  memset(&dst, 0, sizeof(dst));
+  TEST_ASSERT_TRUE(record_unpack(buf, (uint8_t *)&dst, sizeof(dst)));
+
+  TEST_ASSERT_EQUAL_UINT16(1, dst.box_p1);
+  TEST_ASSERT_EQUAL_UINT16(2, dst.box_p5);
+  TEST_ASSERT_EQUAL_UINT16(3, dst.box_p10);
+  TEST_ASSERT_EQUAL_UINT16(4, dst.box_p20);
+  TEST_ASSERT_EQUAL_UINT16(5, dst.box_unknown);
+  TEST_ASSERT_EQUAL_UINT8(COIN_ROUTING_COLLECT_ALL, dst.routing_mode);
+}
+
+static void test_routing_mode_values_are_frozen_and_neither_is_zero() {
+  // Stored in EEPROM, so never renumbered. And neither may be zero: a zeroed
+  // inventory record must not look like it was written in a valid mode.
+  TEST_ASSERT_EQUAL_INT(1, COIN_ROUTING_RECIRCULATE);
+  TEST_ASSERT_EQUAL_INT(2, COIN_ROUTING_COLLECT_ALL);
 }
 
 static void test_transaction_record_is_twenty_bytes() {
@@ -377,6 +410,9 @@ int main(int, char **) {
 
   RUN_TEST(test_transaction_round_trip);
   RUN_TEST(test_virgin_transaction_does_not_resume);
+  RUN_TEST(test_inventory_record_is_sixteen_bytes);
+  RUN_TEST(test_inventory_carries_all_five_box_counters_and_the_mode);
+  RUN_TEST(test_routing_mode_values_are_frozen_and_neither_is_zero);
   RUN_TEST(test_transaction_record_is_twenty_bytes);
   RUN_TEST(test_transaction_volume_fields_hold_the_ceiling);
   RUN_TEST(test_zeroed_transaction_means_no_transaction);

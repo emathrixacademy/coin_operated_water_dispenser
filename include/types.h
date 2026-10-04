@@ -36,7 +36,7 @@ enum coin_t : uint8_t {
 // P1 and P5 are reused as change. Everything else goes to the locked profit
 // chamber, but the chamber's COUNTERS are split by denomination.
 //
-// SPEC 7.1: profit_p10 and profit_p20 are separate counters. Without the split
+// SPEC 7.1: box_p10 and box_p20 are separate counters. Without the split
 // the chamber's peso value cannot be derived from its count, and reconciling a
 // physical collection against the recorded total becomes impossible.
 //
@@ -46,21 +46,28 @@ enum coin_t : uint8_t {
 enum coin_dest_t : uint8_t {
   DEST_P1_HOPPER = 0,
   DEST_P5_HOPPER,
-  DEST_PROFIT_P10,
-  DEST_PROFIT_P20,
-  // Physically routed to the profit chamber, counted in its OWN counter.
+
+  // The locked coin box, counted BY DENOMINATION -- SPEC 7.1. Five counters,
+  // so the box's peso value is 1*p1 + 5*p5 + 10*p10 + 20*p20 and an operator's
+  // physical count can be reconciled against the record.
   //
-  // SPEC 7.1: a third counter, for coins whose denomination the firmware could
-  // not identify (3.1) and coins whose routing was interrupted by power loss
-  // (3.3). Folding these into profit_p10 or profit_p20 would corrupt the exact
-  // peso reconciliation the split exists to provide; leaving them uncounted
-  // would mean a physical collection never matches the record with nothing to
-  // explain the gap.
+  // In RECIRCULATE only P10 and P20 are routed here; BOX_P1 and BOX_P5 then
+  // count only coins whose routing was interrupted by a power cut (3.3). In
+  // COLLECT_ALL every coin comes here, P1 and P5 included.
   //
-  // The chamber is worth 10*p10 + 20*p20, with profit_unknown coins of
-  // unstated value alongside it. The discrepancy stays legible to whoever opens
-  // the chamber instead of looking like a shortfall.
-  DEST_PROFIT_UNKNOWN
+  // These were called "profit" until layout version 4. The box holds TAKINGS,
+  // not profit -- profit is takings less the change paid out -- and that
+  // distinction matters on a screen an operator reads.
+  DEST_BOX_P1,
+  DEST_BOX_P5,
+  DEST_BOX_P10,
+  DEST_BOX_P20,
+
+  // In the box, value never established: a pulse train that matched no
+  // denomination (3.1). Folding these into any denomination counter would
+  // corrupt the peso reconciliation; leaving them uncounted would mean a
+  // physical collection never matches the record with nothing to explain it.
+  DEST_BOX_UNKNOWN
 };
 
 // Value of a denomination in centavos. COIN_NONE and COIN_INVALID are worth 0.
@@ -138,7 +145,11 @@ enum event_tag_t : uint8_t {
   // already paid out -- so the transaction was closed rather than offered to
   // whoever is standing there (decisions.md R-8). amount_in holds the credit
   // that was NOT resumed, for the operator to settle by hand.
-  EVT_TXN_SLOT_LOST
+  EVT_TXN_SLOT_LOST,
+  // The stored inventory was written by firmware in the other coin routing
+  // mode. It was zeroed rather than reinterpreted, and the machine locked until
+  // the counts were re-entered. denomination holds the mode it was written in.
+  EVT_MODE_CHANGED
 };
 
 // ---------------------------------------------------------------------------
@@ -170,16 +181,35 @@ struct history_entry_t {
 
 // Hopper and chamber inventory, mirrored in EEPROM. SPEC 7.1.
 //
-// The chamber's peso value is 10*profit_p10 + 20*profit_p20. profit_unknown
+// The chamber's peso value is 10*box_p10 + 20*box_p20. box_unknown
 // counts coins in the chamber whose denomination was never established, so a
 // physical collection that exceeds the derived value has a documented reason.
 struct inventory_t {
+  // The two change hoppers. What change_plan() is allowed to spend.
   uint16_t p1_count;
   uint16_t p5_count;
-  uint16_t profit_p10;
-  uint16_t profit_p20;
-  uint16_t profit_unknown;
+
+  // The coin box, by denomination. See coin_dest_t.
+  uint16_t box_p1;
+  uint16_t box_p5;
+  uint16_t box_p10;
+  uint16_t box_p20;
+  uint16_t box_unknown;
+
+  // COIN_ROUTING_MODE of the firmware that wrote this record.
+  //
+  // The counts above MEAN DIFFERENT THINGS in the two modes -- in COLLECT_ALL
+  // the hoppers are operator-loaded reserves, in RECIRCULATE they are fed by
+  // customers -- and firmware cannot detect whether servos are fitted. A unit
+  // reflashed from one mode to the other must not silently reinterpret its
+  // saved counts, so on a mismatch the inventory is treated as unknown and the
+  // machine locks until an operator re-enters it. See persist_begin().
+  uint8_t  routing_mode;
+  uint8_t  reserved;     // write 0
 };
+
+static_assert(sizeof(inventory_t) == 16,
+              "inventory_t is part of the EEPROM layout: 16 bytes, version 4");
 
 // What a reboot does with a stored transaction -- SPEC 7.1, decisions.md D-3.
 //

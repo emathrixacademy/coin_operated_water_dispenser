@@ -41,4 +41,13 @@ struct change_plan_t {
 bool change_plan(money_t centavos, uint16_t p1_stock, uint16_t p5_stock,
                  change_plan_t *out);
 
+// The same plan with the P5 reserve passed in rather than taken from config.h.
+//
+// change_plan() above is this with HOPPER_RESERVE_P5. It is exposed so the host
+// tests can exercise BOTH reserve values in one build -- the reserve is 10 in
+// RECIRCULATE and 0 in COLLECT_ALL, and a test suite that could only ever see
+// one of them would leave the other untested.
+bool change_plan_reserve(money_t centavos, uint16_t p1_stock, uint16_t p5_stock,
+                         uint16_t reserve_p5, change_plan_t *out);
+
 #endif  // CHANGE_PLAN_H

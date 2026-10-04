@@ -289,7 +289,7 @@ The cabinet is being fabricated so that it can run in two ways.
 
 - **Collection build.** The coin gates have no motors and are fixed in place. Every coin a
   customer inserts goes to the locked coin box. The ₱1 and ₱5 hoppers hold only the coins the
-  operator loaded, and they only give change.
+  operator loaded, and they only give change. Every loaded coin can be used.
 - **Recirculating build.** The gate motors are fitted. ₱1 and ₱5 coins from customers go back
   into the hoppers and are given out again as change.
 
@@ -312,20 +312,55 @@ this study. If the machine is assessed in that build, there is no recirculation 
 
 | Build | Mix A | Mix B | Mix C |
 |---|---|---|---|
-| Collection build | 59 | 36 | 26 |
+| Collection build | 73 | 45 | 32 |
 | Recirculating build | does not stop | 56 | 30 |
 
 Two things follow from that table.
 
 **Recirculation reduces refilling. It does not remove it.** Under mix A it is the difference
-between a machine that never stops and one that stops after 59 sales. Under mix C it adds
-four sales. How much the operator is spared depends on how many customers pay the exact
+between a machine that never stops and one that stops after 73 sales. Under mix C the two builds
+last about the same, 30 and 32 sales. How much the operator is spared depends on how many customers pay the exact
 amount, which is the one thing nobody has measured yet.
 
 **The two builds together make a stronger study than either alone.** The same cabinet, in the
 same place, can be run first without recirculation and then with it. Comparing the two
-measures what recirculation is actually worth, in sales between refills. Neither build can
-show that by itself.
+measures what recirculation is actually worth. Neither build can show that by itself.
+
+### Recommended method: measure recirculation on your own machine
+
+At present the value of recirculation is a simulation. This procedure turns it into a
+measurement, with no extra hardware.
+
+1. **Load a counted float.** For example 115 × ₱1 and 34 × ₱5. Enter the counts on the Admin
+   screen and write them down.
+2. **Run the collection build** for a fixed number of sales, N, at the real location. Stop
+   earlier if the machine stops accepting coins, and note the sale number.
+3. **Record from the Admin screen:** the number of sales, the coins left in each hopper, and
+   the coins in the coin box by denomination.
+4. **Reload to exactly the same float.** Fit the gate motors, so the machine is now the
+   recirculating build.
+5. **Run the same number of sales** at the same location, on comparable days and hours.
+6. **Record the same figures.**
+
+Then compare, for each build:
+
+**Change consumed per sale = (hopper value at the start − hopper value at the end) ÷ sales**
+
+The difference between the two builds is what recirculation is worth, in pesos of small
+coins saved per sale. Multiply by the daily sales to get the operator's saving per day.
+
+Three things keep the comparison fair:
+
+- **Check that the payment mix was similar in both runs.** The coin box counts by
+  denomination give it directly. If one run had many more exact payers, say so; the two
+  results are then not comparable without adjustment.
+- **Compare coins consumed per sale, not only the number of sales before the machine
+  stopped.** The recirculating build keeps ten ₱5 coins in reserve and the collection build
+  does not, so they stop at slightly different points for a reason unrelated to
+  recirculation.
+- **Choose N from the table above.** At the mockup float the machine may stop after 30 to 70
+  sales, so a run of about 50 sales will show the difference. A larger float allows a
+  longer run.
 
 ## 7. What to measure
 
