@@ -656,6 +656,46 @@ Rev B and spec corrections · 6 Part C, Part D, `hmi.cpp`, bench mode.
 Rev B moved down: the money defects outrank it and nothing is being fabricated
 this week.
 
+### Remedy 4 · the standby notice is not optional (WO-011)
+
+If remedy 4 (narrowing the volume choice as change runs low) is ever built, the
+**notice before the coin goes in is the remedy and the narrowing is secondary**.
+A customer who refuses the narrowed choice takes a refund of the full coin
+value in small coins, because their coin is already in the locked box. At 30%
+refusal the benefit is gone. **Without the notice the remedy is worse than doing
+nothing**, and it must never be dropped as a nice-to-have.
+
+The narrowing rule needs no number: a volume stays available only if giving its
+change would still leave the machine able to refund a full transaction.
+
+### Two reasons a volume tile is dimmed (WO-011)
+
+- **Unaffordable** tiles dim as today, with no extra text. The inserted-amount
+  bar already explains it.
+- **Change-blocked** tiles get a visually distinct treatment (a different dim or
+  a small lock mark, within the icon set).
+- **One line carries the reason for the whole group:** "Change is low. Larger
+  sizes only." Never per tile.
+
+### Fabrication · the cabinet is built to Rev B; the servos may be fitted later (WO-011)
+
+The diverter cannot be retrofitted: it needs the chute geometry, drop angles,
+housings inside the frame and service access. So both gate housings, both
+chutes and the servo mounting points are fabricated now.
+
+The machine may run initially **with the servos not fitted**. The firmware keeps
+the diverter code behind `COIN_ROUTING_MODE`: `RECIRCULATE` as specified, or
+`COLLECT_ALL` with no gate movement, no routing intent and no gate lockout.
+**Diverter code is not to be deleted.**
+
+> **Reported back before building, 2026-10-04, awaiting a ruling.** With no
+> servos every coin of every denomination lands in ONE hopper, mixed. A hopper
+> holding mixed coins cannot pay change: it pays by count, not by value. So in
+> COLLECT_ALL one hopper is a collection bin whose motor never runs, and all
+> change comes from the other, loaded by the operator and never refilled by
+> customers. Which hopper Gate B rests toward, and that both flaps are
+> mechanically pinned, must be decided on the drawing.
+
 ---
 
 ## Still open
@@ -664,6 +704,9 @@ this week.
 the ₱5 reserve.~~ Both confirmed in WO-009, above.
 
 **With the client:** which remedy for the change drain, `change-economics.md`.
+
+**COLLECT_ALL (WO-011):** how change is given when every coin lands mixed in one
+hopper; which side Gate B is pinned to. Reported 2026-10-04.
 
 ~~Nothing is currently blocked on a decision.~~ The remaining blockers are physical:
 no assembled hardware exists, so every per-unit calibration in `remaining.md` §M8
