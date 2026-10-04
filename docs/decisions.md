@@ -688,6 +688,9 @@ the diverter code behind `COIN_ROUTING_MODE`: `RECIRCULATE` as specified, or
 `COLLECT_ALL` with no gate movement, no routing intent and no gate lockout.
 **Diverter code is not to be deleted.**
 
+> **Superseded by WO-012, below: the configuration described here was not the
+> one being fabricated.** Kept as the record of what was reported.
+>
 > **Reported back before building, 2026-10-04, awaiting a ruling.** With no
 > servos every coin of every denomination lands in ONE hopper, mixed. A hopper
 > holding mixed coins cannot pay change: it pays by count, not by value. So in
@@ -695,6 +698,53 @@ the diverter code behind `COIN_ROUTING_MODE`: `RECIRCULATE` as specified, or
 > change comes from the other, loaded by the operator and never refilled by
 > customers. Which hopper Gate B rests toward, and that both flaps are
 > mechanically pinned, must be decided on the drawing.
+
+### COLLECT_ALL · every coin goes to the box (WO-012)
+
+WO-011 described the wrong configuration. **In COLLECT_ALL, Gate A is pinned
+toward the coin box, not toward the hoppers.** Every accepted coin, ₱1 and ₱5
+included, goes to the locked box. The ₱1 and ₱5 hoppers are operator-loaded
+reserves that only dispense.
+
+So both hoppers stay single-denomination, `change_plan()` is unchanged, the ₱5
+reserve rule still applies, and the coin-box beam still detects a full box.
+
+**The fail-safe reasoning inverts between modes, and the code must say so.** In
+RECIRCULATE a dead servo leaves Gate A on the hopper path, because an inventory
+mismatch is visible to the operator. In COLLECT_ALL there is no servo; the flap
+is pinned deliberately and the box is the destination. Read without that note,
+drawing Sheet 2 and the firmware appear to contradict each other.
+
+Accepted with it:
+
+- **The mode is a compile-time constant.** It is shown on Admin and in the boot
+  trace, because firmware cannot detect a servo.
+- **The mode is stored with the inventory, and a mismatch locks the machine**
+  until the operator re-enters the counts. A reflash must never silently
+  reinterpret saved counts.
+- **The in-flight ring stays in place**, unused in COLLECT_ALL.
+- **The coin-box counters are kept and extended** to all denominations.
+
+### Notes for fabrication drawing Rev C
+
+- Sheet 2 gives a power-off position for Gate A only. **Gate B needs one.**
+- **Both flaps are mechanically pinned when no servo is fitted.** A free flap can
+  bounce on coin impact and send a coin down the wrong branch.
+- **Gate A's pinned position depends on the mode:** toward the coin box for
+  COLLECT_ALL. The Sheet 2 note "Gate A defaults to the HOPPER path with power
+  off" describes RECIRCULATE with a failed servo, and should say so.
+- Converting a unit to RECIRCULATE means unpinning both flaps, fitting both
+  servos, measuring the four angles, reflashing, and re-entering the counts.
+
+### The client requires recirculation (confirmed in chat, 2026-10-04)
+
+The research team confirmed the design is a pre-loaded ₱1 and ₱5 float **with**
+recirculation of inserted ₱1 and ₱5 coins, "to reduce human intervention". That
+is RECIRCULATE as specified. COLLECT_ALL is therefore an interim build, not the
+delivered configuration.
+
+Their expectation that the owner will not need to keep refilling is stronger
+than the analysis supports: see `change-economics.md` section 6.
 
 ---
 
@@ -705,8 +755,9 @@ the ₱5 reserve.~~ Both confirmed in WO-009, above.
 
 **With the client:** which remedy for the change drain, `change-economics.md`.
 
-**COLLECT_ALL (WO-011):** how change is given when every coin lands mixed in one
-hopper; which side Gate B is pinned to. Reported 2026-10-04.
+~~**COLLECT_ALL (WO-011):** how change is given when every coin lands mixed in one
+hopper; which side Gate B is pinned to.~~ Resolved by WO-012: Gate A is pinned
+toward the coin box.
 
 ~~Nothing is currently blocked on a decision.~~ The remaining blockers are physical:
 no assembled hardware exists, so every per-unit calibration in `remaining.md` §M8
