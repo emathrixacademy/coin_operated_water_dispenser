@@ -297,6 +297,12 @@ The payment mix is the one input everything depends on, and it is currently a gu
 
 ## 7. Limits of this analysis
 
+- **The analysis assumes ₱20 coins, not ₱20 banknotes.** The machine has a coin acceptor
+  and no bill acceptor, so a student holding a ₱20 note cannot use it at all. ₱20 coins only
+  entered circulation in 2019 and are a smaller share of what students carry than notes are.
+  If the measurement in Section 6 shows mostly notes, the drain is the lesser problem; the
+  larger one is that a share of the intended users cannot pay. When you observe how students
+  pay, record coins and notes separately.
 - The payment mixes are assumed. Real customers also pay in ways not modelled here, for
   example two ₱5 coins for a ₱7 sale.
 - Sale sizes are assumed to be spread evenly from ₱3 to ₱10.
