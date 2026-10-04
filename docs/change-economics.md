@@ -20,7 +20,7 @@ fix it. It is also a measurable result about coin recirculation, which is the st
 of this study.
 
 **Every figure below depends on how customers pay, and we do not know that yet.** The
-payment mixes are assumptions, not data. Section 6 says how to replace them with
+payment mixes are assumptions, not data. Section 7 says how to replace them with
 measurements.
 
 ## 1. The mechanism
@@ -283,7 +283,51 @@ for other customers. The analysis says:
 
 That is a quantified result, and it can be tested on the finished machine.
 
-## 6. What to measure
+## 6. What each build can demonstrate
+
+The cabinet is being fabricated so that it can run in two ways.
+
+- **Collection build.** The coin gates have no motors and are fixed in place. Every coin a
+  customer inserts goes to the locked coin box. The ₱1 and ₱5 hoppers hold only the coins the
+  operator loaded, and they only give change.
+- **Recirculating build.** The gate motors are fitted. ₱1 and ₱5 coins from customers go back
+  into the hoppers and are given out again as change.
+
+**The collection build does not exercise coin recirculation, which is the stated novelty of
+this study. If the machine is assessed in that build, there is no recirculation to measure.**
+
+| What the study can show | Collection build | Recirculating build |
+|---|---|---|
+| Coins identified by the acceptor | Yes | Yes |
+| Volume set by the coins, water cut off by the flow sensor | Yes | Yes |
+| Change counted out and checked by sensor | Yes | Yes |
+| Recovery after a power cut | Yes | Yes |
+| Machine locks safely on each fault | Yes | Yes |
+| Coins sorted by the gates | No | Yes |
+| Coins from customers reused as change | No | Yes |
+| The break-even ratio in Section 2 | No | Yes |
+| Less work for the operator | No | Only if enough customers pay exact |
+
+**Sales before the machine stops accepting coins**, from the mockup float of ₱285:
+
+| Build | Mix A | Mix B | Mix C |
+|---|---|---|---|
+| Collection build | 59 | 36 | 26 |
+| Recirculating build | does not stop | 56 | 30 |
+
+Two things follow from that table.
+
+**Recirculation reduces refilling. It does not remove it.** Under mix A it is the difference
+between a machine that never stops and one that stops after 59 sales. Under mix C it adds
+four sales. How much the operator is spared depends on how many customers pay the exact
+amount, which is the one thing nobody has measured yet.
+
+**The two builds together make a stronger study than either alone.** The same cabinet, in the
+same place, can be run first without recirculation and then with it. Comparing the two
+measures what recirculation is actually worth, in sales between refills. Neither build can
+show that by itself.
+
+## 7. What to measure
 
 The payment mix is the one input everything depends on, and it is currently a guess.
 
@@ -295,12 +339,12 @@ The payment mix is the one input everything depends on, and it is currently a gu
    the real loss per sale.
 3. **Compare** the measured sales-before-lockout against the estimate in Section 3.
 
-## 7. Limits of this analysis
+## 8. Limits of this analysis
 
 - **The analysis assumes ₱20 coins, not ₱20 banknotes.** The machine has a coin acceptor
   and no bill acceptor, so a student holding a ₱20 note cannot use it at all. ₱20 coins only
   entered circulation in 2019 and are a smaller share of what students carry than notes are.
-  If the measurement in Section 6 shows mostly notes, the drain is the lesser problem; the
+  If the measurement in Section 7 shows mostly notes, the drain is the lesser problem; the
   larger one is that a share of the intended users cannot pay. When you observe how students
   pay, record coins and notes separately.
 - The payment mixes are assumed. Real customers also pay in ways not modelled here, for
