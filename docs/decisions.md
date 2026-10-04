@@ -528,8 +528,118 @@ client.
 
 ---
 
+## Rulings of WO-007 and WO-008 — animation feasibility and the independent test
+
+### Animations on the panel · four reworks approved
+
+Anything drawn over a Nextion component is wiped when that component redraws.
+So: **the surface ripple is dropped**; **the percentage moves beside the
+bottle**; **the stream is baked into the empty-bottle image as four frames**;
+**the landing hop on a change coin goes**. The bottle fill is a vertical
+progress bar revealing a full-bottle image over an empty one, driven by the one
+percentage the Mega already sends.
+
+Budget: about 0.5 MB of animation, under 7 MB in total, on a 16 MB panel.
+Nobody draws frames by hand; they are exported from the simulator.
+
+**The Mega never sends a frame.** It sends a page, one percentage, and one
+"coins paid" count. The panel's own timer does the rest.
+
+**Unconfirmed panel facts are marked unconfirmed in `hmi_spec.md` itself:** that
+a Basic panel cannot move a component at runtime, that pictures have no
+transparency, and the timer minimum and per-page count.
+
+### The ₱ glyph · blocks the money fields of `hmi_spec.md`
+
+A person with Nextion Editor tests it. The fallback ladder, in priority order:
+
+1. A UTF-8 font renders ₱. Nothing changes.
+2. The generator will not emit ₱ but accepts a substituted glyph: draw the peso
+   on an unused ASCII codepoint and have the Mega send that character.
+3. A small ₱ image beside each amount. Costs a picture component per money
+   field, against the 3,584-byte RAM budget.
+4. Plain `P20.00`. Last resort.
+
+`hmi_spec.md` gives the Mega-side string format for each rung.
+
+### Scan sweep · runs while waiting for a bottle
+
+There is no three-second checking window; the firmware pours 80 ms after the
+sensor reads present. The sweep runs on INSERT BOTTLE as a "looking for your
+bottle" cue, filling the interval that actually exists.
+
+### Volume grid · to be evaluated, not yet ruled
+
+Tile labels are static and can live in the page background image at no RAM
+cost. Affordability is monotonic (tiles 1 to N live, the rest dimmed), so a few
+crop or picture components may replace forty text fields. To be verified
+against what a Basic panel offers, with the page RAM count reported.
+
+### F8 · Every accepted coin is credited
+
+**The machine never takes money it does not credit.** A coin that would take
+credit past the ceiling was routed to the coin box and not credited: the
+machine took money and recorded that it had not.
+
+The acceptor identifies a coin only after it has arrived and Rev B has no
+reject chute, so crediting is the only honest option. `MAX_TRANSACTION_PESOS`
+**inhibits the acceptor at or above the ceiling but does not clamp credit.**
+Credit can exceed ₱20 by at most one coin: the real maximum is **₱39**.
+
+> **Open point raised with project management, 2026-10-04.** The work order
+> gives the new worst-case change as ₱38 (₱39 less a ₱1 minimum purchase). The
+> standing ruling on `billing_worst_case_change()` above is that the worst case
+> is the **full** credit, because "finish without pour" and the bottle-wait
+> timeout both refund everything. By that ruling the figure is **₱39**, and the
+> current figure is ₱20, not ₱19. Not implemented until confirmed.
+
+Measured effect on the lockout gate: see `remaining.md`, "F8 lockout analysis".
+
+### F9 · Pay what can be paid, then fault for the remainder
+
+A user owed ₱19 who gets ₱15 and a stated ₱4 owed is far better served than one
+who gets nothing. The fault text states the amount still owed.
+
+**The fault is not CHANGE JAM.** The hopper is not jammed, it is short. A
+distinct fault, with operator text that says *load coins*, not *clear the
+hopper*: an operator sent to clear a hopper that is not jammed finds nothing and
+concludes the machine lies.
+
+> **Open point raised with project management, 2026-10-04.** In the reported
+> case four ₱5 coins sat in the hopper and ₱0 was paid, because all four were
+> inside the reserve of ten. Should a partial payout spend the ₱5 reserve? The
+> machine is about to lock either way, so holding coins back protects nothing.
+> Proposed: yes. Not implemented until confirmed.
+
+### F19 · An amount owed is never erased without a record
+
+Written to the history ring **at the moment the fault is raised**. It survives a
+power cut and an Admin clear. Unsettled amounts are listed on the Admin screen
+(WO-006 D-5); the operator cannot settle by hand from a number that was deleted.
+
+### F25 · ACCEPTING and SELECTING time out at 60 seconds
+
+Same as COMPLETE (R-9): on expiry, finish and pay out, with a countdown for the
+last fifteen seconds. AWAITING_BOTTLE keeps its 20 seconds and its buzzer
+ladder.
+
+### Sequence · WO-008 §5, replacing WO-005 §3
+
+1 triage the independent test report and apply F8, F9, F19, F25 · 2 reworked
+animations, remaining icons, scan sweep · 3 `hmi_spec.md`, money-field format
+left open until the ₱ test · 4 the seven defects plus whatever triage adds · 5
+Rev B and spec corrections · 6 Part C, Part D, `hmi.cpp`, bench mode.
+
+Rev B moved down: the money defects outrank it and nothing is being fabricated
+this week.
+
+---
+
 ## Still open
 
-Nothing is currently blocked on a decision. The remaining blockers are physical:
+**F8:** worst-case change ₱38 or ₱39. **F9:** whether a partial payout spends
+the ₱5 reserve. Both raised 2026-10-04, both block only their own code change.
+
+~~Nothing is currently blocked on a decision.~~ The remaining blockers are physical:
 no assembled hardware exists, so every per-unit calibration in `remaining.md` §M8
 is unmeasurable.
