@@ -593,6 +593,9 @@ Credit can exceed ₱20 by at most one coin: the real maximum is **₱39**.
 > timeout both refund everything. By that ruling the figure is **₱39**, and the
 > current figure is ₱20, not ₱19. Not implemented until confirmed.
 
+**Confirmed, WO-009: ₱39.** Maximum credit and maximum change are the same
+number, because a user can cancel without pouring and is refunded everything.
+
 Measured effect on the lockout gate: see `remaining.md`, "F8 lockout analysis".
 
 ### F9 · Pay what can be paid, then fault for the remainder
@@ -610,6 +613,26 @@ concludes the machine lies.
 > inside the reserve of ten. Should a partial payout spend the ₱5 reserve? The
 > machine is about to lock either way, so holding coins back protects nothing.
 > Proposed: yes. Not implemented until confirmed.
+
+**Confirmed, WO-009, with the precise rule:** if the amount owed can be paid in
+full while respecting the ₱5 reserve, respect it. If it cannot, bypass the
+reserve and pay as much as possible. The reserve protects future change
+quality, which is a preference; a user at the machine owed money is a concrete
+harm.
+
+### Change drain · a client decision, not a code change (WO-009)
+
+Every ₱10 and ₱20 goes to the coin box; change leaves only the ₱1 and ₱5
+hoppers, which refill only from ₱1 and ₱5 inserts. Unless most users pay exact,
+the hoppers empty: the mockup float lasts 30 to 60 sales under the non-exact
+mixes simulated. **Not to be solved in firmware.** The analysis and three costed
+remedies are in `docs/change-economics.md`, for the client to decide.
+
+### Font and icons (WO-009)
+
+The simulator font matches the client mockup, and `hmi_spec.md` specifies the
+actual Nextion font generation: family, each size, character set. One icon set:
+one stroke weight, one corner treatment, one optical size.
 
 ### F19 · An amount owed is never erased without a record
 
@@ -637,8 +660,10 @@ this week.
 
 ## Still open
 
-**F8:** worst-case change ₱38 or ₱39. **F9:** whether a partial payout spends
-the ₱5 reserve. Both raised 2026-10-04, both block only their own code change.
+~~**F8:** worst-case change ₱38 or ₱39. **F9:** whether a partial payout spends
+the ₱5 reserve.~~ Both confirmed in WO-009, above.
+
+**With the client:** which remedy for the change drain, `change-economics.md`.
 
 ~~Nothing is currently blocked on a decision.~~ The remaining blockers are physical:
 no assembled hardware exists, so every per-unit calibration in `remaining.md` §M8

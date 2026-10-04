@@ -15,7 +15,12 @@ block.
 
 ---
 
-## Live status — WO-008 §5, as of 2026-10-04 (supersedes the WO-005 table below)
+## Live status — WO-009 §4, as of 2026-10-04 (supersedes the WO-005 table below)
+
+**`docs/change-economics.md` written 2026-10-04 and awaiting review.** The client
+decides the remedy for the change drain; nothing in firmware addresses it.
+F8 (₱39) and F9 (reserve may be bypassed for a partial payout) are confirmed, so
+the four money rulings are unblocked and wait only on the test-report triage.
 
 | # | Item | Status |
 |---|---|---|
