@@ -100,9 +100,19 @@ enough to refund a full transaction.
 A larger float buys time in direct proportion. It does not change the direction. Under
 mixes B and C the hoppers always run down; under mix A they never do.
 
-## 4. Three remedies
+## 4. Four remedies
 
 These are options with their costs. None is recommended here; the choice is yours.
+
+**Only exact payment stops the drain, and nothing on this list makes customers pay exact.**
+Each remedy either replaces what drains, slows it, or avoids the customers who cause it.
+
+| Remedy | Slows or stops the drain? | What it costs |
+|---|---|---|
+| 1. Larger float, daily reload | Neither. It replaces what drains | A daily operator task |
+| 2. ₱10 limit, refuse ₱20 coins | Stops it under mixes A and B, slows it under C, by turning away ₱20 payers | 20% to 50% of customers; 1,000 mL maximum |
+| 3. Third hopper for ₱10 | Slows it. Does not stop it | A hopper, a gate, a wider panel, firmware |
+| 4. Narrow the choice as change runs low | Prevents the lockout only if customers accept a larger size; otherwise no help | Customers are served worse before they are refused |
 
 ### Remedy 1 — Larger float and a daily reload
 
@@ -167,9 +177,9 @@ change, so they recirculate. ₱20 coins still go to the coin box.
 | B | 57 sales | about 300 sales |
 | C | 30 sales | about 105 sales |
 
-This is a large improvement, but it does not fully close under mix C. The ₱10 hopper
-itself drains whenever more customers pay with ₱20 than with ₱10, and the machine then
-falls back on ₱1 and ₱5 coins.
+**This slows the drain. It does not stop it.** A ₱10 hopper still drains when ₱20 payers
+outnumber ₱10 payers, and the machine then falls back on ₱1 and ₱5 coins. Under mix C it
+moves the lockout from about 30 sales to about 105, not to never.
 
 **What it would take:**
 
@@ -184,6 +194,80 @@ falls back on ₱1 and ₱5 coins.
 The cost of the hopper is not in the project records and would need a quotation. Adding a
 part is a change of scope under the service agreement.
 
+### Remedy 4 — Narrow the choice before refusing the customer
+
+**The idea.** The drain is not caused by ₱20 coins. It is caused by small purchases made
+with ₱20 coins. A customer who puts in ₱20 and takes 2,000 mL takes nothing out of the
+hoppers. The same customer taking 500 mL takes ₱15 out.
+
+So as the change stock falls, the machine could dim the smaller volumes for a customer
+holding a large coin, and offer only the sizes that need little or no change. A customer
+paying the exact amount would see no difference, because they need no change.
+
+**It degrades choice before it degrades service.** A student who wanted 500 mL and is
+offered only 1,500 mL and above has been served worse, even though they were served. That
+is the trade, and it should be judged on those terms.
+
+**What changes in the machine:** firmware and screens only. No new parts.
+
+**The rule.** A volume stays available only if giving its change would still leave the
+machine able to refund a full transaction to the next customer. Two things are always
+available whatever the stock: the option that needs the least change, and "finish and get
+my money back".
+
+This rule needs no chosen threshold. Narrowing starts by itself at the last moment it can:
+when one more large-change sale would lock the machine. We also tried starting earlier. It
+narrowed far more customers and gave no better result.
+
+**The customer's money is never trapped.** The check made before the first coin, that the
+machine can refund the whole amount, stays exactly as it is. Narrowing applies only after
+that check has passed, so a full refund is always possible. The two rules do not conflict.
+
+**The result depends on one thing: whether the customer accepts a larger size.**
+
+A customer who refuses and asks for their money back is the worst case for the hoppers.
+Their ₱20 coin is already in the locked coin box, so the refund is ₱20 in small coins. That
+is more than any sale would have cost.
+
+Sales before the machine stops, starting from the mockup float:
+
+| Share of narrowed customers who accept a larger size | Mix B | Mix C |
+|---|---|---|
+| No narrowing (today) | 56 | 30 |
+| 100% accept | does not stop | does not stop |
+| 70% accept, 30% take a refund | 60 | 33 |
+| 30% accept, 70% take a refund | 57 | 30 |
+
+If everyone accepts, the machine never locks. If even three in ten take a refund, the
+benefit is almost gone.
+
+**What "does not stop" looks like.** The machine does not recover. It stays at its lowest
+working stock, and from then on most customers with a large coin are offered a narrowed
+choice: about 6 in 10 under mix B and more than 8 in 10 under mix C. It keeps selling, in a
+reduced way, until the operator reloads it.
+
+**The condition that makes it work.** The customer must be told before the coin goes in.
+A notice on the first screen, for example "Change is low. ₱20 buys 2,000 mL only", lets a
+customer who does not want that walk away with their coin. A customer who walks away costs
+the hoppers nothing. A customer who inserts the coin and then asks for it back costs ₱20.
+The machine cannot refuse a ₱20 coin on its own while still accepting others; the acceptor
+is either on or off.
+
+**With the other remedies.**
+
+- With remedy 1 (larger float): it works the same way and simply starts later. At a float
+  of ₱800 almost no customer is narrowed until the float is nearly used up.
+- With remedy 3 (₱10 hopper): it works better, because a refused ₱10 coin can be returned
+  as the same coin. Under mix B with 70% acceptance, about 1,500 sales before lockout,
+  against about 300 for remedy 3 alone. Under mix C the gain is small: about 115 against
+  105.
+- It works with any hopper arrangement, because it only asks the machine "can you still
+  pay this?"
+
+**Effort:** about two working days of firmware and screen work, including tests. The
+volume screen must also show why an option is dimmed, since "you cannot afford this" and
+"the machine cannot give change for this" are different messages.
+
 ## 5. What this means for the study
 
 The hypothesis behind the design is that coins inserted by customers can supply the change
@@ -194,6 +278,8 @@ for other customers. The analysis says:
 - **Below the threshold, the machine needs an outside supply of small coins**, and the
   size of that supply can be predicted from the payment mix.
 - **Recirculating a third denomination moves the threshold** but does not remove it.
+- **Steering customers toward purchases that need less change can prevent a lockout**, but
+  only if they accept it, and only if they are told before they pay.
 
 That is a quantified result, and it can be tested on the finished machine.
 
@@ -216,5 +302,7 @@ The payment mix is the one input everything depends on, and it is currently a gu
 - Sale sizes are assumed to be spread evenly from ₱3 to ₱10.
 - The simulation assumes a transaction limit that allows up to ₱39 of credit, following
   the ruling that every accepted coin is credited.
+- For remedy 4, how many customers would accept a larger size is unknown. The 100%, 70%
+  and 30% figures are illustrations, not estimates.
 - Hopper capacity is taken as 500 coins each, a placeholder until the hoppers are bought.
 - The results are from simulation. Nothing here has been measured on a machine.
