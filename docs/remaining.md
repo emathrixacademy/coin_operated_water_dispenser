@@ -20,12 +20,16 @@ block.
 | # | Item | Status |
 |---|---|---|
 | 1 | Mode-dependent ₱5 reserve, `box_*` rename, layout 4, COLLECT_ALL | **Done 2026-10-04.** 134/134 host tests; `release`, `debug`, `release_collect`, `debug_collect` all build. Not run on hardware |
-| 2 | Triage the 37 findings; then F8, F9, F19, F25 in one money-path change | **Blocked: the test report has not been received.** The four rulings are recorded and unblocked |
+| 2 | Triage the 37 findings; then F8, F9, F19, F25 in one money-path change, **with F18, F21 and F22 promoted to prerequisites** (WO-014) and the credit-before-count ordering | **Blocked: the test report has not been received.** The rulings are recorded and unblocked |
 | 3 | Reworked animations, remaining icons, scan sweep, frame exporter | Not started |
 | 4 | `docs/hmi_spec.md`, gated on the ₱ glyph test | Not started. **Critical path.** Waiting on a person for the glyph test |
 | 5 | Defects P-1 to P-7, Rev B two-gate diverter, Part C, Part D, `hmi.cpp`, bench mode | Not started |
 
 **Host tests: 134/134 across six suites**, re-run 2026-10-04.
+
+**The 73 / 45 / 32 collection-build figures in `change-economics.md` are upper
+bounds** until F18 and F21 are fixed: both leave a hopper count higher than the
+hopper holds, and in COLLECT_ALL that error never washes out.
 
 **Known stale:**
 
@@ -363,7 +367,7 @@ The largest milestone. Nothing here can be meaningfully tested until M4 exists.
 | 5-13 | Confirm-button input and debounce, or its Nextion equivalent | D-10, 3′-1 | code | 1 h |
 | 5-14 | Daily counters written per transaction; `persist_daily_add()` currently has no caller | 5-2 | code | 1 h |
 | 5-15 | Open-transaction write policy: at end of transaction and each inventory change, never per loop (§7.2). `persist_txn_open()` has no caller | 5-2 | code | 2 h |
-| 5-16 | Admin mode: all five functions of §8, each with its confirm step | 5-2, M6 | code | 2 days |
+| 5-16 | Admin mode: all five functions of §8, each with its confirm step. **Plus, from later rulings:** show the coin routing mode and a notice when `persist_mode_changed()` is true (WO-013); list unsettled owed amounts (WO-006 D-5); the five `box_*` counters; ring write counts; LOW CHANGE WARNING (R-4) | 5-2, M6 | code | 2 days |
 | 5-17 | **Case 18, sustained ₱5 drain** (§10). Report the arithmetic and propose a policy. Explicitly *do not* change the client's stated behaviour — this is analysis, then a recommendation | R-8 | client decision | 1 day analysis |
 
 ---
