@@ -185,6 +185,58 @@ static void test_never_plans_more_than_stock_across_the_whole_range() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// The reserve is mode-dependent: 10 in RECIRCULATE, 0 in COLLECT_ALL
+// ---------------------------------------------------------------------------
+//
+// The reserve is a recirculation concept -- P5 is scarce only because it comes
+// back more slowly than P1. With no refill it is just float the machine never
+// spends. These use change_plan_reserve() so both values are tested in one
+// build.
+
+static void test_reserve_zero_spends_every_p5() {
+  // P15 from 100 x P1 and exactly 3 x P5. With a reserve of 10 this pays
+  // fifteen P1 coins; with no reserve it pays the three P5s.
+  TEST_ASSERT_TRUE(change_plan_reserve(1500, 100, 3, 0, &P));
+  TEST_ASSERT_EQUAL_UINT16(3, P.p5);
+  TEST_ASSERT_EQUAL_UINT16(0, P.p1);
+
+  TEST_ASSERT_TRUE(change_plan_reserve(1500, 100, 3, 10, &P));
+  TEST_ASSERT_EQUAL_UINT16(0, P.p5);
+  TEST_ASSERT_EQUAL_UINT16(15, P.p1);
+}
+
+static void test_reserve_zero_covers_what_reserve_ten_cannot() {
+  // 4 x P5 and 19 x P1 is P39 of coins. The full P39 refund is payable with no
+  // reserve and is NOT payable with ten held back -- this is the float the
+  // reserve withholds in a machine that never refills.
+  TEST_ASSERT_TRUE(change_plan_reserve(3900, 19, 4, 0, &P));
+  TEST_ASSERT_EQUAL_UINT16(4, P.p5);
+  TEST_ASSERT_EQUAL_UINT16(19, P.p1);
+  TEST_ASSERT_FALSE(change_plan_reserve(3900, 19, 4, 10, &P));
+}
+
+static void test_reserve_zero_still_fails_closed() {
+  // No reserve does not mean no limit: it must still refuse what it cannot pay.
+  TEST_ASSERT_FALSE(change_plan_reserve(3900, 3, 7, 0, &P));
+  TEST_ASSERT_EQUAL_UINT16(0, P.p1);
+  TEST_ASSERT_EQUAL_UINT16(0, P.p5);
+}
+
+static void test_change_plan_is_change_plan_reserve_with_the_configured_reserve() {
+  for (int32_t pesos = 0; pesos <= 39; pesos++) {
+    for (uint16_t p5 = 0; p5 <= 20; p5++) {
+      change_plan_t a, b;
+      const bool ra = change_plan(pesos * CENTAVOS_PER_PESO, 30, p5, &a);
+      const bool rb = change_plan_reserve(pesos * CENTAVOS_PER_PESO, 30, p5,
+                                          HOPPER_RESERVE_P5, &b);
+      TEST_ASSERT_EQUAL(ra, rb);
+      TEST_ASSERT_EQUAL_UINT16(a.p1, b.p1);
+      TEST_ASSERT_EQUAL_UINT16(a.p5, b.p5);
+    }
+  }
+}
+
 int main(int, char **) {
   UNITY_BEGIN();
 
@@ -210,6 +262,11 @@ int main(int, char **) {
   RUN_TEST(test_fails_with_both_hoppers_empty);
   RUN_TEST(test_exact_p1_stock_is_enough_but_one_less_is_not);
   RUN_TEST(test_never_plans_more_than_stock_across_the_whole_range);
+
+  RUN_TEST(test_reserve_zero_spends_every_p5);
+  RUN_TEST(test_reserve_zero_covers_what_reserve_ten_cannot);
+  RUN_TEST(test_reserve_zero_still_fails_closed);
+  RUN_TEST(test_change_plan_is_change_plan_reserve_with_the_configured_reserve);
 
   return UNITY_END();
 }

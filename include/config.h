@@ -290,11 +290,62 @@ typedef int32_t volume_t;   // millilitres
 // claim the machine holds more change than the hopper can physically contain.
 #define HOPPER_CAPACITY 500
 
-// The profit chamber is NOT a hopper and holds far more than one. Clamping it
-// at HOPPER_CAPACITY silently stopped the chamber count rising past 500, which
-// would understate a full day's take. Separate ceiling, generous, because its
-// only job is to stop a corrupt value being believed.
-#define PROFIT_CHAMBER_CAPACITY 2000
+// The coin box is NOT a hopper and holds far more than one. Clamping it at
+// HOPPER_CAPACITY silently stopped a counter rising past 500, which would
+// understate a full day's take. Separate ceiling, generous, PER COUNTER, because
+// its only job is to stop a corrupt value being believed. The physical "full"
+// signal is the IR beam, not this number.
+#define COIN_BOX_CAPACITY 2000
+
+// ---------------------------------------------------------------------------
+// Coin routing mode
+// ---------------------------------------------------------------------------
+//
+// The cabinet is fabricated to drawing Rev B with both gate housings, because
+// the diverter cannot be retrofitted. It can then run in either of two ways:
+//
+//   RECIRCULATE  Both gate servos fitted. P1 and P5 go back into the hoppers
+//                and are given out again as change; P10, P20 and unidentified
+//                coins go to the locked coin box. THE DELIVERED CONFIGURATION:
+//                the client's stated novelty is coin recirculation.
+//
+//   COLLECT_ALL  No servos fitted. Gate A is mechanically PINNED TOWARD THE
+//                COIN BOX, so every accepted coin goes there. The hoppers are
+//                operator-loaded reserves that only dispense. An interim build:
+//                it lets the whole machine be bench-tested before the servos
+//                arrive, and gives the no-recirculation baseline that
+//                recirculation is measured against.
+//
+// COMPILE-TIME, DELIBERATELY. A mode switch on the Admin screen would let an
+// operator put the firmware into a state the hardware does not match, and the
+// firmware cannot detect a servo: one that is not fitted and one that has
+// failed look identical. So the mode is fixed per build, shown in the boot
+// trace and on Admin, and stored with the inventory so that a reflash into the
+// other mode is detected rather than silently reinterpreting the saved counts.
+//
+// THE FAIL-SAFE REASONING INVERTS BETWEEN THE MODES. Drawing sheet 2 has Gate A
+// rest on the HOPPER path with power off. That is the RECIRCULATE fail-safe: a
+// dead servo then sends every coin to the hoppers, which shows up as an
+// inventory mismatch an operator can see, where the reverse would silently feed
+// the box with coins the machine believes are change. In COLLECT_ALL there is
+// no servo to fail; the flap is pinned on purpose and the box is the intended
+// destination. Sheet 2 and this file are both right. They describe different
+// builds.
+//
+// Select with a build flag, e.g. -DCOIN_ROUTING_MODE=COIN_ROUTING_COLLECT_ALL
+// (see the *_collect environments in platformio.ini). The values are stored in
+// EEPROM and must never be renumbered.
+#define COIN_ROUTING_RECIRCULATE 1
+#define COIN_ROUTING_COLLECT_ALL 2
+
+#ifndef COIN_ROUTING_MODE
+#define COIN_ROUTING_MODE COIN_ROUTING_RECIRCULATE
+#endif
+
+#if COIN_ROUTING_MODE != COIN_ROUTING_RECIRCULATE && \
+    COIN_ROUTING_MODE != COIN_ROUTING_COLLECT_ALL
+#error "COIN_ROUTING_MODE must be COIN_ROUTING_RECIRCULATE or COIN_ROUTING_COLLECT_ALL"
+#endif
 
 // ---------------------------------------------------------------------------
 // Change payout strategy
@@ -309,7 +360,19 @@ typedef int32_t volume_t;   // millilitres
 //
 // Lowering this trades service uptime for change quality -- more P1-heavy
 // payouts. Raising it locks the machine on LOW CHANGE more often.
+//
+// THE RESERVE IS A RECIRCULATION CONCEPT, AND IT IS ZERO IN COLLECT_ALL ON
+// PURPOSE. Its whole justification is refill: P5 is "scarce" only because it
+// comes back more slowly than P1 does. In COLLECT_ALL nothing comes back --
+// both hoppers are operator-loaded and only ever dispense -- so P5 is no
+// scarcer than P1, and ten coins held back are simply P50 of float the machine
+// owns and never spends. On the P285 mockup float that is 36 sales before
+// lockout against 45 (docs/change-economics.md). The zero is not a mistake.
+#if COIN_ROUTING_MODE == COIN_ROUTING_COLLECT_ALL
+#define HOPPER_RESERVE_P5 0
+#else
 #define HOPPER_RESERVE_P5 10
+#endif
 
 // ---------------------------------------------------------------------------
 // Bottle and dispense timing
@@ -580,6 +643,11 @@ typedef int32_t volume_t;   // millilitres
 
 #define EEPROM_MAGIC 0x5756u  // 'WV'
 
+// Layout version 4: the coin-box counters were renamed from profit_* to box_*
+// and extended to all five (P1, P5, P10, P20, unknown), and the routing mode is
+// stored with the inventory. The inventory record grew to 16 bytes, which moved
+// the fault flags from 32 to 40.
+//
 // Layout version 3: the open-transaction record was redesigned (resume phase,
 // pour checkpoints, payout leg) and its ring doubled to 64 slots, which moved
 // the coin-in-flight ring. Version 2 made both regions rings.
@@ -589,7 +657,7 @@ typedef int32_t volume_t;   // millilitres
 // fresh, the inventory reads zero and the machine locks on LOW CHANGE until an
 // operator loads the float -- SPEC 7.3. Misreading an old layout would report
 // inventory that never existed.
-#define EEPROM_LAYOUT_VERSION 3
+#define EEPROM_LAYOUT_VERSION 4
 
 #define EEPROM_ADDR_HEADER     0    // magic, version, checksum
 #define EEPROM_ADDR_INVENTORY  16   // hopper counts, chamber count
@@ -602,7 +670,7 @@ typedef int32_t volume_t;   // millilitres
 //
 // Sits in the gap between the inventory record and the open transaction. The
 // static_asserts in persist.cpp enforce that it fits.
-#define EEPROM_ADDR_FAULTS     32
+#define EEPROM_ADDR_FAULTS     40
 
 #define EEPROM_ADDR_DAILY_RING 96   // wear-levelled daily counters
 #define EEPROM_ADDR_HISTORY    256  // transaction history ring buffer

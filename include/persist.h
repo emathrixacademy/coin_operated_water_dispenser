@@ -106,6 +106,12 @@ void persist_clear_coin_in_flight();
 // Read once on boot to drive the reconciliation above.
 coin_t persist_coin_in_flight();
 
+// True if, at this boot, the stored inventory turned out to have been written
+// by firmware in the other coin routing mode. It was zeroed rather than
+// reinterpreted, so the machine is locked on LOW CHANGE until the counts are
+// re-entered. Admin shows this so the operator knows why.
+bool persist_mode_changed();
+
 // --- Persistent faults --------------------------------------------------
 //
 // SPEC 6.1 and 7.1. A bitmask, one bit per fault_t, holding only the faults

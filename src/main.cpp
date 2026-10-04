@@ -858,6 +858,12 @@ void setup() {
 #ifdef DEBUG
   Serial.begin(DEBUG_BAUD);
   Serial.println(F("EMX-2026-WATERVENDO-01 boot [DEBUG BUILD - NOT FOR SERVICE]"));
+  // The firmware cannot detect whether gate servos are fitted, so a build that
+  // does not match the hardware is invisible until money goes wrong. Say which
+  // build this is, first thing.
+  Serial.println(COIN_ROUTING_MODE == COIN_ROUTING_COLLECT_ALL
+      ? F("[boot] coin routing: COLLECT_ALL (no servos, gate A pinned to coin box, P5 reserve 0)")
+      : F("[boot] coin routing: RECIRCULATE (gate servos fitted, P5 reserve 10)"));
 #endif
 
   // ---------------------------------------------------------------------

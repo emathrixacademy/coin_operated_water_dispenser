@@ -201,7 +201,7 @@ The routing intent and the credit are two facts with two owners. The open-transa
 
 On boot, if an uncommitted routing intent exists:
 
-increment the PROFIT_UNKNOWN counter, never a hopper counter and never a denomination counter the coin may not have reached
+increment the COIN BOX counter for the coin's own denomination (box_p1, box_p5, box_p10 or box_p20; box_unknown if it was never identified), never a hopper counter
 write a distinctly tagged event to the history ring
 clear the intent
 
@@ -222,11 +222,29 @@ plan(amount_pesos, p1_count, p5_count) → {n1, n5} or FAIL
   if n1 > p1_count: return FAIL
   return {n1, n5}
 
-HOPPER_RESERVE_P5 = 10. Below the reserve, ₱5 payouts stop and change is made entirely in ₱1. Lowering the reserve trades service uptime for change quality; raising it locks the machine more often.
+HOPPER_RESERVE_P5 = 10 in RECIRCULATE and 0 in COLLECT_ALL (see 3.6). Below the reserve, ₱5 payouts stop and change is made entirely in ₱1. Lowering the reserve trades service uptime for change quality; raising it locks the machine more often.
 
 ₱5 is the scarce coin — it arrives slowly and leaves fast in a machine where ₱15 change is a common outcome. ₱1 recirculates heavily and absorbs the pressure. This is the client's own instinct from their document, where ₱1 exists for ₱5 dissipation, made explicit and enforced.
 
 can_cover(amount) is plan(amount) != FAIL. Checked before accepting coins for a transaction, against the worst case for the credit ceiling, not after the pour. The machine never takes money it cannot honour.
+
+3.6 Coin routing mode
+
+The cabinet is fabricated to drawing Rev B with both gate housings; the diverter cannot be retrofitted. The firmware is built for one of two modes, fixed at compile time.
+
+Mode	Hardware	Routing	₱5 reserve
+RECIRCULATE	Both gate servos fitted	₱1 and ₱5 to their hoppers; ₱10, ₱20 and unidentified coins to the coin box	10
+COLLECT_ALL	No servos; both flaps pinned, Gate A toward the coin box	Every coin to the coin box, counted by denomination. Hoppers are operator-loaded and only dispense	0
+
+RECIRCULATE is the delivered configuration. COLLECT_ALL is an interim build: it lets the machine be bench-tested before the servos arrive, and it is the no-recirculation baseline that recirculation is measured against.
+
+In COLLECT_ALL three things follow from there being no gate to move, and none is an omission: there is no coin lockout window; no routing intent is written, so there is nothing to reconcile on boot; and the coin is counted into the box at once.
+
+The reserve is a recirculation concept. ₱5 is scarce only because it comes back more slowly than ₱1. With no refill, coins held back are float the machine owns and never spends.
+
+The mode is compile-time because the firmware cannot detect a servo, and an Admin switch would let an operator select a mode the hardware does not match. It is shown in the boot trace and on Admin, and stored with the inventory: a record written in the other mode is zeroed, not reinterpreted, and the machine locks until the counts are re-entered.
+
+The fail-safe reasoning inverts between the modes. In RECIRCULATE a dead servo leaves Gate A on the hopper path, because an inventory mismatch is visible. In COLLECT_ALL the flap is pinned toward the box deliberately.
 
 3.5 Payout execution
 for each denomination with n > 0:
@@ -385,14 +403,14 @@ Mega has 4 KB. One checksum covers the whole state block; the history ring is ch
 
 Region	Contents
 Header	Magic number, schema version, checksum
-Inventory	₱1 count, ₱5 count, profit ₱10 count, profit ₱20 count, profit unknown count
+Inventory	₱1 hopper count, ₱5 hopper count; coin box counts for ₱1, ₱5, ₱10, ₱20 and unknown; coin routing mode
 Fault state	Persistent fault flags
 Daily counters	Volume dispensed, profit, date — wear-levelled ring, 8 slots
 History ring	20 entries: timestamp, amount in, volume out, change out, event tag
 Open transaction	Credit, inserted, target, banked, segment, total, resume phase, payout leg — wear-levelled ring, 64 slots. See 7.1.1
 Routing intent	Pending coin and destination — wear-levelled ring, 64 slots
 
-Schema version 3. A record from any other version is rejected by the framing check and its region initialises fresh, which is correct — misreading an old layout would report inventory that never existed. There is no migration: with every record rejected the inventory reads zero and the machine locks per 7.3 until an operator loads the float.
+Schema version 4 (version 3 redesigned the open-transaction record; version 4 renamed the coin-box counters from profit_* to box_*, extended them to all denominations, and added the routing mode). A record from any other version is rejected by the framing check and its region initialises fresh, which is correct — misreading an old layout would report inventory that never existed. There is no migration: with every record rejected the inventory reads zero and the machine locks per 7.3 until an operator loads the float.
 
 profit_p10 and profit_p20 are separate counters. Without the split the chamber's peso value cannot be derived from its count, and reconciling a physical collection against the recorded total becomes impossible.
 

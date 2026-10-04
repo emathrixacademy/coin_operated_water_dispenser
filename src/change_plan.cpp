@@ -6,6 +6,11 @@
 
 bool change_plan(money_t centavos, uint16_t p1_stock, uint16_t p5_stock,
                  change_plan_t *out) {
+  return change_plan_reserve(centavos, p1_stock, p5_stock, HOPPER_RESERVE_P5, out);
+}
+
+bool change_plan_reserve(money_t centavos, uint16_t p1_stock, uint16_t p5_stock,
+                         uint16_t reserve_p5, change_plan_t *out) {
   if (out) {
     out->p1 = 0;
     out->p5 = 0;
@@ -31,11 +36,12 @@ bool change_plan(money_t centavos, uint16_t p1_stock, uint16_t p5_stock,
   // P15 change is a common outcome. P1 recirculates heavily and absorbs the
   // pressure, which is why the P1 hopper is not the one drained first.
   //
-  // Below HOPPER_RESERVE_P5, P5 payouts stop entirely and change is made in P1,
+  // The reserve is a RECIRCULATION concept and is zero in COLLECT_ALL -- see
+  // config.h. Below it, P5 payouts stop entirely and change is made in P1,
   // so a run of large transactions cannot empty the P5 hopper and strand every
   // subsequent user who needs a P5 in their change.
   // ---------------------------------------------------------------------
-  int32_t p5_spendable = (int32_t)p5_stock - HOPPER_RESERVE_P5;
+  int32_t p5_spendable = (int32_t)p5_stock - (int32_t)reserve_p5;
   if (p5_spendable < 0) p5_spendable = 0;
 
   int32_t n5 = pesos / 5;

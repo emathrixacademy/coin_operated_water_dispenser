@@ -3,6 +3,7 @@
 #include <string.h>
 #include "persist.h"
 #include "eeprom_record.h"
+#include "coin_route.h"
 
 // EEPROM persistence.
 //
@@ -142,7 +143,15 @@ static uint8_t s_hist_count = 0;
 static history_entry_t s_hist_scratch;
 static bool s_initialised = false;
 
+// Set when the stored inventory was written in the other routing mode and was
+// zeroed rather than reinterpreted. Holds the mode it was written in.
+static bool s_mode_changed = false;
+static uint8_t s_mode_was = 0;
+
 static void inventory_commit() {
+  // Every inventory record carries the mode of the firmware that wrote it.
+  s_inventory.routing_mode = (uint8_t)COIN_ROUTING_MODE;
+  s_inventory.reserved = 0;
   record_save(EEPROM_ADDR_INVENTORY, (const uint8_t *)&s_inventory, sizeof(s_inventory));
 }
 
@@ -170,7 +179,28 @@ void persist_begin() {
   // inventory was reset rather than restored. Zero is also the correct failure
   // direction -- it locks the machine on LOW CHANGE until a human loads the
   // hoppers and enters real counts. Fail toward the understatement.
+  s_mode_changed = false;
   if (!record_load(EEPROM_ADDR_INVENTORY, (uint8_t *)&s_inventory, sizeof(s_inventory))) {
+    memset(&s_inventory, 0, sizeof(s_inventory));
+    inventory_commit();
+    s_initialised = true;
+  } else if (s_inventory.routing_mode != (uint8_t)COIN_ROUTING_MODE) {
+    // -------------------------------------------------------------------
+    // A valid record, written by firmware in the OTHER routing mode.
+    //
+    // The same numbers mean different things in the two modes, and the
+    // firmware cannot see whether servos are fitted. Reinterpreting them would
+    // be a silent error in what the machine believes it can pay out. So this
+    // is handled exactly like an unreadable inventory: zero it, which locks the
+    // machine on LOW CHANGE until an operator counts the hoppers and enters
+    // real figures. The box counters go too -- a changeover is when the box is
+    // emptied.
+    //
+    // A history entry is written below, once the history ring has been
+    // scanned, so the operator can see WHY the counts are zero.
+    // -------------------------------------------------------------------
+    s_mode_changed = true;
+    s_mode_was = s_inventory.routing_mode;
     memset(&s_inventory, 0, sizeof(s_inventory));
     inventory_commit();
     s_initialised = true;
@@ -322,6 +352,19 @@ void persist_begin() {
     // Overwrites the corrupt slot, so the ring heals itself.
     persist_txn_close();
   }
+
+  if (s_mode_changed) {
+    history_entry_t e;
+    memset(&e, 0, sizeof(e));
+    e.timestamp = RTC_TIMESTAMP_INVALID;   // the clock is not running yet
+    e.tag = EVT_MODE_CHANGED;
+    e.denomination = s_mode_was;
+    persist_history_add(&e);
+  }
+}
+
+bool persist_mode_changed() {
+  return s_mode_changed;
 }
 
 void persist_update() {
@@ -348,18 +391,23 @@ void persist_inventory_add(coin_dest_t dest, int16_t delta) {
       field = &s_inventory.p1_count;    ceiling = HOPPER_CAPACITY; break;
     case DEST_P5_HOPPER:
       field = &s_inventory.p5_count;    ceiling = HOPPER_CAPACITY; break;
-    // SPEC 7.1: separate counters, so the chamber's peso value is derivable.
-    case DEST_PROFIT_P10:
-      field = &s_inventory.profit_p10;  ceiling = PROFIT_CHAMBER_CAPACITY; break;
-    case DEST_PROFIT_P20:
-      field = &s_inventory.profit_p20;  ceiling = PROFIT_CHAMBER_CAPACITY; break;
+    // SPEC 7.1: one counter per denomination, so the box's peso value is
+    // derivable and a physical collection can be reconciled against it.
+    case DEST_BOX_P1:
+      field = &s_inventory.box_p1;   ceiling = COIN_BOX_CAPACITY; break;
+    case DEST_BOX_P5:
+      field = &s_inventory.box_p5;   ceiling = COIN_BOX_CAPACITY; break;
+    case DEST_BOX_P10:
+      field = &s_inventory.box_p10;  ceiling = COIN_BOX_CAPACITY; break;
+    case DEST_BOX_P20:
+      field = &s_inventory.box_p20;  ceiling = COIN_BOX_CAPACITY; break;
     // SPEC 7.1: an unrecognised coin is physically in the chamber but has no
     // known value, so it gets its OWN counter. Recording it against either
     // denomination would corrupt the peso reconciliation the split exists to
     // provide; not recording it at all would leave a physical collection
     // unexplainably larger than the record.
-    case DEST_PROFIT_UNKNOWN:
-      field = &s_inventory.profit_unknown; ceiling = PROFIT_CHAMBER_CAPACITY; break;
+    case DEST_BOX_UNKNOWN:
+      field = &s_inventory.box_unknown; ceiling = COIN_BOX_CAPACITY; break;
     default:
       return;
   }
@@ -388,15 +436,21 @@ void persist_inventory_set(coin_dest_t dest, uint16_t count) {
     case DEST_P5_HOPPER:
       if (count > HOPPER_CAPACITY) count = HOPPER_CAPACITY;
       before = s_inventory.p5_count;   s_inventory.p5_count = count;   break;
-    case DEST_PROFIT_P10:
-      if (count > PROFIT_CHAMBER_CAPACITY) count = PROFIT_CHAMBER_CAPACITY;
-      before = s_inventory.profit_p10; s_inventory.profit_p10 = count; break;
-    case DEST_PROFIT_P20:
-      if (count > PROFIT_CHAMBER_CAPACITY) count = PROFIT_CHAMBER_CAPACITY;
-      before = s_inventory.profit_p20; s_inventory.profit_p20 = count; break;
-    case DEST_PROFIT_UNKNOWN:
-      if (count > PROFIT_CHAMBER_CAPACITY) count = PROFIT_CHAMBER_CAPACITY;
-      before = s_inventory.profit_unknown; s_inventory.profit_unknown = count; break;
+    case DEST_BOX_P1:
+      if (count > COIN_BOX_CAPACITY) count = COIN_BOX_CAPACITY;
+      before = s_inventory.box_p1; s_inventory.box_p1 = count; break;
+    case DEST_BOX_P5:
+      if (count > COIN_BOX_CAPACITY) count = COIN_BOX_CAPACITY;
+      before = s_inventory.box_p5; s_inventory.box_p5 = count; break;
+    case DEST_BOX_P10:
+      if (count > COIN_BOX_CAPACITY) count = COIN_BOX_CAPACITY;
+      before = s_inventory.box_p10; s_inventory.box_p10 = count; break;
+    case DEST_BOX_P20:
+      if (count > COIN_BOX_CAPACITY) count = COIN_BOX_CAPACITY;
+      before = s_inventory.box_p20; s_inventory.box_p20 = count; break;
+    case DEST_BOX_UNKNOWN:
+      if (count > COIN_BOX_CAPACITY) count = COIN_BOX_CAPACITY;
+      before = s_inventory.box_unknown; s_inventory.box_unknown = count; break;
     default:
       return;
   }
@@ -541,6 +595,11 @@ void persist_clear_coin_in_flight() {
 }
 
 coin_t persist_coin_in_flight() {
+  // COLLECT_ALL never writes the in-flight ring -- with the flaps pinned there
+  // is no travel for a power cut to interrupt -- so anything found in it is a
+  // leftover from a RECIRCULATE build and must not be reconciled.
+  if (COIN_ROUTING_MODE == COIN_ROUTING_COLLECT_ALL) return COIN_NONE;
+
   // Served from the RAM mirror established at boot. Re-reading EEPROM here
   // would scan 64 slots on every call for a value already known.
   if ((uint8_t)s_inflight_coin > (uint8_t)COIN_INVALID) return COIN_NONE;
@@ -581,19 +640,12 @@ void persist_reconcile_unrouted_coin(coin_t coin) {
   // Assume the profit chamber, per the policy above. coin_destination() would
   // send a P1 or P5 to a hopper, so the profit destination is chosen here
   // explicitly rather than by asking where the coin was headed.
-  switch (coin) {
-    case COIN_P10: persist_inventory_add(DEST_PROFIT_P10, +1); break;
-    case COIN_P20: persist_inventory_add(DEST_PROFIT_P20, +1); break;
-    // A P1, P5 or already-unidentified coin is assumed to be in the chamber but
-    // has no denomination counter there. It goes to profit_unknown (SPEC 7.1),
-    // which is what keeps a later physical collection reconcilable: the coin is
-    // recorded as present without claiming a value it may not have.
-    //
-    // Note this deliberately does NOT credit the P1 or P5 hopper even though
-    // that is where the coin was headed. Overstating hopper stock makes the
-    // machine promise change it does not hold. Understate, per rule 0.
-    default:       persist_inventory_add(DEST_PROFIT_UNKNOWN, +1); break;
-  }
+  // coin_route_unrouted() always answers with a BOX counter, never a hopper,
+  // whatever the coin was headed for -- and it keeps the denomination, so a P1
+  // or P5 caught mid-route is recorded as "one P5, assumed in the box" rather
+  // than as a coin of unknown value. Before layout version 4 there was no box
+  // counter for P1 or P5 and these went to box_unknown.
+  persist_inventory_add(coin_route_unrouted(coin), +1);
 
   persist_clear_coin_in_flight();
 }
