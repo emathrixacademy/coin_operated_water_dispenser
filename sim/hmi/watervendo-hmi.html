@@ -189,6 +189,7 @@
 <body>
 <div class="topbar">
   <h1>Water Vendo — HMI simulator</h1>
+  <span class="sub" id="sim-build" style="color:#ffcc66;font-weight:600"></span>
   <span class="sub">EMX-2026-WATERVENDO-01 · Nextion NX4832T035 at true size (480 × 320) · demonstration only, <b>src/</b> is authoritative</span>
 </div>
 
@@ -1190,6 +1191,11 @@ function buzzer_update() {
 // ===========================================================================
 // src/main.cpp -- the state machine, ported
 // ===========================================================================
+
+// Shown in the page header and written into every self-test result. A test
+// report that does not say which build it came from cannot be acted on, so
+// BUMP THIS ON EVERY CHANGE TO THIS FILE: date, then a counter within the day.
+const SIM_BUILD = '2026-10-04.3';
 
 const OPT = { faithful: true, speed: 1, showfit: false };
 
@@ -2671,6 +2677,7 @@ function run_selftest() {
 // Boot
 // ===========================================================================
 function boot() {
+  document.getElementById('sim-build').textContent = 'build ' + SIM_BUILD;
   Object.assign(OPT, store_get(OPT_KEY) || {});
   if (/[?&]selftest/.test(location.search)) {
     MEM = {};
@@ -2681,6 +2688,7 @@ function boot() {
       r.results.map(x => `<li style="color:${x.pass ? 'var(--chrome-good)' : 'var(--chrome-bad)'}">${x.pass ? 'PASS' : 'FAIL'} — ${escapeHtml(x.name)}${x.detail ? ` <span class="muted">(${escapeHtml(x.detail)})</span>` : ''}</li>`).join('') +
       `<li><b>Fit audit: ${r.fit.length} field(s) do not fit</b></li>` +
       r.fit.map(f => `<li>${f.page} · <code>${f.field}</code> needs ${f.need_w}×${f.need_h}, has ${f.have_w}×${f.have_h} — “${escapeHtml(f.text)}”</li>`).join('');
+    r.build = SIM_BUILD;
     $('audit-out').textContent = JSON.stringify(r);
     document.title = `selftest ${r.results.length - failed.length}/${r.results.length}`;
     draw_log();
