@@ -9,11 +9,13 @@
 
 static volatile uint16_t s_pulses = 0;
 static volatile uint32_t s_last_pulse_ms = 0;
-#ifdef DEBUG
-// Bench timing only: when the current train began, so the log can show how
-// long the coinslot takes to say what a coin was. Never in a money build.
+// When the current train began. Gives the train's average pulse period, which
+// sets the adaptive end-of-train gap -- see COIN_PULSE_GAP_FACTOR.
 static volatile uint32_t s_first_pulse_ms = 0;
-#endif
+
+// Learned average pulse period of this coinslot, ms. 0 until a multi-pulse
+// train of a real denomination has been seen.
+static uint16_t s_period_ms = 0;
 
 // Two independent inhibit sources. The physical line is asserted if EITHER is
 // set. Tracked separately rather than counted so that releasing the diverter
@@ -28,9 +30,7 @@ static uint8_t s_overmax_streak = 0;
 static uint16_t s_discarded = 0;
 
 static void coin_isr() {
-#ifdef DEBUG
   if (s_pulses == 0) s_first_pulse_ms = millis();
-#endif
   s_pulses++;
   // millis() does not advance inside an ISR, but reading it is safe and gives
   // the time the burst was last seen, which is all the gap timer needs.
@@ -48,6 +48,15 @@ static void drain_pulses() {
   noInterrupts();
   s_pulses = 0;
   interrupts();
+}
+
+// How long the pulse line must be idle before a train is complete.
+static uint32_t gap_ms() {
+  if (s_period_ms == 0) return COIN_PULSE_GAP_MS;
+  uint32_t g = (uint32_t)s_period_ms * COIN_PULSE_GAP_FACTOR;
+  if (g < COIN_PULSE_GAP_MIN_MS) g = COIN_PULSE_GAP_MIN_MS;
+  if (g > COIN_PULSE_GAP_MS) g = COIN_PULSE_GAP_MS;
+  return g;
 }
 
 static coin_t resolve(uint16_t pulses) {
@@ -99,16 +108,14 @@ void coin_acceptor_update() {
   noInterrupts();
   const uint16_t pulses = s_pulses;
   const uint32_t last = s_last_pulse_ms;
-#ifdef DEBUG
   const uint32_t first = s_first_pulse_ms;
-#endif
   interrupts();
 
   if (pulses == 0) return;
 
   // Wait for the burst to go idle before interpreting it. Resolving early would
   // read a 20-pulse P20 as a P10 followed by a P10.
-  if ((uint32_t)(millis() - last) < COIN_PULSE_GAP_MS) return;
+  if ((uint32_t)(millis() - last) < gap_ms()) return;
 
   // Remove only the pulses just read. A pulse that landed after the snapshot
   // is the start of the next coin; zeroing it would read that coin short.
@@ -135,6 +142,8 @@ void coin_acceptor_update() {
     }
     Serial.print(F(" ready="));
     Serial.print(now - first);
+    Serial.print(F("ms gap="));
+    Serial.print(gap_ms());
     Serial.println(F("ms"));
   }
 #endif
@@ -167,6 +176,13 @@ void coin_acceptor_update() {
   s_overmax_streak = 0;
   s_pending = resolve(pulses);
   s_available = true;
+
+  // Learn the pulse period, only from a train that was a real denomination --
+  // noise and unknown counts must not teach the gap anything.
+  if (pulses > 1 && s_pending != COIN_UNKNOWN) {
+    const uint32_t p = (last - first) / (uint32_t)(pulses - 1);
+    s_period_ms = (p > 0xFFFFUL) ? 0xFFFF : (uint16_t)p;
+  }
 }
 
 bool coin_acceptor_available() {
@@ -178,6 +194,10 @@ bool coin_acceptor_idle() {
   const uint16_t pulses = s_pulses;
   interrupts();
   return pulses == 0 && !s_available;
+}
+
+coin_t coin_acceptor_peek() {
+  return s_available ? s_pending : COIN_NONE;
 }
 
 coin_t coin_acceptor_take_coin() {

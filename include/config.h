@@ -258,6 +258,23 @@ typedef int32_t volume_t;   // millilitres
 // human can insert two coins.
 #define COIN_PULSE_GAP_MS 200
 
+// ADAPTIVE GAP. 200 ms is the safe figure before anything is known about the
+// coinslot, but it is pure dead time before the gates can move -- and the coin
+// is already falling. Once a multi-pulse train has been seen, its average
+// pulse period is learned and the gap becomes COIN_PULSE_GAP_FACTOR x that
+// period, never below COIN_PULSE_GAP_MIN_MS and never above COIN_PULSE_GAP_MS.
+// The coinslot's pulses are timer-generated and regular, so 3x the period is
+// well clear of any gap inside a train. Lower the factor and a jittery train
+// can split into two coins (a P20 read as P10 + P10); raise it and the gates
+// move later.
+#define COIN_PULSE_GAP_FACTOR 3
+#define COIN_PULSE_GAP_MIN_MS 50
+
+// A gate aimed for an identified coin that is then NOT routed (it was
+// discarded by a state change) goes back to rest after this, so the next coin
+// cannot fall into a hopper tunnel it was never meant for.
+#define COIN_AIM_TIMEOUT_MS 500
+
 // Sanity ceiling on a pulse train. A P20 at COIN_PULSES_P20 is the longest
 // legitimate train, so clearly more than that in one burst is noise on the line
 // -- motor noise from the pump or a hopper coupling into D2 -- or a stuck

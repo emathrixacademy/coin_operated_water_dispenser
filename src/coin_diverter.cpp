@@ -45,6 +45,11 @@ static coin_t s_coin = COIN_NONE;
 // the gates actually pointed GATE_ROUTE_MS earlier.
 static coin_dest_t s_dest = DEST_BOX_UNKNOWN;
 
+// Gates already aimed for an identified coin that has not been routed yet.
+static coin_t s_aim_coin = COIN_NONE;
+static coin_dest_t s_aim_dest = DEST_BOX_UNKNOWN;
+static uint32_t s_aim_ms = 0;
+
 static void gates_rest() {
   s_gate1.write(GATE1_ANGLE_OPEN);
   s_gate2.write(GATE2_ANGLE_OPEN);
@@ -84,8 +89,28 @@ void coin_diverter_begin() {
   gates_rest();
 }
 
+void coin_diverter_aim(coin_t coin) {
+  if (COLLECT_ALL || s_state != DIV_IDLE) return;
+  if (coin == COIN_NONE || coin == COIN_INVALID) return;
+  if (coin == s_aim_coin) return;   // already aimed
+
+  s_aim_coin = coin;
+  s_aim_dest = coin_destination(coin);
+  s_aim_ms = millis();
+  gates_for(s_aim_dest);
+}
+
 void coin_diverter_update() {
-  if (s_state == DIV_IDLE) return;
+  if (s_state == DIV_IDLE) {
+    // An aimed coin that was never routed: back to rest, so the next coin is
+    // not caught by a hopper gate meant for this one.
+    if (s_aim_coin != COIN_NONE &&
+        (uint32_t)(millis() - s_aim_ms) >= COIN_AIM_TIMEOUT_MS) {
+      s_aim_coin = COIN_NONE;
+      gates_rest();
+    }
+    return;
+  }
 
   const uint32_t elapsed = millis() - s_started_ms;
 
@@ -162,15 +187,20 @@ void coin_diverter_route(coin_t coin) {
   // land mid-travel.
   coin_acceptor_window_inhibit();
 
-  // Recorded before the move so a power cut mid-travel is recoverable. Cleared
-  // on settle above.
-  persist_mark_coin_in_flight(coin);
-
+  // GATES FIRST, then EEPROM. The coin is already falling; the in-flight write
+  // costs ~30 ms and must not stand between it and the gates. If the gates
+  // were aimed for this coin the moment it was identified, keep that decision
+  // rather than re-reading the hopper IR a few ms later.
   s_coin = coin;
-  s_dest = coin_destination(coin);
+  s_dest = (coin == s_aim_coin) ? s_aim_dest : coin_destination(coin);
+  s_aim_coin = COIN_NONE;
   gates_for(s_dest);
   s_started_ms = millis();
   s_state = DIV_ROUTING;
+
+  // Cleared on settle above. A power cut in the few ms before this lands
+  // leaves the coin uncounted -- the understating direction.
+  persist_mark_coin_in_flight(coin);
 
 #ifdef DEBUG
   Serial.print(F("[gate] "));

@@ -26,6 +26,11 @@ void coin_diverter_update();
 // Ignored if a route is already in progress.
 void coin_diverter_route(coin_t coin);
 
+// Aim the gates for an identified coin immediately, before it is credited or
+// routed. route() then keeps this decision. Gates return to rest after
+// COIN_AIM_TIMEOUT_MS if the coin is never routed. No-op while busy.
+void coin_diverter_aim(coin_t coin);
+
 // True once the servo has reached position and COIN_LOCKOUT_MS has elapsed. The
 // coin is considered physically committed to its chamber at this point, and
 // only then may the inventory be incremented.

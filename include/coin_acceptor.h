@@ -36,6 +36,11 @@ bool coin_acceptor_available();
 // discarded rather than credited, and why a run of them raises FAULT_ACCEPTOR.
 coin_t coin_acceptor_take_coin();
 
+// The coin take_coin() would return, without consuming it. COIN_NONE if none.
+// Lets the gates be aimed the moment a coin is identified, before the state
+// machine gets to it.
+coin_t coin_acceptor_peek();
+
 // --- Inhibit ------------------------------------------------------------
 //
 // There are TWO INDEPENDENT inhibit sources and the physical line is asserted

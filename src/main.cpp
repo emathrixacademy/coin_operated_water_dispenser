@@ -1041,6 +1041,10 @@ void loop() {
   persist_daily_sync_day(rtc_day_number());
   (void)rtc_day_rolled();   // superseded by the stored day number above
   coin_acceptor_update();
+  // Aim the gates the instant a coin is identified. The state machine may not
+  // route it until after an EEPROM write (~100 ms on the first coin), and the
+  // coin is falling the whole time.
+  if (coin_acceptor_available()) coin_diverter_aim(coin_acceptor_peek());
   coin_diverter_update();
   coin_hopper_update();
   coin_level_update();
