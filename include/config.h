@@ -179,20 +179,25 @@ typedef int32_t volume_t;   // millilitres
 // The Servo library claims Timer5 first on the Mega, which is why nothing in
 // this map uses D44-D46.
 
-// Two MG996R servos in series on the coin path:
+// Two MG996R servos on the coin path:
 //
-//   GATE (D10)    first. CLOSED for P10, P20 and unknown coins, which drop
-//                 straight to the coin box. OPEN for P1 and P5, which go on to
-//                 the sorter.
-//   SORTER (D9)   second. Points a P1 or P5 at its hopper, or at the coin box
-//                 when that hopper's IR beam says it is full.
+//   GATE (D10)      a HOLDING STOP under the coinslot outlet. Rests closed, so
+//                   every coin stops on it while the coinslot is still sending
+//                   pulses. It opens only once the director is in position.
+//   DIRECTOR (D9)   below the gate. Aims the released coin at the P1 hopper,
+//                   the P5 hopper, or the coin box: P10, P20 and unknown coins
+//                   always to the box; P1 / P5 to their hopper unless its IR
+//                   beam says full, then to the box.
+//
+// Per coin: identified -> director moves (DIRECTOR_SETTLE_MS) -> gate opens
+// (GATE_RELEASE_MS) -> gate closes (GATE_CLOSE_MS) -> next coin allowed.
 //
 // MG996R stall current is ~2.5 A EACH. Feed both from a 5-6 V rail rated for at
 // least 5 A, star-grounded with the Mega -- never from the Mega's 5 V pin.
-#define PIN_DIVERTER_SERVO 9    // sorter
-#define PIN_GATE_SERVO     10   // gate
+#define PIN_DIVERTER_SERVO 9    // director
+#define PIN_GATE_SERVO     10   // holding gate
 
-// Sorter positions in degrees. MEASURE THESE ON THE ASSEMBLED CHUTE.
+// Director positions in degrees. MEASURE THESE ON THE ASSEMBLED CHUTE.
 // These are starting values, not correct values. A diverter a few degrees off
 // drops coins on the divider wall instead of into a chamber.
 #define DIVERTER_ANGLE_P1_HOPPER 30
@@ -200,10 +205,10 @@ typedef int32_t volume_t;   // millilitres
 #define DIVERTER_ANGLE_PROFIT    150
 
 // Gate positions in degrees. Starting values -- MEASURE on the assembled gate.
-// CLOSED is also the power-up position, so a coin that arrives before the
-// first route lands in the box (fail toward understating hopper stock).
-#define GATE_ANGLE_OPEN   0
-#define GATE_ANGLE_CLOSED 90
+// HOLD is the rest and power-up position: a coin waits on it until it has been
+// identified and the director is aimed.
+#define GATE_ANGLE_HOLD    90
+#define GATE_ANGLE_RELEASE 0
 
 // ---------------------------------------------------------------------------
 // Serial
@@ -226,14 +231,27 @@ typedef int32_t volume_t;   // millilitres
 // Coin path timing
 // ---------------------------------------------------------------------------
 
-// Acceptor is inhibited for this long after each accepted coin, while the servo
-// travels and settles.
+// The three phases of one coin through the holding gate. Each is a servo
+// travel time plus margin; the servos have no position feedback, so these
+// timers are all that stands between a coin and a jammed chute.
 //
-// DO NOT SHORTEN THIS TO MAKE THE MACHINE FEEL FASTER. The diverter must be in
-// position before the next coin arrives. A coin landing mid-travel jams the
-// chute, and clearing a chute jam is a service call. 900 ms is the servo's
-// worst-case full sweep plus settle plus margin.
-#define COIN_LOCKOUT_MS 900
+// DIRECTOR_SETTLE_MS  director travel before the gate opens. MG996R at 5 V is
+//                     ~0.2 s per 60 deg; the worst move is 120 deg. Shorter and
+//                     the coin is released onto a director still moving.
+// GATE_RELEASE_MS     gate open: its travel plus the coin's fall clear of it.
+//                     Shorter and the gate closes on the coin.
+// GATE_CLOSE_MS       gate travel back to HOLD before the next coin may come.
+//                     Shorter and the next coin falls straight through.
+#define DIRECTOR_SETTLE_MS 500
+#define GATE_RELEASE_MS    500
+#define GATE_CLOSE_MS      300
+
+// Acceptor is inhibited for this long after each accepted coin -- the whole
+// gate cycle above.
+//
+// DO NOT SHORTEN THIS TO MAKE THE MACHINE FEEL FASTER. A coin landing on a
+// moving gate jams the chute, and clearing a chute jam is a service call.
+#define COIN_LOCKOUT_MS (DIRECTOR_SETTLE_MS + GATE_RELEASE_MS + GATE_CLOSE_MS)
 
 // A pulse train is considered complete when the pulse line has been idle this
 // long. The acceptor emits its pulses in a burst; this gap terminates the burst

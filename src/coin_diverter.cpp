@@ -17,23 +17,24 @@
 // WHERE a coin goes is decided by coin_route(), which has no Arduino dependency
 // and is unit tested. This file only moves the mechanism to match.
 //
-// Two servos in series (see config.h):
-//   GATE    closed for P10 / P20 / unknown -> straight to the coin box;
-//           open for P1 / P5 -> on to the sorter.
-//   SORTER  P1 hopper, P5 hopper, or the coin box when that hopper is full.
-// Both move together inside the same COIN_LOCKOUT_MS window.
+// Two servos (see config.h):
+//   GATE      holding stop. Every coin waits on it until identified.
+//   DIRECTOR  aimed at the P1 hopper, the P5 hopper or the coin box.
+// One coin = director moves, gate opens, gate closes -- COIN_LOCKOUT_MS.
 
 // A plain constant rather than #if around the code, so BOTH paths are compiled
 // and type-checked in every build. The recirculation path must not rot while
 // the machine runs without servos -- we are going back to it.
 static const bool COLLECT_ALL = (COIN_ROUTING_MODE == COIN_ROUTING_COLLECT_ALL);
 
-static Servo s_servo;   // sorter
+static Servo s_servo;   // director
 static Servo s_gate;
 
 static enum : uint8_t {
   DIV_IDLE = 0,
-  DIV_MOVING
+  DIV_AIMING,      // director travelling, gate still holding the coin
+  DIV_RELEASING,   // gate open, coin falling to its destination
+  DIV_CLOSING      // gate travelling back to HOLD
 } s_state = DIV_IDLE;
 
 static uint32_t s_started_ms = 0;
@@ -56,14 +57,6 @@ static uint8_t angle_for(coin_dest_t dest) {
   }
 }
 
-// The gate opens only for the two denominations the sorter handles. Decided by
-// the COIN, not the destination: a P1 bound for the box because its hopper is
-// full still goes through the open gate and is sent to the box by the sorter.
-static uint8_t gate_angle_for(coin_t coin) {
-  return (coin == COIN_P1 || coin == COIN_P5) ? GATE_ANGLE_OPEN
-                                              : GATE_ANGLE_CLOSED;
-}
-
 void coin_diverter_begin() {
   s_state = DIV_IDLE;
   s_coin = COIN_NONE;
@@ -78,13 +71,33 @@ void coin_diverter_begin() {
   s_servo.attach(PIN_DIVERTER_SERVO);
   s_servo.write(DIVERTER_ANGLE_PROFIT);
   s_gate.attach(PIN_GATE_SERVO);
-  s_gate.write(GATE_ANGLE_CLOSED);
+  s_gate.write(GATE_ANGLE_HOLD);
 }
 
 void coin_diverter_update() {
-  if (s_state != DIV_MOVING) return;
+  if (s_state == DIV_IDLE) return;
 
-  if ((uint32_t)(millis() - s_started_ms) < COIN_LOCKOUT_MS) return;
+  const uint32_t elapsed = millis() - s_started_ms;
+
+  if (s_state == DIV_AIMING) {
+    if (elapsed < DIRECTOR_SETTLE_MS) return;
+    // Director is aimed. Only now let the coin go.
+    s_gate.write(GATE_ANGLE_RELEASE);
+    s_state = DIV_RELEASING;
+    s_started_ms = millis();
+    return;
+  }
+
+  if (s_state == DIV_RELEASING) {
+    if (elapsed < GATE_RELEASE_MS) return;
+    s_gate.write(GATE_ANGLE_HOLD);
+    s_state = DIV_CLOSING;
+    s_started_ms = millis();
+    return;
+  }
+
+  // DIV_CLOSING
+  if (elapsed < GATE_CLOSE_MS) return;
 
   // ---------------------------------------------------------------------
   // The coin is physically committed to its chamber only now.
@@ -153,10 +166,11 @@ void coin_diverter_route(coin_t coin) {
 
   s_coin = coin;
   s_dest = coin_destination(coin);
-  s_gate.write(gate_angle_for(coin));
+  // The coin is sitting on the closed gate. Aim first; update() opens the gate
+  // once the director has had DIRECTOR_SETTLE_MS to get there.
   s_servo.write(angle_for(s_dest));
   s_started_ms = millis();
-  s_state = DIV_MOVING;
+  s_state = DIV_AIMING;
 }
 
 bool coin_diverter_is_settled() {

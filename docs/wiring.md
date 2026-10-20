@@ -224,14 +224,15 @@ qualified for it, and fuse the compressor leg separately.
 
 | Signal | Pin | Notes |
 |---|---|---|
-| Coin sorter servo (MG996R) | D9 | Second on the coin path. Points ₱1/₱5 at its hopper, or at the coin box when that hopper's IR says full |
-| Coin gate servo (MG996R) | D10 | First on the coin path. Closed for ₱10, ₱20 and unknown coins (straight to the coin box), open for ₱1 and ₱5 |
+| Coin director servo (MG996R) | D9 | Below the gate. Aims the coin at the ₱1 hopper, the ₱5 hopper, or the coin box (₱10, ₱20, unknown, or a full hopper) |
+| Coin holding gate servo (MG996R) | D10 | Under the coinslot outlet. Holds each coin until it is identified and the director is aimed, then opens and closes |
 
 Signal only. Servo power comes from a 5–6 V rail rated **at least 5 A** (MG996R stalls at
 ~2.5 A each), **not** from the Mega's regulator, with its ground star-tied to the Mega's.
 
 The diverter must be in position before the coin arrives. The acceptor is inhibited for
-`COIN_LOCKOUT_MS` (900 ms) after each accepted coin while the servo settles. The Servo
+`COIN_LOCKOUT_MS` (1300 ms: director 500 + gate open 500 + gate close 300) after each
+accepted coin while the director aims and the holding gate releases the coin. The Servo
 library on the Mega claims Timer5 first, which is why nothing else in this map uses the
 Timer5 PWM pins D44–D46.
 
