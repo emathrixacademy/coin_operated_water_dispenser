@@ -199,13 +199,14 @@ typedef int32_t volume_t;   // millilitres
 #define PIN_GATE1_SERVO 9    // first gate  -> P5 tunnel
 #define PIN_GATE2_SERVO 10   // second gate -> P1 tunnel
 
-// Gate angles in degrees. OPEN (55) is as set by the fabricator; CLOSED is a
-// starting value -- MEASURE it on the assembled chute. A gate a few degrees
-// short of closed lets a coin slip past into the wrong place.
+// Gate angles in degrees, as set by the fabricator: OPEN 55, CLOSED 0. A 55
+// degree move is ~0.15-0.2 s on an MG996R, which is what lets the gate beat
+// the coin. A gate a few degrees short of closed lets a coin slip past into the
+// wrong place -- recheck these if a servo horn is refitted.
 #define GATE1_ANGLE_OPEN   55
-#define GATE1_ANGLE_CLOSED 145
+#define GATE1_ANGLE_CLOSED 0
 #define GATE2_ANGLE_OPEN   55
-#define GATE2_ANGLE_CLOSED 145
+#define GATE2_ANGLE_CLOSED 0
 
 // ---------------------------------------------------------------------------
 // Serial
@@ -233,7 +234,7 @@ typedef int32_t volume_t;   // millilitres
 //
 // GATE_ROUTE_MS   gates set for this coin, held while it runs down its tunnel.
 //                 Covers servo travel (MG996R at 5 V ~0.2 s per 60 deg, the
-//                 move is 90 deg) plus the coin's run. Shorter and the gate
+//                 move is 55 deg) plus the coin's run. Shorter and the gate
 //                 swings back across a coin still in the chute.
 // GATE_RETURN_MS  gates travelling back to the rest position (both open)
 //                 before the next coin may come.
