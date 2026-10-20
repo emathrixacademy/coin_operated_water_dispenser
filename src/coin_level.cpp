@@ -43,6 +43,12 @@ static void beam_update(beam_t *b) {
   if ((uint32_t)(now - b->since_ms) < COIN_LEVEL_DEBOUNCE_MS) return;
 
   b->state = raw;
+#ifdef DEBUG
+  Serial.print(b == &s_p1 ? F("[IR] P1 hopper full: ")
+             : b == &s_p5 ? F("[IR] P5 hopper full: ")
+                          : F("[IR] coin box full: "));
+  Serial.println(raw ? F("YES") : F("no"));
+#endif
 }
 
 void coin_level_begin() {

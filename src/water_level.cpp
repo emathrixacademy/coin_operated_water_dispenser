@@ -60,11 +60,20 @@ static void debounce_update(debounced_t *d) {
   // present" is debounced.
   if (d == &s_gallon && raw) {
     d->state = true;
+#ifdef DEBUG
+    Serial.println(F("[float] gallon empty: YES -- fill pump locked out"));
+#endif
     return;
   }
   if ((uint32_t)(now - d->since_ms) < d->window_ms) return;
 
   d->state = raw;
+#ifdef DEBUG
+  Serial.print(d == &s_mid ? F("[float] tank below mid: ")
+             : d == &s_high ? F("[float] tank at high: ")
+                            : F("[float] gallon empty: "));
+  Serial.println(raw ? F("YES") : F("no"));
+#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -145,6 +154,9 @@ static void pump_write(bool want_on) {
 
   digitalWrite(PIN_PUMP, want_on ? RELAY_ON : RELAY_OFF);
   s_pump_on = want_on;
+#ifdef DEBUG
+  Serial.println(want_on ? F("[fill pump] ON") : F("[fill pump] OFF"));
+#endif
   if (want_on) {
     s_pump_on_since = now;
   } else {

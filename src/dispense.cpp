@@ -24,6 +24,20 @@ static bool s_valve_open = false;
 static uint32_t s_settle_started = 0;
 static bool s_settling = false;
 
+#ifdef DEBUG
+static volume_t delivered_now();
+static volume_t s_logged_ml = 0;   // last 100 mL step printed
+static void log_pour(const __FlashStringHelper *what) {
+  Serial.print(F("[pour] "));
+  Serial.print(what);
+  Serial.print(F(" "));
+  Serial.print(delivered_now());
+  Serial.print(F("/"));
+  Serial.print(s_target);
+  Serial.println(F(" mL"));
+}
+#endif
+
 // =========================================================================
 // The single choke point for the valve output.
 //
@@ -81,6 +95,15 @@ void dispense_update() {
         return;
       }
 
+#ifdef DEBUG
+      {
+        const volume_t now_ml = delivered_now();
+        if (now_ml >= s_logged_ml + 100) {
+          s_logged_ml = (now_ml / 100) * 100;
+          log_pour(F("pouring"));
+        }
+      }
+#endif
       if (delivered_now() >= s_target) {
         // Target reached. Close the valve and start the settle window.
         //
@@ -99,6 +122,9 @@ void dispense_update() {
         s_settling = true;
         s_settle_started = millis();
         s_status = DISPENSE_COMPLETE;
+#ifdef DEBUG
+        log_pour(F("TARGET REACHED, pump OFF"));
+#endif
       }
       return;
     }
@@ -134,6 +160,10 @@ void dispense_start(volume_t target_ml) {
 
   flow_reset();
   valve_write(true);
+#ifdef DEBUG
+  s_logged_ml = 0;
+  log_pour(F("START, pump ON"));
+#endif
 }
 
 void dispense_pause() {
@@ -143,6 +173,9 @@ void dispense_pause() {
   // state machine's business, not this module's.
   bank_and_close();
   s_status = DISPENSE_PAUSED;
+#ifdef DEBUG
+  log_pour(F("PAUSED (no bottle), pump OFF"));
+#endif
 }
 
 void dispense_resume() {
@@ -157,6 +190,9 @@ void dispense_resume() {
   flow_reset();
   valve_write(true);
   s_status = DISPENSE_RUNNING;
+#ifdef DEBUG
+  log_pour(F("RESUMED, pump ON"));
+#endif
 }
 
 void dispense_abort() {

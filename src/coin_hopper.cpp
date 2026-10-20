@@ -100,6 +100,15 @@ static void finish(bool jammed) {
 
   s_result = jammed ? PAYOUT_JAMMED : PAYOUT_COMPLETE;
   s_phase = HOP_DONE;
+
+#ifdef DEBUG
+  Serial.print(s_hopper == HOPPER_P1 ? F("[change] P1 motor OFF, counted ")
+                                     : F("[change] P5 motor OFF, counted "));
+  Serial.print(s_counted);
+  Serial.print(F("/"));
+  Serial.print(s_commanded);
+  Serial.println(jammed ? F(" -- CHANGE JAM") : F(" -- done"));
+#endif
 }
 
 static void start_attempt() {
@@ -162,6 +171,10 @@ void coin_hopper_update() {
       // Retry pays the SHORTFALL only. Re-commanding the original count would
       // pay the user twice for the coins that did come out.
       s_retry++;
+#ifdef DEBUG
+      Serial.print(F("[change] short, retry "));
+      Serial.println(s_retry);
+#endif
       start_attempt();
       return;
     }
@@ -182,6 +195,11 @@ void coin_hopper_dispense(hopper_id_t hopper, uint16_t count) {
   s_counted = 0;
   s_retry = 0;
   s_result = PAYOUT_RUNNING;
+#ifdef DEBUG
+  Serial.print(hopper == HOPPER_P1 ? F("[change] P1 motor ON, paying ")
+                                   : F("[change] P5 motor ON, paying "));
+  Serial.println(count);
+#endif
   start_attempt();
 }
 

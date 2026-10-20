@@ -65,6 +65,10 @@ void bottle_update() {
   } else {
     s_just_removed = true;
   }
+#ifdef DEBUG
+  Serial.println(s_present ? F("[bottle] PLACED (IR sees it)")
+                           : F("[bottle] REMOVED"));
+#endif
 }
 
 bool bottle_present() {
