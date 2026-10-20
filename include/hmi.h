@@ -95,4 +95,9 @@ bool hmi_event_available();
 // event carries one.
 hmi_event_t hmi_take_event(int32_t *payload);
 
+#ifdef SERIAL_CONSOLE
+// Test console only: a typed "c" stands in for the physical CONFIRM button.
+bool hmi_console_confirm();
+#endif
+
 #endif  // HMI_H

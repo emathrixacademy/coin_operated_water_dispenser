@@ -122,6 +122,9 @@ static uint32_t s_confirm_since = 0;
 static bool s_confirm_pressed = false;   // one-shot, consumed by reading
 
 static void confirm_update() {
+#ifdef SERIAL_CONSOLE
+  if (hmi_console_confirm()) s_confirm_pressed = true;
+#endif
   const bool raw = (digitalRead(PIN_CONFIRM_BTN) == LOW);
   const uint32_t now = millis();
 
@@ -938,6 +941,9 @@ static void boot_step(const __FlashStringHelper *what) {
 void setup() {
 #ifdef DEBUG
   Serial.begin(DEBUG_BAUD);
+#ifdef SERIAL_CONSOLE
+  Serial.println(F("[console] TEST CONSOLE -- type h for commands. NOT FOR SALE."));
+#endif
   Serial.println(F("EMX-2026-WATERVENDO-01 boot [DEBUG BUILD - NOT FOR SERVICE]"));
   // The firmware cannot detect whether gate servos are fitted, so a build that
   // does not match the hardware is invisible until money goes wrong. Say which
