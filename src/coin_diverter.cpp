@@ -17,43 +17,54 @@
 // WHERE a coin goes is decided by coin_route(), which has no Arduino dependency
 // and is unit tested. This file only moves the mechanism to match.
 //
-// Two servos (see config.h):
-//   GATE      holding stop. Every coin waits on it until identified.
-//   DIRECTOR  aimed at the P1 hopper, the P5 hopper or the coin box.
-// One coin = director moves, gate opens, gate closes -- COIN_LOCKOUT_MS.
+// Two gate servos in series on one chute (see config.h). Rest is both open,
+// straight to the coin box. Gate 1 closed -> P5 tunnel; gate 1 open and gate 2
+// closed -> P1 tunnel. One coin = gates set and held (GATE_ROUTE_MS), then back
+// to rest (GATE_RETURN_MS) -- COIN_LOCKOUT_MS in all.
 
 // A plain constant rather than #if around the code, so BOTH paths are compiled
 // and type-checked in every build. The recirculation path must not rot while
 // the machine runs without servos -- we are going back to it.
 static const bool COLLECT_ALL = (COIN_ROUTING_MODE == COIN_ROUTING_COLLECT_ALL);
 
-static Servo s_servo;   // director
-static Servo s_gate;
+static Servo s_gate1;   // first gate,  P5 tunnel
+static Servo s_gate2;   // second gate, P1 tunnel
 
 static enum : uint8_t {
   DIV_IDLE = 0,
-  DIV_AIMING,      // director travelling, gate still holding the coin
-  DIV_RELEASING,   // gate open, coin falling to its destination
-  DIV_CLOSING      // gate travelling back to HOLD
+  DIV_ROUTING,     // gates set for this coin, coin running down its tunnel
+  DIV_RETURNING    // gates travelling back to rest (both open)
 } s_state = DIV_IDLE;
 
 static uint32_t s_started_ms = 0;
 static coin_t s_coin = COIN_NONE;
 
-// Where the coin in flight was SENT. Decided once, when the servo moved, and
+// Where the coin in flight was SENT. Decided once, when the gates moved, and
 // counted there on settle. Re-asking coin_destination() at settle time would
 // count it wherever a hopper-full beam says NOW -- which can differ from where
-// the servo actually pointed 900 ms earlier.
+// the gates actually pointed GATE_ROUTE_MS earlier.
 static coin_dest_t s_dest = DEST_BOX_UNKNOWN;
 
-// Three physical positions only. Every box destination is one chamber and
-// therefore one angle -- the denomination split is in the books, not in the
-// mechanism.
-static uint8_t angle_for(coin_dest_t dest) {
+static void gates_rest() {
+  s_gate1.write(GATE1_ANGLE_OPEN);
+  s_gate2.write(GATE2_ANGLE_OPEN);
+}
+
+// Every box destination is the same straight run -- the denomination split is
+// in the books, not in the mechanism.
+static void gates_for(coin_dest_t dest) {
   switch (dest) {
-    case DEST_P1_HOPPER: return DIVERTER_ANGLE_P1_HOPPER;
-    case DEST_P5_HOPPER: return DIVERTER_ANGLE_P5_HOPPER;
-    default:             return DIVERTER_ANGLE_PROFIT;
+    case DEST_P5_HOPPER:
+      s_gate1.write(GATE1_ANGLE_CLOSED);
+      s_gate2.write(GATE2_ANGLE_OPEN);
+      break;
+    case DEST_P1_HOPPER:
+      s_gate1.write(GATE1_ANGLE_OPEN);
+      s_gate2.write(GATE2_ANGLE_CLOSED);
+      break;
+    default:
+      gates_rest();
+      break;
   }
 }
 
@@ -68,10 +79,9 @@ void coin_diverter_begin() {
   // for travel that will never happen.
   if (COLLECT_ALL) return;
 
-  s_servo.attach(PIN_DIVERTER_SERVO);
-  s_servo.write(DIVERTER_ANGLE_PROFIT);
-  s_gate.attach(PIN_GATE_SERVO);
-  s_gate.write(GATE_ANGLE_HOLD);
+  s_gate1.attach(PIN_GATE1_SERVO);
+  s_gate2.attach(PIN_GATE2_SERVO);
+  gates_rest();
 }
 
 void coin_diverter_update() {
@@ -79,40 +89,32 @@ void coin_diverter_update() {
 
   const uint32_t elapsed = millis() - s_started_ms;
 
-  if (s_state == DIV_AIMING) {
-    if (elapsed < DIRECTOR_SETTLE_MS) return;
-    // Director is aimed. Only now let the coin go.
-    s_gate.write(GATE_ANGLE_RELEASE);
-    s_state = DIV_RELEASING;
+  if (s_state == DIV_ROUTING) {
+    if (elapsed < GATE_ROUTE_MS) return;
+
+    // ---------------------------------------------------------------------
+    // The coin is physically committed to its chamber only now.
+    //
+    // The servo has no position feedback, so this timer is the only thing
+    // standing between a coin and a jammed chute. DO NOT shorten
+    // COIN_LOCKOUT_MS to make the machine feel faster.
+    //
+    // Inventory increments HERE and nowhere else -- after physical commit, never
+    // at the moment the coin was credited. That ordering is what makes the case
+    // 13 reconciliation possible: a power cut before this point leaves an
+    // in-flight marker and no inventory change.
+    // ---------------------------------------------------------------------
+    persist_inventory_add(s_dest, +1);
+    persist_clear_coin_in_flight();
+
+    gates_rest();
+    s_state = DIV_RETURNING;
     s_started_ms = millis();
     return;
   }
 
-  if (s_state == DIV_RELEASING) {
-    if (elapsed < GATE_RELEASE_MS) return;
-    s_gate.write(GATE_ANGLE_HOLD);
-    s_state = DIV_CLOSING;
-    s_started_ms = millis();
-    return;
-  }
-
-  // DIV_CLOSING
-  if (elapsed < GATE_CLOSE_MS) return;
-
-  // ---------------------------------------------------------------------
-  // The coin is physically committed to its chamber only now.
-  //
-  // The servo has no position feedback, so this timer is the only thing
-  // standing between a coin and a jammed chute. DO NOT shorten
-  // COIN_LOCKOUT_MS to make the machine feel faster.
-  //
-  // Inventory increments HERE and nowhere else -- after physical commit, never
-  // at the moment the coin was credited. That ordering is what makes the case
-  // 13 reconciliation possible: a power cut before this point leaves an
-  // in-flight marker and no inventory change.
-  // ---------------------------------------------------------------------
-  persist_inventory_add(s_dest, +1);
-  persist_clear_coin_in_flight();
+  // DIV_RETURNING: the next coin must not meet a gate still swinging open.
+  if (elapsed < GATE_RETURN_MS) return;
 
   s_state = DIV_IDLE;
   s_coin = COIN_NONE;
@@ -166,11 +168,9 @@ void coin_diverter_route(coin_t coin) {
 
   s_coin = coin;
   s_dest = coin_destination(coin);
-  // The coin is sitting on the closed gate. Aim first; update() opens the gate
-  // once the director has had DIRECTOR_SETTLE_MS to get there.
-  s_servo.write(angle_for(s_dest));
+  gates_for(s_dest);
   s_started_ms = millis();
-  s_state = DIV_AIMING;
+  s_state = DIV_ROUTING;
 }
 
 bool coin_diverter_is_settled() {
