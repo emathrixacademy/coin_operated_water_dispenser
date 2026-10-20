@@ -196,6 +196,39 @@ static void commit_transaction() {
   persist_txn_close();
 }
 
+// A payout the machine cannot finish -- the hopper jammed, or no change plan
+// exists. F19 and D-5: the amount still owed is written to history NOW, before
+// the fault locks, so it survives a power cut and an Admin clear, and the
+// transaction is then CLOSED so clearing the jam cannot offer this user's
+// credit to the next person. The operator settles the balance by hand.
+//
+// History entry, transaction-level (denomination COIN_NONE, unlike the
+// per-leg entry coin_hopper writes):
+//   amount_in  = centavos still OWED to the user
+//   volume_out = millilitres dispensed
+//   change_out = centavos of change actually counted out
+static void record_unpaid_and_close() {
+  money_t owed = billing_change_due() - s_change_paid;
+  if (owed < 0) owed = 0;
+
+  history_entry_t e;
+  memset(&e, 0, sizeof(e));
+  e.timestamp    = rtc_timestamp();
+  e.tag          = EVT_CHANGE_JAM;
+  e.denomination = (uint8_t)COIN_NONE;
+  e.amount_in    = owed;
+  e.volume_out   = billing_total_dispensed();
+  e.change_out   = s_change_paid;
+  persist_history_add(&e);
+
+  // The day's takings exclude what is still owed: the operator pays it out of
+  // the box.
+  persist_daily_add(billing_inserted() - s_change_paid - owed,
+                    billing_total_dispensed());
+
+  persist_txn_close();
+}
+
 // ---------------------------------------------------------------------------
 // The legal transition table -- SPEC 2.2
 // ---------------------------------------------------------------------------
@@ -401,7 +434,10 @@ static void transition_to(state_t next, trigger_t why) {
 
   // The acceptor rule, applied from the destination. Before on_enter(), so a
   // state's entry code can never observe the acceptor in the wrong condition.
-  if (accepting_state(next)) {
+  // A latched or persistent fault (e.g. CHANGE JAM restored from EEPROM, or
+  // LOW CHANGE after the last payout) must keep it shut even for the single
+  // pass before STANDBY routes to FAULT.
+  if (accepting_state(next) && !faults_is_locked()) {
     coin_acceptor_uninhibit();
   } else {
     coin_acceptor_inhibit();
@@ -431,6 +467,10 @@ static void on_enter(state_t s) {
       break;
 
     case STATE_ACCEPTING: {
+      // Discard a confirm press left over from standby or the previous user.
+      // Acting on it would close ACCEPTING the moment the first coin lands.
+      (void)confirm_take();
+
       // Open the EEPROM transaction record. From here on a power cut is
       // recoverable -- scenarios.md case 12.
       transaction_t txn;
@@ -477,6 +517,7 @@ static void on_enter(state_t s) {
         // the full ceiling before the first coin was accepted. If it happens
         // anyway the machine cannot pay what it owes, which is a jam by any
         // other name -- and locking is the honest answer.
+        record_unpaid_and_close();
         faults_raise(FAULT_CHANGE_JAM);
         break;
       }
@@ -536,7 +577,11 @@ static void state_update(state_t s) {
       // Reconciliation runs in setup(); by the time loop() sees BOOT the
       // decision has been made. Kept as a real state so the transition out of
       // it is logged like every other.
-      transition_to(STATE_STANDBY, TRIG_BOOT_CLEAN);
+      if (faults_is_locked()) {
+        transition_to(STATE_FAULT, TRIG_BOOT_PERSISTENT_FAULT);
+      } else {
+        transition_to(STATE_STANDBY, TRIG_BOOT_CLEAN);
+      }
       break;
 
     // -------------------------------------------------------------------
@@ -585,7 +630,10 @@ static void state_update(state_t s) {
         transition_to(STATE_SELECTING, TRIG_CREDIT_AT_CEILING);
         break;
       }
-      if (confirm_take()) {
+      // Leaving ACCEPTING inhibits the acceptor and discards anything in
+      // flight, so a coin still arriving when confirm is pressed would be kept
+      // and never credited. Hold the press until the chute is quiet.
+      if (coin_acceptor_idle() && !coin_diverter_is_busy() && confirm_take()) {
         transition_to(STATE_SELECTING, TRIG_CONFIRM_PRESSED);
       }
       break;
@@ -668,7 +716,9 @@ static void state_update(state_t s) {
         transition_to(STATE_SETTLING, TRIG_FLOW_STALL);
         break;
       }
-      if (bottle_just_removed()) {
+      // Debounced state as well as the edge: a removal edge consumed earlier
+      // must not leave the valve open over an empty tray.
+      if (bottle_just_removed() || !bottle_present()) {
         transition_to(STATE_PAUSED, TRIG_BOTTLE_REMOVED);
         break;
       }
@@ -679,7 +729,11 @@ static void state_update(state_t s) {
 
     // -------------------------------------------------------------------
     case STATE_PAUSED:
-      if (bottle_just_placed()) {
+      // Resume on the debounced state, never on the edge alone. A "placed"
+      // edge left over from before the pour (bottle set down before the coins)
+      // would otherwise resume dispensing the instant the bottle was lifted.
+      (void)bottle_just_placed();
+      if (bottle_present()) {
         transition_to(STATE_DISPENSING, TRIG_BOTTLE_REPLACED);
         break;
       }
@@ -762,6 +816,7 @@ static void state_update(state_t s) {
         s_change_paid += (money_t)coin_hopper_counted() *
                          (s_pay_leg == 0 ? 500 : 100);
         coin_hopper_clear();
+        record_unpaid_and_close();
         // The machine has physically demonstrated it cannot pay. This is the
         // ONE fault that locks immediately rather than deferring -- there is
         // no payout left to protect and waiting would only take more money.
@@ -935,6 +990,9 @@ void loop() {
   // Every module, every pass, unconditionally.
   persist_update();
   rtc_update();
+  // RAM compare every pass; an EEPROM write only when the day changes.
+  persist_daily_sync_day(rtc_day_number());
+  (void)rtc_day_rolled();   // superseded by the stored day number above
   coin_acceptor_update();
   coin_diverter_update();
   coin_hopper_update();

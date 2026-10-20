@@ -45,8 +45,9 @@ void billing_begin();
 
 // --- Credit -------------------------------------------------------------
 
-// Add an accepted coin's value to the credit. Refuses anything that would take
-// the credit past MAX_TRANSACTION_CENTAVOS.
+// Add an accepted coin's value to the credit. Never clamped (F8 / WO-009): a
+// coin accepted below the ceiling is credited in full, so credit can exceed
+// MAX_TRANSACTION_CENTAVOS by at most one coin. The overshoot is refunded.
 void billing_add_coin(coin_t coin);
 
 money_t billing_credit();     // centavos still available to spend

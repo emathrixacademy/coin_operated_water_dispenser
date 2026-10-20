@@ -54,6 +54,14 @@ static void debounce_update(debounced_t *d) {
     return;
   }
   if (raw == d->state) return;
+  // The gallon EMPTY reading is a dry-run interlock: act on it at once. A
+  // sloshing float in a nearly empty bay may never hold empty for a full
+  // window, and the pump would keep running dry. Only the return to "water
+  // present" is debounced.
+  if (d == &s_gallon && raw) {
+    d->state = true;
+    return;
+  }
   if ((uint32_t)(now - d->since_ms) < d->window_ms) return;
 
   d->state = raw;
@@ -85,6 +93,19 @@ static void pump_write(bool want_on) {
   //    Dry running destroys the pump. Whatever the cold tank floats say, an
   //    empty gallon bay means the pump does not run.
   if (s_gallon.state) {
+    digitalWrite(PIN_PUMP, RELAY_OFF);
+    if (s_pump_on) {
+      s_pump_on = false;
+      s_pump_off_since = now;
+    }
+    return;
+  }
+
+  // 1b. A latched overrun keeps the pump off until reboot/service. Without this
+  //     the floats still ask for water (that is the overrun case), so the pump
+  //     would rest PUMP_MIN_OFF_MS and run dry for another PUMP_MAX_RUN_MS,
+  //     forever.
+  if (s_pump_overrun) {
     digitalWrite(PIN_PUMP, RELAY_OFF);
     if (s_pump_on) {
       s_pump_on = false;

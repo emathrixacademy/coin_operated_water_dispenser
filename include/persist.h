@@ -144,6 +144,15 @@ void     persist_daily_add(money_t profit, volume_t volume);
 // Called by the state machine when rtc_day_rolled() reports a boundary.
 void persist_daily_rollover(uint32_t timestamp);
 
+// Keep the daily totals on the right day. Call every loop with
+// rtc_day_number(); it compares in RAM and writes only when the day changes.
+//
+// The stored totals carry their own day number, so a machine switched off over
+// midnight still closes yesterday on its first valid clock reading -- which
+// rtc_day_rolled() alone cannot do, since it never fires on the first read
+// after boot. Does nothing while the clock is failed.
+void persist_daily_sync_day(int32_t today);
+
 // Admin "reset daily totals". Same write-then-zero guarantee, tagged
 // distinctly so a technician can tell a hand-ended day from a midnight one.
 void persist_daily_reset(uint32_t timestamp);

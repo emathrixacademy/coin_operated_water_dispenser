@@ -4,6 +4,7 @@
 #include "persist.h"
 #include "eeprom_record.h"
 #include "coin_route.h"
+#include "rtc.h"
 
 // EEPROM persistence.
 //
@@ -31,11 +32,19 @@ struct inflight_slot_t {
   inflight_t f;
 };
 
+struct inventory_slot_t {
+  uint32_t seq;
+  inventory_t inv;
+};
+
 struct daily_t {
   uint32_t seq;     // newest valid slot wins on boot
   money_t  profit;
   volume_t volume;
   uint16_t txns;
+  // rtc_day_number() of the day these totals belong to; 0 = not yet known.
+  // uint16_t holds days since 1970 until the year 2149.
+  uint16_t day;
 };
 
 struct hist_slot_t {
@@ -56,14 +65,12 @@ struct fault_flags_t {
 // overwriting the region after it. Silent overlap here corrupts the coin
 // inventory, which is money.
 
+#define SLOT_INVENTORY_SIZE (RECORD_OVERHEAD + (int)sizeof(inventory_slot_t))
 #define SLOT_DAILY_SIZE    (RECORD_OVERHEAD + (int)sizeof(daily_t))
 #define SLOT_HIST_SIZE     (RECORD_OVERHEAD + (int)sizeof(hist_slot_t))
 #define SLOT_TXN_SIZE      (RECORD_OVERHEAD + (int)sizeof(txn_slot_t))
 #define SLOT_INFLIGHT_SIZE (RECORD_OVERHEAD + (int)sizeof(inflight_slot_t))
 
-static_assert(EEPROM_ADDR_INVENTORY + RECORD_OVERHEAD + (int)sizeof(inventory_t)
-                  <= EEPROM_ADDR_FAULTS,
-              "inventory record overruns the fault-flags region");
 static_assert(EEPROM_ADDR_FAULTS + RECORD_OVERHEAD + (int)sizeof(fault_flags_t)
                   <= EEPROM_ADDR_DAILY_RING,
               "fault-flags record overruns the daily ring");
@@ -80,8 +87,13 @@ static_assert(EEPROM_ADDR_OPEN_TXN_RING + (TXN_RING_SLOTS * SLOT_TXN_SIZE)
                   <= EEPROM_ADDR_INFLIGHT_RING,
               "open-transaction ring overruns the in-flight ring");
 static_assert(EEPROM_ADDR_INFLIGHT_RING
-                  + (INFLIGHT_RING_SLOTS * SLOT_INFLIGHT_SIZE) <= 4096,
-              "in-flight ring overruns the Mega's 4KB EEPROM");
+                  + (INFLIGHT_RING_SLOTS * SLOT_INFLIGHT_SIZE)
+                  <= EEPROM_ADDR_INVENTORY_RING,
+              "in-flight ring overruns the inventory ring");
+static_assert(SLOT_INVENTORY_SIZE == 24, "inventory slot is 24 bytes, layout 5");
+static_assert(EEPROM_ADDR_INVENTORY_RING
+                  + (INVENTORY_RING_SLOTS * SLOT_INVENTORY_SIZE) <= 4096,
+              "inventory ring overruns the Mega's 4KB EEPROM");
 
 // ---------------------------------------------------------------------------
 // Raw record access
@@ -124,6 +136,8 @@ static void record_save(int addr, const uint8_t *payload, uint8_t len) {
 // ---------------------------------------------------------------------------
 
 static inventory_t s_inventory;
+static uint32_t s_inventory_seq = 0;
+static uint8_t s_inventory_slot = 0;
 static transaction_t s_open_txn;
 
 // Open-transaction ring position. s_txn_seq is the cumulative write count and
@@ -152,7 +166,45 @@ static void inventory_commit() {
   // Every inventory record carries the mode of the firmware that wrote it.
   s_inventory.routing_mode = (uint8_t)COIN_ROUTING_MODE;
   s_inventory.reserved = 0;
-  record_save(EEPROM_ADDR_INVENTORY, (const uint8_t *)&s_inventory, sizeof(s_inventory));
+
+  // Wear-levelled like the transaction ring: every write advances a slot.
+  s_inventory_seq++;
+  s_inventory_slot = (uint8_t)((s_inventory_slot + 1) % INVENTORY_RING_SLOTS);
+  inventory_slot_t slot;
+  slot.seq = s_inventory_seq;
+  slot.inv = s_inventory;
+  record_save(EEPROM_ADDR_INVENTORY_RING + ((int)s_inventory_slot * SLOT_INVENTORY_SIZE),
+              (const uint8_t *)&slot, sizeof(slot));
+}
+
+// Newest trusted inventory from the ring. False if none is valid, OR if the
+// slot after the newest valid one is corrupt (R-8): that means a newer write
+// was torn, and the older record may count coins already paid out. Overstated
+// stock is a jam under a paying user, so that case is treated as unknown.
+static bool inventory_load() {
+  bool found = false;
+  s_inventory_seq = 0;
+  s_inventory_slot = 0;
+  for (uint8_t i = 0; i < INVENTORY_RING_SLOTS; i++) {
+    inventory_slot_t slot;
+    if (!record_load(EEPROM_ADDR_INVENTORY_RING + ((int)i * SLOT_INVENTORY_SIZE),
+                     (uint8_t *)&slot, sizeof(slot))) {
+      continue;
+    }
+    if (!found || slot.seq > s_inventory_seq) {
+      s_inventory_seq = slot.seq;
+      s_inventory_slot = i;
+      s_inventory = slot.inv;
+      found = true;
+    }
+  }
+  if (!found) return false;
+
+  const uint8_t next = (uint8_t)((s_inventory_slot + 1) % INVENTORY_RING_SLOTS);
+  const slot_kind_t kind =
+      record_kind(EEPROM_ADDR_INVENTORY_RING + ((int)next * SLOT_INVENTORY_SIZE),
+                  sizeof(inventory_slot_t));
+  return ring_newest_trusted(kind);
 }
 
 static void daily_commit() {
@@ -180,7 +232,7 @@ void persist_begin() {
   // direction -- it locks the machine on LOW CHANGE until a human loads the
   // hoppers and enters real counts. Fail toward the understatement.
   s_mode_changed = false;
-  if (!record_load(EEPROM_ADDR_INVENTORY, (uint8_t *)&s_inventory, sizeof(s_inventory))) {
+  if (!inventory_load()) {
     memset(&s_inventory, 0, sizeof(s_inventory));
     inventory_commit();
     s_initialised = true;
@@ -460,7 +512,7 @@ void persist_inventory_set(coin_dest_t dest, uint16_t count) {
   // hopper contents, so it leaves a trail: before and after, tagged distinctly.
   history_entry_t e;
   memset(&e, 0, sizeof(e));
-  e.timestamp = millis() / 1000UL;
+  e.timestamp = rtc_timestamp();   // RTC epoch, or RTC_TIMESTAMP_INVALID -- never uptime
   e.tag = EVT_ADMIN_EDIT;
   e.amount_in = (money_t)before;
   e.change_out = (money_t)count;
@@ -631,7 +683,7 @@ void persist_reconcile_unrouted_coin(coin_t coin) {
   // understated by one, which is the safe direction.)
   history_entry_t e;
   memset(&e, 0, sizeof(e));
-  e.timestamp = millis() / 1000UL;
+  e.timestamp = rtc_timestamp();   // RTC epoch, or RTC_TIMESTAMP_INVALID -- never uptime
   e.tag = EVT_COIN_UNROUTED;
   e.denomination = (uint8_t)coin;
   e.amount_in = coin_value(coin);
@@ -720,6 +772,24 @@ static void daily_close(uint32_t timestamp, uint8_t tag) {
   s_daily.volume = 0;
   s_daily.txns = 0;
   daily_commit();
+}
+
+void persist_daily_sync_day(int32_t today) {
+  if (today <= 0 || today > 0xFFFF) return;   // clock failed: never guess a day
+
+  if (s_daily.day == 0) {
+    // First known day for these totals (fresh EEPROM, or the clock was never
+    // set). Adopt today; it is stored with the next transaction's write.
+    s_daily.day = (uint16_t)today;
+    return;
+  }
+  if (s_daily.day == (uint16_t)today) return;
+
+  // A different day -- midnight passed while running, or while switched off.
+  // The new day is set before daily_close() so its single commit stores both
+  // the zeroed totals and the day they now belong to.
+  s_daily.day = (uint16_t)today;
+  daily_close(rtc_timestamp(), (uint8_t)EVT_DAY_CLOSE);
 }
 
 void persist_daily_rollover(uint32_t timestamp) {

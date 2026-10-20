@@ -36,12 +36,13 @@ void billing_add_coin(coin_t coin) {
   const money_t v = coin_value(coin);
   if (v <= 0) return;
 
-  // Refuse anything that would take the transaction past its ceiling. The
-  // acceptor is inhibited at the ceiling too, so this should not be reachable
-  // -- it is here because "should not be reachable" is not a guarantee, and
-  // over-crediting is money the machine may not be able to refund.
-  if (s_txn.inserted + v > MAX_TRANSACTION_CENTAVOS) return;
-
+  // F8 / WO-009: every accepted coin is credited, with no clamp at the ceiling.
+  // The acceptor identifies a coin only after it has physically arrived and
+  // Rev B has no reject chute, so refusing credit here would keep the coin and
+  // record that it was never paid (P1 then P20 = P21 in, P1 credited).
+  // MAX_TRANSACTION_CENTAVOS gates ACCEPTANCE via billing_at_ceiling(); the
+  // overshoot of at most one coin comes back as change, and
+  // billing_worst_case_change() is sized for it.
   s_txn.inserted += v;
   s_txn.credit += v;
 }
@@ -61,7 +62,9 @@ bool billing_at_ceiling() {
 volume_t billing_max_selectable_ml() {
   // Centavos -> whole pesos -> millilitres. Integer throughout; the truncation
   // is deliberate, since a partial peso buys nothing.
-  return (volume_t)((s_txn.credit / CENTAVOS_PER_PESO) * ML_PER_PESO);
+  const volume_t ml = (volume_t)((s_txn.credit / CENTAVOS_PER_PESO) * ML_PER_PESO);
+  // Credit may exceed the ceiling by one coin (F8); the pour may not.
+  return (ml > MAX_TRANSACTION_ML) ? MAX_TRANSACTION_ML : ml;
 }
 
 money_t billing_price_of(volume_t target_ml) {
@@ -179,7 +182,11 @@ money_t billing_worst_case_change() {
   // Checked against hopper stock BEFORE the first coin is accepted, not against
   // what has been inserted so far. By the time the money is in, refusing is no
   // longer an option.
-  return MAX_TRANSACTION_CENTAVOS;
+  //
+  // F8 / WO-009: credit is not clamped, so the acceptor can take one more coin
+  // while still below the ceiling -- at worst P19 then a P20, i.e. P39. A
+  // no-pour finish refunds all of it.
+  return MAX_TRANSACTION_CENTAVOS - COIN_VALUE_P1 + COIN_VALUE_P20;
 }
 
 void billing_load(const transaction_t *txn) {

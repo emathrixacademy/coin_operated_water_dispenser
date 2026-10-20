@@ -86,23 +86,21 @@ static void test_ceiling_is_enforced() {
   billing_add_coin(COIN_P20);
   TEST_ASSERT_TRUE(billing_at_ceiling());
   TEST_ASSERT_EQUAL_INT32(2000, billing_credit());
-
-  // One more coin must not be credited -- that is money the machine may not be
-  // able to refund.
-  billing_add_coin(COIN_P1);
-  TEST_ASSERT_EQUAL_INT32(2000, billing_credit());
-  TEST_ASSERT_EQUAL_INT32(2000, billing_inserted());
 }
 
-static void test_ceiling_blocks_a_coin_that_would_overshoot() {
+static void test_coin_that_overshoots_the_ceiling_is_credited() {
+  // F8 / WO-009: the coin is physically in, so it is credited. Refusing credit
+  // would keep P10 and record that it was never paid.
   billing_add_coin(COIN_P10);
   billing_add_coin(COIN_P5);   // 1500
-  billing_add_coin(COIN_P10);  // would be 2500, refused
-  TEST_ASSERT_EQUAL_INT32(1500, billing_credit());
+  billing_add_coin(COIN_P10);  // 2500, credited
+  TEST_ASSERT_EQUAL_INT32(2500, billing_credit());
+  TEST_ASSERT_EQUAL_INT32(2500, billing_inserted());
+  TEST_ASSERT_TRUE(billing_at_ceiling());
 
-  // ...but a coin that fits exactly is still accepted.
-  billing_add_coin(COIN_P5);
-  TEST_ASSERT_EQUAL_INT32(2000, billing_credit());
+  // The pour is still capped at the ceiling; the rest comes back as change.
+  TEST_ASSERT_EQUAL_INT32(MAX_TRANSACTION_ML, billing_max_selectable_ml());
+  TEST_ASSERT_FALSE(billing_can_select(MAX_TRANSACTION_ML + ML_PER_PESO));
 }
 
 // ---------------------------------------------------------------------------
@@ -221,13 +219,22 @@ static void test_worst_case_change() {
   // at all -- "finish without pour" from SELECTING, and the bottle-wait timeout
   // from AWAITING_BOTTLE -- so a P20 refund is reachable and a guard sized at
   // P19 lets the machine accept a transaction it cannot refund by one peso.
-  TEST_ASSERT_EQUAL_INT32(2000, billing_worst_case_change());
+  //
+  // F8 / WO-009: credit is unclamped, so P19 then a P20 is reachable -- P39.
+  TEST_ASSERT_EQUAL_INT32(3900, billing_worst_case_change());
 }
 
 static void test_worst_case_change_covers_a_no_pour_refund() {
   // The path that proves the point: ceiling in, nothing selected, user walks.
   billing_add_coin(COIN_P20);
   TEST_ASSERT_EQUAL_INT32(2000, billing_change_due());
+  TEST_ASSERT_TRUE(billing_change_due() <= billing_worst_case_change());
+
+  // And the true worst case: P19 in, then a P20, then a no-pour finish.
+  billing_reset();
+  for (int i = 0; i < 19; i++) billing_add_coin(COIN_P1);
+  billing_add_coin(COIN_P20);
+  TEST_ASSERT_EQUAL_INT32(3900, billing_change_due());
   TEST_ASSERT_TRUE(billing_change_due() <= billing_worst_case_change());
 }
 
@@ -321,7 +328,7 @@ int main(int, char **) {
   RUN_TEST(test_invalid_coins_are_worth_nothing);
   RUN_TEST(test_credit_accumulates);
   RUN_TEST(test_ceiling_is_enforced);
-  RUN_TEST(test_ceiling_blocks_a_coin_that_would_overshoot);
+  RUN_TEST(test_coin_that_overshoots_the_ceiling_is_credited);
 
   RUN_TEST(test_max_selectable_tracks_credit);
   RUN_TEST(test_price_is_a_lookup_not_a_measurement);

@@ -55,6 +55,12 @@ void coin_acceptor_window_release();
 
 bool coin_acceptor_is_inhibited();
 
+// True when no pulse train is arriving and no resolved coin is waiting to be
+// taken. A state change inhibits the acceptor and discards anything in flight,
+// so the state machine must not leave ACCEPTING on a button press while this
+// is false -- the coin is already in the machine.
+bool coin_acceptor_idle();
+
 // Consecutive over-COIN_PULSE_MAX trains seen. Resets on any train that
 // resolves to a real denomination.
 //

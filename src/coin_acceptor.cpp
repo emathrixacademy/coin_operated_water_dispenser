@@ -99,7 +99,11 @@ void coin_acceptor_update() {
   // read a 4-pulse P20 as a P1 followed by a P10.
   if ((uint32_t)(millis() - last) < COIN_PULSE_GAP_MS) return;
 
-  drain_pulses();
+  // Remove only the pulses just read. A pulse that landed after the snapshot
+  // is the start of the next coin; zeroing it would read that coin short.
+  noInterrupts();
+  s_pulses -= pulses;
+  interrupts();
 
   if (pulses > COIN_PULSE_MAX) {
     // A P20 at 4 pulses is the longest legitimate train. Beyond COIN_PULSE_MAX
@@ -133,6 +137,13 @@ void coin_acceptor_update() {
 
 bool coin_acceptor_available() {
   return s_available;
+}
+
+bool coin_acceptor_idle() {
+  noInterrupts();
+  const uint16_t pulses = s_pulses;
+  interrupts();
+  return pulses == 0 && !s_available;
 }
 
 coin_t coin_acceptor_take_coin() {

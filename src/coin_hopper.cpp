@@ -3,6 +3,7 @@
 #include "coin_hopper.h"
 #include "change_plan.h"
 #include "persist.h"
+#include "rtc.h"
 
 // Coin hoppers -- change payout, outlet counting, jam retry.
 //
@@ -87,11 +88,13 @@ static void finish(bool jammed) {
     // how much of the user's change reached the tray.
     history_entry_t e;
     memset(&e, 0, sizeof(e));
-    e.timestamp = millis() / 1000UL;
+    e.timestamp = rtc_timestamp();   // RTC epoch, or RTC_TIMESTAMP_INVALID -- never uptime
     e.tag = EVT_CHANGE_JAM;
     e.denomination = (uint8_t)((s_hopper == HOPPER_P1) ? COIN_P1 : COIN_P5);
-    e.amount_in = (money_t)s_commanded;   // commanded
-    e.change_out = (money_t)s_counted;    // actually counted out
+    // Both fields are centavos (types.h), not coin counts.
+    const money_t unit = (s_hopper == HOPPER_P1) ? COIN_VALUE_P1 : COIN_VALUE_P5;
+    e.amount_in = (money_t)s_commanded * unit;   // commanded
+    e.change_out = (money_t)s_counted * unit;    // actually counted out
     persist_history_add(&e);
   }
 

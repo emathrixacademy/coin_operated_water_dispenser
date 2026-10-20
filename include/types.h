@@ -132,7 +132,11 @@ enum event_tag_t : uint8_t {
   EVT_TRANSACTION = 0,   // normal completed transaction
   EVT_COIN_UNROUTED,     // power lost mid-diverter; coin credited, chamber assumed
   EVT_ADMIN_EDIT,        // inventory corrected by hand, before and after recorded
-  EVT_CHANGE_JAM,        // payout fell short; records commanded vs counted
+  // Payout fell short. Two entries per jam: one per leg from coin_hopper
+  // (denomination P1/P5, commanded vs counted, in centavos), and one per
+  // transaction from main.cpp (denomination COIN_NONE, amount_in = centavos
+  // still OWED to the user) -- F19, D-5.
+  EVT_CHANGE_JAM,
   EVT_FLOW_STALL,        // pour stalled; records volume delivered and refunded
   EVT_DAY_CLOSE,         // midnight rollover; the day's closing totals
   EVT_OVERPAY,           // hopper paid out more than commanded (SPEC 3.5)

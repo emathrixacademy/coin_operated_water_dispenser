@@ -643,6 +643,12 @@ typedef int32_t volume_t;   // millilitres
 
 #define EEPROM_MAGIC 0x5756u  // 'WV'
 
+// Layout version 5: the inventory record became a wear-levelled ring at
+// EEPROM_ADDR_INVENTORY_RING (at one address it was rewritten on every coin in
+// and every payout leg -- ~100-200 days of service), and the daily record
+// gained the day number it belongs to, so a machine switched off over midnight
+// still closes the previous day on its next boot.
+//
 // Layout version 4: the coin-box counters were renamed from profit_* to box_*
 // and extended to all five (P1, P5, P10, P20, unknown), and the routing mode is
 // stored with the inventory. The inventory record grew to 16 bytes, which moved
@@ -657,10 +663,13 @@ typedef int32_t volume_t;   // millilitres
 // fresh, the inventory reads zero and the machine locks on LOW CHANGE until an
 // operator loads the float -- SPEC 7.3. Misreading an old layout would report
 // inventory that never existed.
-#define EEPROM_LAYOUT_VERSION 4
+#define EEPROM_LAYOUT_VERSION 5
 
 #define EEPROM_ADDR_HEADER     0    // magic, version, checksum
-#define EEPROM_ADDR_INVENTORY  16   // hopper counts, chamber count
+// 16..39 held the single inventory record up to layout 4. Unused since layout
+// 5 moved inventory to EEPROM_ADDR_INVENTORY_RING; left empty rather than
+// reclaimed so the regions after it do not move.
+#define EEPROM_ADDR_INVENTORY  16
 
 // Persistent fault flags -- SPEC 6.1 and 7.1.
 //
@@ -691,8 +700,8 @@ typedef int32_t volume_t;   // millilitres
 
 #define EEPROM_ADDR_OPEN_TXN_RING 1024   // 64 slots x 28 B -> 1024..2816
 #define EEPROM_ADDR_INFLIGHT_RING 2816   // 64 slots x 12 B -> 2816..3584
-// 3584..4096 is FREE, deliberately. Headroom for a field nobody has thought of
-// yet is worth more than another year of wear margin (decisions.md D-2).
+#define EEPROM_ADDR_INVENTORY_RING 3584  // 20 slots x 24 B -> 3584..4064
+// 4064..4096 is FREE.
 
 // Open transaction. Written on open, on EVERY COIN, on selection, at every
 // 100 mL of a pour, at each bottle pause, on settle, at the start and end of
@@ -725,6 +734,16 @@ typedef int32_t volume_t;   // millilitres
 // the transaction ring because it is written twice per coin rather than once,
 // and each slot is small.
 #define INFLIGHT_RING_SLOTS 64
+
+// Coin inventory. Written on every accepted coin (diverter commit) and at the
+// end of every payout leg -- roughly 5-10 writes per transaction. At a single
+// address that was the shortest-lived record left in the machine:
+//
+//   100,000 / (10 w/txn x 100 txn/day) = 100 days at worst case
+//
+// With 20 slots: 2,000 days = 5.5 years worst case. Each slot is 24 B, so 20
+// is what fits in the space left above the in-flight ring.
+#define INVENTORY_RING_SLOTS 20
 
 // Daily counters: one write per transaction.
 //   8 x 100,000 / 100 per day = 8,000 days = 21 years. Already adequate.
