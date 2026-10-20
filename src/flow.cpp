@@ -32,6 +32,18 @@ static bool s_valve_open = false;
 // and it only means anything while the valve is open.
 static uint32_t s_last_flow_ms = 0;
 
+#if DISPENSE_TIMED
+// Timed mode: run time of the dispense pump since the last reset, banked at
+// each pump-off, plus the current run.
+static uint32_t s_run_ms = 0;
+static uint32_t s_on_since = 0;
+
+static volume_t timed_ml(uint32_t run_ms) {
+  // 2000 mL at even 60 s per 100 mL is 1.2e6 ms; x100 stays far below 2^32.
+  return (volume_t)((run_ms * 100UL) / (uint32_t)DISPENSE_MS_PER_100ML);
+}
+#endif
+
 static void flow_isr() {
   s_pulses++;
 }
@@ -51,12 +63,22 @@ static uint32_t read_pulses() {
 
 void flow_begin() {
   pinMode(PIN_FLOW_PULSE, INPUT_PULLUP);
+#if !DISPENSE_TIMED
   attachInterrupt(digitalPinToInterrupt(PIN_FLOW_PULSE), flow_isr, FALLING);
+#else
+  (void)flow_isr;
+#endif
   flow_reset();
 }
 
 void flow_update() {
   const uint32_t now = millis();
+
+#if DISPENSE_TIMED
+  if (s_valve_open) s_ml = timed_ml(s_run_ms + (now - s_on_since));
+  return;
+#endif
+
   const uint32_t pulses = read_pulses();
 
   if (pulses != s_converted) {
@@ -84,6 +106,10 @@ void flow_reset() {
   s_ml = 0;
   s_carry = 0;
   s_last_flow_ms = millis();
+#if DISPENSE_TIMED
+  s_run_ms = 0;
+  s_on_since = millis();
+#endif
 }
 
 volume_t flow_ml() {
@@ -95,6 +121,9 @@ uint32_t flow_pulses() {
 }
 
 bool flow_is_stalled() {
+#if DISPENSE_TIMED
+  return false;   // no sensor, nothing to detect a stall with -- see config.h
+#endif
   // Only meaningful while the valve is open. An idle machine with no pulses is
   // not a stall, it is a machine nobody is using.
   if (!s_valve_open) return false;
@@ -112,5 +141,18 @@ void flow_set_valve_open(bool open) {
   if (open && !s_valve_open) {
     s_last_flow_ms = millis();
   }
+#if DISPENSE_TIMED
+  // The clock follows the pump exactly: start on the on-edge, bank on the
+  // off-edge, so time with no bottle under the nozzle is never counted.
+  {
+    const uint32_t now = millis();
+    if (open && !s_valve_open) {
+      s_on_since = now;
+    } else if (!open && s_valve_open) {
+      s_run_ms += now - s_on_since;
+      s_ml = timed_ml(s_run_ms);
+    }
+  }
+#endif
   s_valve_open = open;
 }

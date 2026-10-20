@@ -507,6 +507,33 @@ typedef int32_t volume_t;   // millilitres
 #define ML_PER_PULSE_NUM 1000
 #define ML_PER_PULSE_DEN FLOW_PULSES_PER_LITRE
 
+// ---------------------------------------------------------------------------
+// TIMED DISPENSING -- for a unit with NO flow sensor fitted.
+//
+// 1 = volume is the time the dispense pump has run, at a fixed calibrated rate.
+//     The clock runs ONLY while the pump is on: lifting the bottle stops pump
+//     and clock together, and a replaced bottle resumes both, so a pour split
+//     across two containers still totals the paid volume.
+// 0 = volume is counted by the flow sensor on D3 (preferred when fitted).
+//
+// What timed mode gives up, and why the flow sensor is preferred:
+//   - Accuracy follows the pump. The rate drops as the supply voltage sags and
+//     as the cold tank level falls (less head on a submersible pump), so the
+//     same seconds pour less. Recalibrate if the pump, tubing or supply change.
+//   - NO STALL DETECTION. Nothing can tell that water stopped coming -- an
+//     empty tank or a dead pump still "pours" on the clock, and the user is
+//     charged for water they did not get. Keep the cold tank floats working.
+#ifndef DISPENSE_TIMED
+#define DISPENSE_TIMED 1
+#endif
+
+// Timed mode only: milliseconds the dispense pump takes to deliver 100 mL.
+// MEASURE IT: run the pump into a measuring cup for a known time (say 30 s),
+// then DISPENSE_MS_PER_100ML = 30000 * 100 / mL collected. Measure with the
+// cold tank at its mid float, the level it runs at most of the time.
+// 6000 (1 L/min) is a PLACEHOLDER.
+#define DISPENSE_MS_PER_100ML 6000
+
 // No flow pulses for this long while the valve is open = stall. Three physical
 // causes -- blocked line, dead sensor, closed upstream tap -- and all three need
 // a person, so the machine closes the valve, settles up, and locks rather than

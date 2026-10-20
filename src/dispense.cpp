@@ -44,10 +44,14 @@ static volume_t delivered_now() {
 
 // Close the valve and bank whatever the sensor counted during this leg.
 static void bank_and_close() {
-  if (s_valve_open || s_settling) {
+  const bool was_counting = s_valve_open || s_settling;
+  // Output off FIRST, then bank. In timed mode the off-edge is what closes
+  // the clock, so banking before it would drop the last few ms of the run.
+  valve_write(false);
+  if (was_counting) {
+    flow_update();
     s_banked += flow_ml();
   }
-  valve_write(false);
   s_settling = false;
 }
 
@@ -87,6 +91,11 @@ void dispense_update() {
         // uncounted water either.
         digitalWrite(PIN_VALVE, RELAY_OFF);
         s_valve_open = false;
+        // Tell flow now, not after the settle window: in timed mode the clock
+        // must stop with the pump, or the settle time is counted as water.
+        // (With a sensor this only disarms stall detection early, which is
+        // harmless -- the pulses of the tail are still counted.)
+        flow_set_valve_open(false);
         s_settling = true;
         s_settle_started = millis();
         s_status = DISPENSE_COMPLETE;
