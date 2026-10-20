@@ -27,6 +27,14 @@
 // hopper: the machine must not claim change stock it cannot verify.
 coin_dest_t coin_route(uint8_t mode, coin_t coin);
 
+// As coin_route(), with the hopper-full IR beams applied. In RECIRCULATE a P1
+// or P5 whose hopper is full goes to the coin box, counted under its own
+// denomination, so the machine keeps selling instead of jamming the hopper
+// chute. When the hopper drains below its beam, coins go back to it.
+//
+// The full flags never send a coin INTO a hopper, and COLLECT_ALL ignores them.
+coin_dest_t coin_route_full(uint8_t mode, coin_t coin, bool p1_full, bool p5_full);
+
 // Where to COUNT a coin whose routing was interrupted by a power cut -- SPEC
 // 3.3. Always the coin box, never a hopper, whatever it was headed for:
 // overstating hopper stock makes the machine promise change it does not hold.

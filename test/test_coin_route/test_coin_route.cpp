@@ -88,6 +88,48 @@ static void test_an_unknown_mode_value_routes_as_recirculate() {
 }
 
 // ---------------------------------------------------------------------------
+// Hopper-full IR beams
+// ---------------------------------------------------------------------------
+
+static void test_a_full_hopper_sends_its_coin_to_the_box() {
+  const uint8_t R = COIN_ROUTING_RECIRCULATE;
+  TEST_ASSERT_EQUAL(DEST_BOX_P1, coin_route_full(R, COIN_P1, true, false));
+  TEST_ASSERT_EQUAL(DEST_BOX_P5, coin_route_full(R, COIN_P5, false, true));
+}
+
+static void test_one_full_hopper_does_not_divert_the_other() {
+  const uint8_t R = COIN_ROUTING_RECIRCULATE;
+  TEST_ASSERT_EQUAL(DEST_P5_HOPPER, coin_route_full(R, COIN_P5, true, false));
+  TEST_ASSERT_EQUAL(DEST_P1_HOPPER, coin_route_full(R, COIN_P1, false, true));
+}
+
+static void test_full_flags_never_send_a_coin_into_a_hopper() {
+  // Whatever the beams say, P10, P20 and unknown coins stay in the box, and
+  // COLLECT_ALL stays all-box.
+  for (int f = 0; f < 4; f++) {
+    const bool p1 = (f & 1) != 0;
+    const bool p5 = (f & 2) != 0;
+    for (size_t i = 0; i < N_COINS; i++) {
+      const coin_t c = ALL_COINS[i];
+      TEST_ASSERT_FALSE(coin_dest_is_hopper(
+          coin_route_full(COIN_ROUTING_COLLECT_ALL, c, p1, p5)));
+      if (c != COIN_P1 && c != COIN_P5) {
+        TEST_ASSERT_EQUAL(coin_route(COIN_ROUTING_RECIRCULATE, c),
+                          coin_route_full(COIN_ROUTING_RECIRCULATE, c, p1, p5));
+      }
+    }
+  }
+}
+
+static void test_no_full_flags_matches_coin_route() {
+  for (size_t i = 0; i < N_COINS; i++) {
+    TEST_ASSERT_EQUAL(coin_route(COIN_ROUTING_RECIRCULATE, ALL_COINS[i]),
+                      coin_route_full(COIN_ROUTING_RECIRCULATE, ALL_COINS[i],
+                                      false, false));
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Power-loss reconciliation -- SPEC 3.3
 // ---------------------------------------------------------------------------
 
@@ -131,6 +173,11 @@ int main(int, char **) {
   RUN_TEST(test_collect_all_counts_each_denomination_separately);
   RUN_TEST(test_the_two_modes_agree_on_everything_except_p1_and_p5);
   RUN_TEST(test_an_unknown_mode_value_routes_as_recirculate);
+
+  RUN_TEST(test_a_full_hopper_sends_its_coin_to_the_box);
+  RUN_TEST(test_one_full_hopper_does_not_divert_the_other);
+  RUN_TEST(test_full_flags_never_send_a_coin_into_a_hopper);
+  RUN_TEST(test_no_full_flags_matches_coin_route);
 
   RUN_TEST(test_an_unrouted_coin_is_never_counted_into_a_hopper);
   RUN_TEST(test_an_unrouted_coin_keeps_its_denomination);

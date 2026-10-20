@@ -4,6 +4,7 @@
 #include "coin_acceptor.h"
 #include "coin_route.h"
 #include "persist.h"
+#include "coin_level.h"
 
 // Coin diverter -- servo routing and the per-coin lockout window.
 //
@@ -34,6 +35,12 @@ static enum : uint8_t {
 
 static uint32_t s_started_ms = 0;
 static coin_t s_coin = COIN_NONE;
+
+// Where the coin in flight was SENT. Decided once, when the servo moved, and
+// counted there on settle. Re-asking coin_destination() at settle time would
+// count it wherever a hopper-full beam says NOW -- which can differ from where
+// the servo actually pointed 900 ms earlier.
+static coin_dest_t s_dest = DEST_BOX_UNKNOWN;
 
 // Three physical positions only. Every box destination is one chamber and
 // therefore one angle -- the denomination split is in the books, not in the
@@ -78,7 +85,7 @@ void coin_diverter_update() {
   // 13 reconciliation possible: a power cut before this point leaves an
   // in-flight marker and no inventory change.
   // ---------------------------------------------------------------------
-  persist_inventory_add(coin_destination(s_coin), +1);
+  persist_inventory_add(s_dest, +1);
   persist_clear_coin_in_flight();
 
   s_state = DIV_IDLE;
@@ -132,7 +139,8 @@ void coin_diverter_route(coin_t coin) {
   persist_mark_coin_in_flight(coin);
 
   s_coin = coin;
-  s_servo.write(angle_for(coin_destination(coin)));
+  s_dest = coin_destination(coin);
+  s_servo.write(angle_for(s_dest));
   s_started_ms = millis();
   s_state = DIV_MOVING;
 }
@@ -146,5 +154,7 @@ bool coin_diverter_is_busy() {
 }
 
 coin_dest_t coin_destination(coin_t coin) {
-  return coin_route(COIN_ROUTING_MODE, coin);
+  return coin_route_full(COIN_ROUTING_MODE, coin,
+                         coin_level_hopper_full(HOPPER_P1),
+                         coin_level_hopper_full(HOPPER_P5));
 }

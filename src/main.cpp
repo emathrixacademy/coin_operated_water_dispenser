@@ -6,6 +6,7 @@
 #include "coin_acceptor.h"
 #include "coin_diverter.h"
 #include "coin_hopper.h"
+#include "coin_level.h"
 #include "flow.h"
 #include "bottle.h"
 #include "water_level.h"
@@ -75,7 +76,8 @@ enum trigger_t : uint8_t {
   TRIG_FAULT_RAISED_WHILE_IDLE,
   TRIG_THANKYOU_DONE,
   TRIG_FAULT_CLEARED,
-  TRIG_ADMIN_EXIT
+  TRIG_ADMIN_EXIT,
+  TRIG_STORAGE_FULL
 };
 
 // ---------------------------------------------------------------------------
@@ -356,6 +358,7 @@ static const char *trigger_name(trigger_t t) {
     case TRIG_THANKYOU_DONE:           return "thank you dismissed";
     case TRIG_FAULT_CLEARED:           return "fault cleared";
     case TRIG_ADMIN_EXIT:              return "admin exit";
+    case TRIG_STORAGE_FULL:            return "coin box full";
     default:                           return "?";
   }
 }
@@ -591,6 +594,14 @@ static void state_update(state_t s) {
         break;
       }
 
+      // Coin box full: nowhere left for a P10 or P20 to go. Refuse money
+      // before the first coin, like LOW CHANGE below.
+      if (coin_level_box_full()) {
+        faults_raise(FAULT_STORAGE_FULL);
+        transition_to(STATE_FAULT, TRIG_FAULT_RAISED_WHILE_IDLE);
+        break;
+      }
+
       // ---------------------------------------------------------------
       // THE LOW CHANGE GATE -- SPEC 6.1.1.
       //
@@ -623,6 +634,16 @@ static void state_update(state_t s) {
       // Further coins are handled here rather than by re-entering the state --
       // re-entry would re-run on_enter() and reopen the transaction record.
       accept_pending_coin();
+
+      // The box filled while this user was paying. Take no more coins, but let
+      // them spend what is already in (SPEC 9 invariant 8): latch, and move on
+      // once nothing is arriving so the coin in flight is still credited.
+      if (coin_level_box_full() && coin_acceptor_idle() &&
+          !coin_diverter_is_busy()) {
+        faults_latch(FAULT_STORAGE_FULL);
+        transition_to(STATE_SELECTING, TRIG_STORAGE_FULL);
+        break;
+      }
 
       if (billing_at_ceiling()) {
         // The acceptor is inhibited by the transition itself: SELECTING is not
@@ -871,6 +892,11 @@ static void state_update(state_t s) {
 
     // -------------------------------------------------------------------
     case STATE_FAULT:
+      // COIN STORAGE FULL is transient: it clears when the box is emptied and
+      // the beam is clear again.
+      if (!coin_level_box_full()) {
+        faults_clear(FAULT_STORAGE_FULL);
+      }
       // TODO(M5-C): transient faults clear themselves in faults_update();
       // persistent ones need an Admin clear, which is why FAULT -> ADMIN
       // exists.
@@ -940,6 +966,7 @@ void setup() {
   boot_step(F("rtc"));           rtc_begin();
   boot_step(F("diverter"));      coin_diverter_begin();
   boot_step(F("hopper"));        coin_hopper_begin();
+  boot_step(F("coin level"));    coin_level_begin();
   boot_step(F("flow"));          flow_begin();
   boot_step(F("bottle"));        bottle_begin();
   boot_step(F("water level"));   water_level_begin();
@@ -996,6 +1023,7 @@ void loop() {
   coin_acceptor_update();
   coin_diverter_update();
   coin_hopper_update();
+  coin_level_update();
   flow_update();
   bottle_update();
   water_level_update();

@@ -110,7 +110,9 @@ rather than as a phantom coin or a phantom bottle.
 | Gallon bay float | D26 | INPUT_PULLUP | LOW = empty | **Safety lockout.** Inhibits the pump unconditionally |
 | ₱1 hopper outlet count | D27 | INPUT_PULLUP | Falling edge | Polled. Confirms coins actually left |
 | ₱5 hopper outlet count | D28 | INPUT_PULLUP | Falling edge | Polled. Confirms coins actually left |
-| Profit chamber full | D29 | INPUT_PULLUP | LOW = beam broken | IR break-beam at the fill line. Locks the machine |
+| Profit chamber full | D29 | INPUT_PULLUP | LOW = beam broken | IR break-beam at the fill line. Locks the machine (COIN STORAGE FULL), clears when emptied |
+| ₱1 hopper full | D41 | INPUT_PULLUP | LOW = full | IR at the top of the ₱1 hopper. While full, ₱1 coins are routed to the coin box |
+| ₱5 hopper full | D42 | INPUT_PULLUP | LOW = full | IR at the top of the ₱5 hopper. While full, ₱5 coins are routed to the coin box |
 
 ### Profit chamber sensor — IR break-beam, not a microswitch
 

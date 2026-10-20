@@ -115,6 +115,10 @@ typedef int32_t volume_t;   // millilitres
 #define PIN_HOPPER_P5_COUNT 28  // Falling edge, polled. Confirms a coin left
 #define PIN_CHAMBER_FULL    29  // IR break-beam at fill line. LOW = beam broken = full
 #define PIN_CONFIRM_BTN     40  // LOW = pressed. Advances ACCEPTING -> SELECTING
+// IR at the top of each change hopper. LOW = full. A full hopper's coins are
+// routed to the coin box instead -- see coin_level.h and coin_route.h.
+#define PIN_HOPPER_P1_FULL  41
+#define PIN_HOPPER_P5_FULL  42
 
 // ---------------------------------------------------------------------------
 // Pin map -- I2C, real-time clock
@@ -488,9 +492,13 @@ typedef int32_t volume_t;   // millilitres
 // bay is also refilled by hand, which sloshes far more than the tank ever does.
 #define FLOAT_GALLON_DEBOUNCE_MS 500
 
-// Profit chamber IR beam debounce -- SPEC 1.2. Coins tumbling past the beam
-// break it momentarily; only a stack that sits at the fill line is "full".
-#define CHAMBER_DEBOUNCE_MS 500
+// Coin level IR debounce -- SPEC 1.2. Applies to the coin box beam and the two
+// hopper-full beams. Coins tumbling past a beam break it for a few ms; only a
+// stack that sits at the beam is "full". Much shorter and a falling coin reads
+// as full and sends the next P1/P5 to the box for no reason (harmless, but it
+// starves the change float). Much longer and a coin can still be sent to a
+// hopper that has just filled.
+#define COIN_LEVEL_DEBOUNCE_MS 500
 
 // Minimum time the pump stays off after stopping, before it may start again.
 // Back-to-back starts on a diaphragm pump shorten its life; this enforces a

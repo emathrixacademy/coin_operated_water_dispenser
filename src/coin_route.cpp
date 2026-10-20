@@ -18,6 +18,10 @@ static coin_dest_t box_for(coin_t coin) {
 }
 
 coin_dest_t coin_route(uint8_t mode, coin_t coin) {
+  return coin_route_full(mode, coin, false, false);
+}
+
+coin_dest_t coin_route_full(uint8_t mode, coin_t coin, bool p1_full, bool p5_full) {
   if (mode == COIN_ROUTING_COLLECT_ALL) {
     return box_for(coin);
   }
@@ -26,8 +30,8 @@ coin_dest_t coin_route(uint8_t mode, coin_t coin) {
   // through to the full table is the safe reading of an unknown mode: it is
   // the configuration the cabinet is ultimately built for.
   switch (coin) {
-    case COIN_P1:  return DEST_P1_HOPPER;
-    case COIN_P5:  return DEST_P5_HOPPER;
+    case COIN_P1:  return p1_full ? box_for(coin) : DEST_P1_HOPPER;
+    case COIN_P5:  return p5_full ? box_for(coin) : DEST_P5_HOPPER;
     default:       return box_for(coin);
   }
 }
