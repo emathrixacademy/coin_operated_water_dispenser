@@ -77,10 +77,14 @@ typedef int32_t volume_t;   // millilitres
 // acceptor's pulse assignment is changed in service, change it here in the same
 // visit or the machine will credit the wrong amount.
 
+// Allan universal coinslot as configured on this unit: one pulse per peso.
+// (1/2/3/4 identifies a coin faster -- a P20 is 4 pulses instead of 20 -- and
+// gives the servos more time before the coin reaches the gate. If the coinslot
+// is reprogrammed, change these in the same visit.)
 #define COIN_PULSES_P1  1
-#define COIN_PULSES_P5  2
-#define COIN_PULSES_P10 3
-#define COIN_PULSES_P20 4
+#define COIN_PULSES_P5  5
+#define COIN_PULSES_P10 10
+#define COIN_PULSES_P20 20
 
 #define COIN_VALUE_P1  (1  * CENTAVOS_PER_PESO)
 #define COIN_VALUE_P5  (5  * CENTAVOS_PER_PESO)
@@ -235,18 +239,20 @@ typedef int32_t volume_t;   // millilitres
 // long. The acceptor emits its pulses in a burst; this gap terminates the burst
 // so update() knows the count is final.
 //
-// Too short and a 4-pulse P20 is read as two coins -- a P20 credited as P10 and
+// Too short and a 20-pulse P20 is read as two coins -- a P20 credited as P10 and
 // P10, or worse, as two separate coins that each trigger a diverter move.
 // Too long and the machine feels sluggish between coins. 200 ms is comfortably
 // wider than the acceptor's inter-pulse gap and far narrower than the fastest a
 // human can insert two coins.
 #define COIN_PULSE_GAP_MS 200
 
-// Sanity ceiling on a pulse train. A P20 at 4 pulses is the longest legitimate
-// train, so more than this in one burst is noise on the line -- motor noise from
-// the pump or a hopper coupling into D2 -- or a stuck acceptor output. Discard
-// the train rather than crediting a denomination that does not exist.
-#define COIN_PULSE_MAX 8
+// Sanity ceiling on a pulse train. A P20 at COIN_PULSES_P20 is the longest
+// legitimate train, so clearly more than that in one burst is noise on the line
+// -- motor noise from the pump or a hopper coupling into D2 -- or a stuck
+// acceptor output. Discard the train rather than crediting a denomination that
+// does not exist. Margin above P20 so one noise spike on a real P20 is not
+// thrown away (it resolves as unknown and is credited the minimum instead).
+#define COIN_PULSE_MAX (COIN_PULSES_P20 + 4)
 
 // ...but do not discard forever. A stuck acceptor output line that silently
 // swallows every coin is indistinguishable from a dead acceptor from the user's

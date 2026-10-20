@@ -96,7 +96,7 @@ void coin_acceptor_update() {
   if (pulses == 0) return;
 
   // Wait for the burst to go idle before interpreting it. Resolving early would
-  // read a 4-pulse P20 as a P1 followed by a P10.
+  // read a 20-pulse P20 as a P10 followed by a P10.
   if ((uint32_t)(millis() - last) < COIN_PULSE_GAP_MS) return;
 
   // Remove only the pulses just read. A pulse that landed after the snapshot
@@ -106,7 +106,7 @@ void coin_acceptor_update() {
   interrupts();
 
   if (pulses > COIN_PULSE_MAX) {
-    // A P20 at 4 pulses is the longest legitimate train. Beyond COIN_PULSE_MAX
+    // A P20 at COIN_PULSES_P20 is the longest legitimate train. Beyond COIN_PULSE_MAX
     // this is noise or a stuck output line -- credit nothing.
     s_discarded++;
     if (s_overmax_streak < 0xFF) s_overmax_streak++;
