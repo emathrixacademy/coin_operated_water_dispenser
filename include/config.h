@@ -175,14 +175,31 @@ typedef int32_t volume_t;   // millilitres
 // The Servo library claims Timer5 first on the Mega, which is why nothing in
 // this map uses D44-D46.
 
-#define PIN_DIVERTER_SERVO 9
+// Two MG996R servos in series on the coin path:
+//
+//   GATE (D10)    first. CLOSED for P10, P20 and unknown coins, which drop
+//                 straight to the coin box. OPEN for P1 and P5, which go on to
+//                 the sorter.
+//   SORTER (D9)   second. Points a P1 or P5 at its hopper, or at the coin box
+//                 when that hopper's IR beam says it is full.
+//
+// MG996R stall current is ~2.5 A EACH. Feed both from a 5-6 V rail rated for at
+// least 5 A, star-grounded with the Mega -- never from the Mega's 5 V pin.
+#define PIN_DIVERTER_SERVO 9    // sorter
+#define PIN_GATE_SERVO     10   // gate
 
-// Diverter positions in degrees. MEASURE THESE ON THE ASSEMBLED CHUTE.
+// Sorter positions in degrees. MEASURE THESE ON THE ASSEMBLED CHUTE.
 // These are starting values, not correct values. A diverter a few degrees off
 // drops coins on the divider wall instead of into a chamber.
 #define DIVERTER_ANGLE_P1_HOPPER 30
 #define DIVERTER_ANGLE_P5_HOPPER 90
 #define DIVERTER_ANGLE_PROFIT    150
+
+// Gate positions in degrees. Starting values -- MEASURE on the assembled gate.
+// CLOSED is also the power-up position, so a coin that arrives before the
+// first route lands in the box (fail toward understating hopper stock).
+#define GATE_ANGLE_OPEN   0
+#define GATE_ANGLE_CLOSED 90
 
 // ---------------------------------------------------------------------------
 // Serial
