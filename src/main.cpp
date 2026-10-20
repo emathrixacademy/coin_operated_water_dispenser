@@ -998,7 +998,27 @@ void setup() {
 
   s_state = STATE_BOOT;
   s_state_since = millis();
+
+#ifdef BENCH_COIN_TEST
+  // Bench coin-path test: the acceptor is enabled regardless of faults so the
+  // coinslot, gates and hopper IR can be exercised before Admin exists.
+  Serial.println(F("[bench] COIN PATH TEST -- no billing, no water. NOT FOR SALE."));
+  coin_acceptor_uninhibit();
+#endif
 }
+
+#ifdef BENCH_COIN_TEST
+// Takes each identified coin and routes it through the gates, nothing else. No
+// credit, no state machine. Inventory counts DO change as coins land, as they
+// would in service -- reset them in Admin before the unit takes money.
+static void bench_update() {
+  if (coin_diverter_is_busy()) return;
+  if (!coin_acceptor_available()) return;
+  const coin_t c = coin_acceptor_take_coin();
+  if (c == COIN_NONE) return;
+  coin_diverter_route(c);
+}
+#endif
 
 void loop() {
 #ifdef DEBUG
@@ -1032,7 +1052,12 @@ void loop() {
   faults_update();
   confirm_update();
 
+#ifdef BENCH_COIN_TEST
+  (void)state_update;   // the sale path is compiled, just not run
+  bench_update();
+#else
   state_update(s_state);
+#endif
 
 #ifdef DEBUG
   {

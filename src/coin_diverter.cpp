@@ -171,6 +171,21 @@ void coin_diverter_route(coin_t coin) {
   gates_for(s_dest);
   s_started_ms = millis();
   s_state = DIV_ROUTING;
+
+#ifdef DEBUG
+  Serial.print(F("[gate] "));
+  Serial.print(coin == COIN_P1  ? F("P1")  : coin == COIN_P5  ? F("P5")
+             : coin == COIN_P10 ? F("P10") : coin == COIN_P20 ? F("P20")
+                                           : F("unknown"));
+  Serial.print(F(" -> "));
+  Serial.print(s_dest == DEST_P5_HOPPER ? F("P5 hopper (gate1 CLOSED)")
+             : s_dest == DEST_P1_HOPPER ? F("P1 hopper (gate2 CLOSED)")
+                                        : F("coin box (both OPEN)"));
+  Serial.print(F("  P1full="));
+  Serial.print(coin_level_hopper_full(HOPPER_P1) ? 1 : 0);
+  Serial.print(F(" P5full="));
+  Serial.println(coin_level_hopper_full(HOPPER_P5) ? 1 : 0);
+#endif
 }
 
 bool coin_diverter_is_settled() {

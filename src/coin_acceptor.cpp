@@ -9,6 +9,11 @@
 
 static volatile uint16_t s_pulses = 0;
 static volatile uint32_t s_last_pulse_ms = 0;
+#ifdef DEBUG
+// Bench timing only: when the current train began, so the log can show how
+// long the coinslot takes to say what a coin was. Never in a money build.
+static volatile uint32_t s_first_pulse_ms = 0;
+#endif
 
 // Two independent inhibit sources. The physical line is asserted if EITHER is
 // set. Tracked separately rather than counted so that releasing the diverter
@@ -23,6 +28,9 @@ static uint8_t s_overmax_streak = 0;
 static uint16_t s_discarded = 0;
 
 static void coin_isr() {
+#ifdef DEBUG
+  if (s_pulses == 0) s_first_pulse_ms = millis();
+#endif
   s_pulses++;
   // millis() does not advance inside an ISR, but reading it is safe and gives
   // the time the burst was last seen, which is all the gap timer needs.
@@ -91,6 +99,9 @@ void coin_acceptor_update() {
   noInterrupts();
   const uint16_t pulses = s_pulses;
   const uint32_t last = s_last_pulse_ms;
+#ifdef DEBUG
+  const uint32_t first = s_first_pulse_ms;
+#endif
   interrupts();
 
   if (pulses == 0) return;
@@ -104,6 +115,29 @@ void coin_acceptor_update() {
   noInterrupts();
   s_pulses -= pulses;
   interrupts();
+
+#ifdef DEBUG
+  // Coin timing for bench calibration. "train" is first pulse to last; "ready"
+  // is first pulse to now, i.e. how long after the coin started reporting the
+  // gates can begin to move. Compare against how long the coin takes to reach
+  // gate 1.
+  {
+    const uint32_t now = millis();
+    Serial.print(F("[coin] pulses="));
+    Serial.print(pulses);
+    Serial.print(F(" train="));
+    Serial.print(last - first);
+    Serial.print(F("ms"));
+    if (pulses > 1) {
+      Serial.print(F(" avg_period="));
+      Serial.print((last - first) / (uint32_t)(pulses - 1));
+      Serial.print(F("ms"));
+    }
+    Serial.print(F(" ready="));
+    Serial.print(now - first);
+    Serial.println(F("ms"));
+  }
+#endif
 
   if (pulses > COIN_PULSE_MAX) {
     // A P20 at COIN_PULSES_P20 is the longest legitimate train. Beyond COIN_PULSE_MAX
