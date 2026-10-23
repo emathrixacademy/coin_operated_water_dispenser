@@ -1,0 +1,473 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0"><title>Water Vendo Wiring</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Mono:wght@400;600&family=Archivo+Narrow:wght@600;700&display=swap">
+<style>
+/* Layout: one column. Overview drawing first (Mega in the middle, every part named), then one card per physical component with its own pin-to-pin wiring, then notes. */
+:root {
+  --bg: #f6f7f5;
+  --panel: #ffffff;
+  --fg: #1d2421;
+  --muted: #5d6963;
+  --line: #c9d0cb;
+  --board: #0f6e74;       /* Arduino Mega teal */
+  --relay: #1d4f9c;       /* blue relay board */
+  --w-coin: #b0721a;
+  --w-in: #2f6fd6;
+  --w-out: #c8372d;
+  --w-servo: #7a4cc2;
+  --w-ser: #138a6b;
+  --w-pwr: #d23b3b;
+  --w-gnd: #2a2f2c;
+  --chip-fg: #ffffff;
+  --display: "Archivo Narrow", "Arial Narrow", sans-serif;
+  --body: "IBM Plex Sans", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #131816; --panel: #1b2220; --fg: #e4ebe7; --muted: #9aa8a1; --line: #34403b;
+    --board: #1a929a; --relay: #3a72c8; --w-coin: #e0a54a; --w-in: #6ea2ff; --w-out: #ff6b5e;
+    --w-servo: #b48cf0; --w-ser: #3cc79f; --w-pwr: #ff6b6b; --w-gnd: #c4ccc8; --chip-fg: #ffffff;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #131816; --panel: #1b2220; --fg: #e4ebe7; --muted: #9aa8a1; --line: #34403b;
+  --board: #1a929a; --relay: #3a72c8; --w-coin: #e0a54a; --w-in: #6ea2ff; --w-out: #ff6b5e;
+  --w-servo: #b48cf0; --w-ser: #3cc79f; --w-pwr: #ff6b6b; --w-gnd: #c4ccc8; --chip-fg: #ffffff;
+  color-scheme: dark;
+}
+body { background: var(--bg); color: var(--fg); font-family: var(--body); line-height: 1.5; }
+.wrap { max-width: 1100px; margin: 0 auto; padding-block: 28px 48px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; flex-direction: column; gap: 28px; }
+h1 { font-family: var(--display); font-size: 2.1rem; line-height: 1.1; margin: 0; text-wrap: balance; letter-spacing: .01em; }
+h2 { font-family: var(--display); font-size: 1.35rem; margin: 0 0 10px; text-wrap: balance; }
+.lede { color: var(--muted); max-width: 70ch; margin: 6px 0 0; }
+.drawing { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow-x: auto; }
+.drawing svg { display: block; min-width: 900px; width: 100%; height: auto; }
+code { font-family: var(--mono); font-size: .9em; }
+.tag { font-family: var(--mono); font-size: .75rem; color: var(--muted); }
+
+/* Component cards */
+.groupname { font-family: var(--display); font-size: 1.05rem; color: var(--muted); letter-spacing: .04em; text-transform: uppercase; margin: 8px 0 0; }
+.comps { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
+.comp { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 10px; min-width: 0; break-inside: avoid; }
+.comp-h { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 10px; align-items: baseline; }
+.ref { grid-row: span 2; font-family: var(--mono); font-weight: 600; font-size: .8rem; color: var(--chip-fg); background: var(--c, var(--muted)); padding: 2px 7px; border-radius: 5px; align-self: start; margin-top: 3px; }
+.name { font-family: var(--display); font-weight: 700; font-size: 1.2rem; line-height: 1.15; }
+.model { font-size: .82rem; color: var(--muted); }
+.role { font-size: .88rem; margin: 0; }
+.pins { display: flex; flex-direction: column; gap: 5px; }
+.pr { display: grid; grid-template-columns: 5.6em 26px minmax(0, 1fr); align-items: center; gap: 6px; font-size: .86rem; }
+.cp { font-family: var(--mono); font-weight: 600; font-size: .78rem; border: 1.5px solid var(--c, var(--line)); color: var(--fg); border-radius: 5px; padding: 1px 6px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wl { height: 0; border-top: 2.5px solid var(--c, var(--line)); }
+.dst { min-width: 0; }
+.dst b { font-family: var(--mono); font-weight: 600; font-size: .82rem; background: var(--c, var(--line)); color: var(--chip-fg); padding: 1px 7px; border-radius: 5px; margin-right: 6px; white-space: nowrap; }
+.dst span { color: var(--muted); font-size: .8rem; }
+.k-coin { --c: var(--w-coin); } .k-in { --c: var(--w-in); } .k-out { --c: var(--w-out); }
+.k-servo { --c: var(--w-servo); } .k-ser { --c: var(--w-ser); } .k-pwr { --c: var(--w-pwr); } .k-gnd { --c: var(--w-gnd); }
+.k-gnd .dst b, .dst b.k-gnd { color: var(--bg); }
+.k-nc { --c: var(--line); }
+.k-nc .dst b { color: var(--muted); background: transparent; border: 1.5px dashed var(--line); }
+.opt { border-style: dashed; }
+.tip { font-size: .8rem; color: var(--muted); margin: 0; }
+
+.notes { display: flex; flex-direction: column; gap: 10px; max-width: 76ch; margin: 0; padding-left: 20px; }
+.notes strong { color: var(--fg); }
+
+@media print {
+  :root, :root[data-theme="dark"] {
+    --bg: #ffffff; --panel: #ffffff; --fg: #000000; --muted: #444b47; --line: #b9c1bc;
+    --board: #0f6e74; --relay: #1d4f9c; --w-coin: #b0721a; --w-in: #2f6fd6; --w-out: #c8372d;
+    --w-servo: #7a4cc2; --w-ser: #138a6b; --w-pwr: #d23b3b; --w-gnd: #2a2f2c; --chip-fg: #ffffff;
+    color-scheme: light;
+  }
+  @page { size: A4 landscape; margin: 9mm; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .wrap { max-width: none; padding: 0; gap: 14px; }
+  .drawing { border: none; overflow: visible; }
+  .drawing svg { min-width: 0; max-height: 180mm; }
+  .comps { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .comp { padding: 10px; gap: 7px; }
+  .pagebreak { break-before: page; }
+  section { break-inside: auto; }
+}
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="tag">EMX-2026-WATERVENDO-01 · Arduino Mega 2560 · firmware commit 3ae768a</div>
+    <h1>Water vendo wiring</h1>
+    <p class="lede">Kung saang pin ng Arduino Mega ikakabit ang bawat wire, kada component. Ang code sa itaas ng bawat card (halimbawa <code>IR1</code>) ay pareho sa nakasulat sa drawing. Lahat ng pin ay galing sa <code>config.h</code> ng firmware na naka-flash.</p>
+    <p class="lede"><strong>Ang numero ng pin dito ay pareho sa nakaprint sa Mega:</strong> ang 22 ay ang pin na may nakasulat na 22 sa header na DIGITAL. Ang mga pin na may "A" (A0 hanggang A15, header na ANALOG IN) ay hindi ginagamit.</p>
+  </header>
+
+  <div class="drawing" role="img" aria-label="Wiring diagram: Arduino Mega sa gitna, mga sensor sa kaliwa, relay, servo at LCD sa kanan, power sa ibaba">
+    <svg viewBox="0 0 1100 900" xmlns="http://www.w3.org/2000/svg" font-family="IBM Plex Mono, Consolas, monospace" font-size="12">
+      <rect x="430" y="60" width="240" height="700" rx="10" fill="var(--board)"/>
+      <text x="550" y="90" text-anchor="middle" fill="var(--chip-fg)" font-family="Archivo Narrow, sans-serif" font-size="22" font-weight="700">ARDUINO MEGA 2560</text>
+      <text x="550" y="108" text-anchor="middle" fill="var(--chip-fg)" font-size="11">USB sa PC / 12V sa DC jack</text>
+      <g fill="var(--chip-fg)" font-size="13" font-weight="600">
+        <text x="442" y="144">2</text>
+        <text x="442" y="214">22</text>
+        <text x="442" y="268">24</text><text x="442" y="298">25</text><text x="442" y="328">26</text>
+        <text x="442" y="388">27</text><text x="442" y="418">28</text>
+        <text x="442" y="478">29</text>
+        <text x="442" y="538">41</text><text x="442" y="568">42</text>
+        <text x="442" y="628">40</text>
+        <text x="658" y="134" text-anchor="end">9</text><text x="658" y="194" text-anchor="end">10</text>
+        <text x="658" y="268" text-anchor="end">31</text><text x="658" y="298" text-anchor="end">32</text>
+        <text x="658" y="328" text-anchor="end">33</text><text x="658" y="358" text-anchor="end">34</text>
+        <text x="658" y="438" text-anchor="end">35</text>
+        <text x="658" y="498" text-anchor="end">16 TX2</text><text x="658" y="528" text-anchor="end">17 RX2</text>
+        <text x="658" y="598" text-anchor="end">20 SDA</text><text x="658" y="628" text-anchor="end">21 SCL</text>
+        <text x="442" y="708">5V</text><text x="442" y="738">GND</text>
+        <text x="658" y="708" text-anchor="end">VIN</text><text x="658" y="738" text-anchor="end">GND</text>
+      </g>
+
+      <rect x="30" y="112" width="230" height="56" rx="8" fill="var(--panel)" stroke="var(--w-coin)" stroke-width="2"/>
+      <text x="145" y="134" text-anchor="middle" fill="var(--fg)" font-size="13" font-weight="600">CS1 Allan Coinslot · COIN</text>
+      <text x="145" y="152" text-anchor="middle" fill="var(--muted)" font-size="11">isang wire lang → pin 2</text>
+      <path d="M260 140 H436" stroke="var(--w-coin)" stroke-width="2.5" fill="none"/>
+
+      <rect x="30" y="190" width="230" height="40" rx="6" fill="var(--panel)" stroke="var(--w-in)" stroke-width="2"/>
+      <text x="145" y="215" text-anchor="middle" fill="var(--fg)" font-size="12" font-weight="600">IR1 FC-51 · baso / bote</text>
+      <path d="M260 210 H436" stroke="var(--w-in)" stroke-width="2.5" fill="none"/>
+
+      <rect x="30" y="246" width="230" height="96" rx="8" fill="var(--panel)" stroke="var(--w-in)" stroke-width="2"/>
+      <g fill="var(--fg)" font-size="12"><text x="44" y="268">FL1 Float · tank gitna</text><text x="44" y="298">FL2 Float · tank itaas</text><text x="44" y="328">FL3 Float · gallon ubos</text></g>
+      <g stroke="var(--w-in)" stroke-width="2.5" fill="none"><path d="M260 264 H436"/><path d="M260 294 H436"/><path d="M260 324 H436"/></g>
+
+      <rect x="30" y="364" width="230" height="66" rx="8" fill="var(--panel)" stroke="var(--w-in)" stroke-width="2"/>
+      <g fill="var(--fg)" font-size="12"><text x="44" y="388">CT1 Bilang sukli ₱1 · OUT</text><text x="44" y="418">CT2 Bilang sukli ₱5 · OUT</text></g>
+      <g stroke="var(--w-in)" stroke-width="2.5" fill="none"><path d="M260 384 H436"/><path d="M260 414 H436"/></g>
+
+      <rect x="30" y="454" width="230" height="40" rx="6" fill="var(--panel)" stroke="var(--w-in)" stroke-width="2"/>
+      <text x="145" y="479" text-anchor="middle" fill="var(--fg)" font-size="12" font-weight="600">IR4 FC-51 · malaking lagayan</text>
+      <path d="M260 474 H436" stroke="var(--w-in)" stroke-width="2.5" fill="none"/>
+
+      <rect x="30" y="514" width="230" height="66" rx="8" fill="var(--panel)" stroke="var(--w-in)" stroke-width="2"/>
+      <g fill="var(--fg)" font-size="12"><text x="44" y="538">IR2 FC-51 · ₱1 hopper puno</text><text x="44" y="568">IR3 FC-51 · ₱5 hopper puno</text></g>
+      <g stroke="var(--w-in)" stroke-width="2.5" fill="none"><path d="M260 534 H436"/><path d="M260 564 H436"/></g>
+
+      <rect x="30" y="604" width="230" height="40" rx="6" fill="var(--panel)" stroke="var(--w-in)" stroke-width="2"/>
+      <text x="145" y="629" text-anchor="middle" fill="var(--fg)" font-size="12" font-weight="600">SW1 Push button · CONFIRM</text>
+      <path d="M260 624 H436" stroke="var(--w-in)" stroke-width="2.5" fill="none"/>
+
+      <rect x="840" y="104" width="230" height="50" rx="8" fill="var(--panel)" stroke="var(--w-servo)" stroke-width="2"/>
+      <text x="955" y="125" text-anchor="middle" fill="var(--fg)" font-size="12" font-weight="600">M1 MG996R · gate ₱5</text>
+      <text x="955" y="143" text-anchor="middle" fill="var(--muted)" font-size="11">unahan · signal (orange)</text>
+      <path d="M664 130 H840" stroke="var(--w-servo)" stroke-width="2.5" fill="none"/>
+      <rect x="840" y="164" width="230" height="50" rx="8" fill="var(--panel)" stroke="var(--w-servo)" stroke-width="2"/>
+      <text x="955" y="185" text-anchor="middle" fill="var(--fg)" font-size="12" font-weight="600">M2 MG996R · gate ₱1</text>
+      <text x="955" y="203" text-anchor="middle" fill="var(--muted)" font-size="11">pangalawa · signal (orange)</text>
+      <path d="M664 190 H840" stroke="var(--w-servo)" stroke-width="2.5" fill="none"/>
+
+      <rect x="840" y="240" width="230" height="140" rx="8" fill="var(--relay)"/>
+      <text x="955" y="258" text-anchor="middle" fill="#fff" font-family="Archivo Narrow, sans-serif" font-size="15" font-weight="700">K1 RELAY MODULE 4CH 5V</text>
+      <g fill="#fff" font-size="11.5">
+        <text x="852" y="282">IN1 → P1 pump palabas</text>
+        <text x="852" y="312">IN2 → P2 pump pagpuno</text>
+        <text x="852" y="342">IN3 → H1 motor sukli ₱1</text>
+        <text x="852" y="372">IN4 → H2 motor sukli ₱5</text>
+      </g>
+      <g stroke="var(--w-out)" stroke-width="2.5" fill="none">
+        <path d="M664 264 H780 V278 H840"/><path d="M664 294 H790 V308 H840"/><path d="M664 324 H800 V338 H840"/><path d="M664 354 H810 V368 H840"/>
+      </g>
+
+      <rect x="840" y="414" width="230" height="40" rx="6" fill="var(--panel)" stroke="var(--w-out)" stroke-width="2"/>
+      <text x="955" y="439" text-anchor="middle" fill="var(--fg)" font-size="12" font-weight="600">BZ1 Active buzzer 5V</text>
+      <path d="M664 434 H840" stroke="var(--w-out)" stroke-width="2.5" fill="none"/>
+
+      <rect x="840" y="476" width="230" height="66" rx="8" fill="var(--panel)" stroke="var(--w-ser)" stroke-width="2" stroke-dasharray="6 4"/>
+      <text x="955" y="497" text-anchor="middle" fill="var(--fg)" font-size="12" font-weight="600">LCD1 Nextion (darating)</text>
+      <text x="955" y="514" text-anchor="middle" fill="var(--muted)" font-size="11">16 → LCD RX · LCD TX → pin 17</text>
+      <text x="955" y="531" text-anchor="middle" fill="var(--muted)" font-size="11">5V hiwalay ≥2A · GND</text>
+      <g stroke="var(--w-ser)" stroke-width="2.5" fill="none"><path d="M664 494 H840"/><path d="M664 524 H840"/></g>
+
+      <rect x="840" y="574" width="230" height="66" rx="8" fill="var(--panel)" stroke="var(--w-ser)" stroke-width="2" stroke-dasharray="6 4"/>
+      <text x="955" y="597" text-anchor="middle" fill="var(--fg)" font-size="12" font-weight="600">RTC1 DS3231 (opsyonal)</text>
+      <text x="955" y="615" text-anchor="middle" fill="var(--muted)" font-size="11">para sa petsa sa screen</text>
+      <text x="955" y="631" text-anchor="middle" fill="var(--muted)" font-size="11">VCC 5V · GND</text>
+      <g stroke="var(--w-ser)" stroke-width="2.5" fill="none"><path d="M664 594 H840"/><path d="M664 624 H840"/></g>
+
+      <path d="M436 704 H300 V800" stroke="var(--w-pwr)" stroke-width="2.5" fill="none"/>
+      <path d="M436 734 H320 V800" stroke="var(--w-gnd)" stroke-width="2.5" fill="none"/>
+      <text x="30" y="700" fill="var(--fg)" font-size="12" font-weight="600">5V ng Mega → VCC ng mga IR,</text>
+      <text x="30" y="716" fill="var(--fg)" font-size="12" font-weight="600">sensor at relay module (VCC)</text>
+      <text x="30" y="736" fill="var(--muted)" font-size="11">GND → GND nilang lahat</text>
+      <path d="M664 704 H800 V800" stroke="var(--w-pwr)" stroke-width="2.5" fill="none"/>
+      <path d="M664 734 H780 V800" stroke="var(--w-gnd)" stroke-width="2.5" fill="none"/>
+      <text x="1070" y="700" text-anchor="end" fill="var(--fg)" font-size="12" font-weight="600">VIN ← 12V (o DC jack)</text>
+      <text x="1070" y="716" text-anchor="end" fill="var(--muted)" font-size="11">kapag nasa makina na,</text>
+      <text x="1070" y="732" text-anchor="end" fill="var(--muted)" font-size="11">hindi na kailangan ang USB</text>
+
+      <g font-size="11.5">
+        <rect x="30" y="800" width="250" height="78" rx="6" fill="var(--panel)" stroke="var(--w-pwr)" stroke-width="1.5"/>
+        <text x="44" y="822" fill="var(--w-pwr)" font-weight="600">PS1 12V supply</text>
+        <text x="44" y="842" fill="var(--fg)">Allan · H1, H2 (sa relay)</text>
+        <text x="44" y="860" fill="var(--fg)">Mega VIN / DC jack</text>
+        <rect x="295" y="800" width="250" height="78" rx="6" fill="var(--panel)" stroke="var(--w-pwr)" stroke-width="1.5"/>
+        <text x="309" y="822" fill="var(--w-pwr)" font-weight="600">PS2 5–6V ≥5A (buck)</text>
+        <text x="309" y="842" fill="var(--fg)">M1, M2 servo lang</text>
+        <text x="309" y="860" fill="var(--fg)">hindi sa 5V ng Mega</text>
+        <rect x="560" y="800" width="250" height="78" rx="6" fill="var(--panel)" stroke="var(--w-pwr)" stroke-width="1.5"/>
+        <text x="574" y="822" fill="var(--w-pwr)" font-weight="600">PS3 5V ≥2A (buck)</text>
+        <text x="574" y="842" fill="var(--fg)">K1 JD-VCC · LCD1</text>
+        <text x="574" y="860" fill="var(--fg)">dagdag na IR kung kulang</text>
+        <rect x="825" y="800" width="245" height="78" rx="6" fill="var(--panel)" stroke="var(--w-pwr)" stroke-width="1.5"/>
+        <text x="839" y="822" fill="var(--w-pwr)" font-weight="600">PS4 3–5V (ayon sa label)</text>
+        <text x="839" y="842" fill="var(--fg)">P1, P2 pump (sa relay)</text>
+        <text x="839" y="860" fill="var(--w-gnd)" font-weight="600">LAHAT NG GND: iisa</text>
+      </g>
+    </svg>
+  </div>
+
+  <section class="pagebreak">
+    <h2>Kada component</h2>
+
+    <p class="groupname">Pera at sukli</p>
+    <div class="comps">
+      <article class="comp">
+        <div class="comp-h"><span class="ref k-coin" style="background:var(--w-coin)">CS1</span><span class="name">Allan Universal Coinslot</span><span class="model">Multi-coin acceptor · 12V · 1/5/10/20 pulse</span></div>
+        <p class="role">Tumatanggap ng barya at nagpapadala ng pulse kada piso.</p>
+        <div class="pins">
+          <div class="pr k-pwr"><span class="cp">DC 12V</span><span class="wl"></span><span class="dst"><b>12V</b><span>PS1</span></span></div>
+          <div class="pr k-gnd"><span class="cp">GND</span><span class="wl"></span><span class="dst"><b>GND</b><span>iisang ground</span></span></div>
+          <div class="pr k-coin"><span class="cp">COIN</span><span class="wl"></span><span class="dst"><b>2</b><span>pin 2, diretso (OK sa testing)</span></span></div>
+          <div class="pr k-out"><span class="cp opt">INHIBIT</span><span class="wl"></span><span class="dst"><b>30</b><span>kung meron lang</span></span></div>
+          <div class="pr k-nc"><span class="cp">COUNTER</span><span class="wl"></span><span class="dst"><b>—</b><span>hindi ikakabit</span></span></div>
+        </div>
+        <p class="tip"><strong>Bago ikabit:</strong> sukatin ang COIN wire laban sa GND habang naka-on ang Allan at hindi pa nakakabit sa Mega. Dapat 0V. Kung 12V, huwag ikabit.</p>
+        <p class="tip"><strong>Filter sa final na makina</strong> (laban sa multong barya habang tumatakbo ang mga motor): 1kΩ sa pagitan ng COIN at pin 2, 4.7kΩ mula pin 2 papuntang 5V, at 100nF mula pin 2 papuntang GND. Iisang wire pa rin ang galing sa Allan.</p>
+      </article>
+
+      <article class="comp">
+        <div class="comp-h"><span class="ref" style="background:var(--w-servo)">M1</span><span class="name">MG996R Servo · Gate ₱5</span><span class="model">Metal gear servo · unahang gate</span></div>
+        <p class="role">Sara (0°) → tunnel ng ₱5. Bukas (55°) → tuloy ang barya.</p>
+        <div class="pins">
+          <div class="pr k-servo"><span class="cp">Orange</span><span class="wl"></span><span class="dst"><b>9</b><span>signal</span></span></div>
+          <div class="pr k-pwr"><span class="cp">Pula +</span><span class="wl"></span><span class="dst"><b>5–6V</b><span>PS2, hindi sa Mega</span></span></div>
+          <div class="pr k-gnd"><span class="cp">Brown −</span><span class="wl"></span><span class="dst"><b>GND</b><span>iisang ground</span></span></div>
+        </div>
+      </article>
+
+      <article class="comp">
+        <div class="comp-h"><span class="ref" style="background:var(--w-servo)">M2</span><span class="name">MG996R Servo · Gate ₱1</span><span class="model">Metal gear servo · pangalawang gate</span></div>
+        <p class="role">Sara (0°) → tunnel ng ₱1. Bukas (55°) → tuloy sa malaking lagayan.</p>
+        <div class="pins">
+          <div class="pr k-servo"><span class="cp">Orange</span><span class="wl"></span><span class="dst"><b>10</b><span>signal</span></span></div>
+          <div class="pr k-pwr"><span class="cp">Pula +</span><span class="wl"></span><span class="dst"><b>5–6V</b><span>PS2, hindi sa Mega</span></span></div>
+          <div class="pr k-gnd"><span class="cp">Brown −</span><span class="wl"></span><span class="dst"><b>GND</b><span>iisang ground</span></span></div>
+        </div>
+      </article>
+
+      <article class="comp">
+        <div class="comp-h"><span class="ref" style="background:var(--w-in)">IR2</span><span class="name">FC-51 IR Sensor · ₱1 hopper</span><span class="model">IR obstacle sensor · sa itaas ng ₱1 hopper</span></div>
+        <p class="role">LOW = puno ang ₱1 hopper, kaya sa malaking lagayan na ang ₱1.</p>
+        <div class="pins">
+          <div class="pr k-pwr"><span class="cp">VCC</span><span class="wl"></span><span class="dst"><b>5V</b><span>Mega 5V</span></span></div>
+          <div class="pr k-gnd"><span class="cp">GND</span><span class="wl"></span><span class="dst"><b>GND</b><span></span></span></div>
+          <div class="pr k-in"><span class="cp">OUT</span><span class="wl"></span><span class="dst"><b>41</b><span></span></span></div>
+        </div>
+      </article>
+
+      <article class="comp">
+        <div class="comp-h"><span class="ref" style="background:var(--w-in)">IR3</span><span class="name">FC-51 IR Sensor · ₱5 hopper</span><span class="model">IR obstacle sensor · sa itaas ng ₱5 hopper</span></div>
+        <p class="role">LOW = puno ang ₱5 hopper, kaya sa malaking lagayan na ang ₱5.</p>
+        <div class="pins">
+          <div class="pr k-pwr"><span class="cp">VCC</span><span class="wl"></span><span class="dst"><b>5V</b><span>Mega 5V</span></span></div>
+          <div class="pr k-gnd"><span class="cp">GND</span><span class="wl"></span><span class="dst"><b>GND</b><span></span></span></div>
+          <div class="pr k-in"><span class="cp">OUT</span><span class="wl"></span><span class="dst"><b>42</b><span></span></span></div>
+        </div>
+      </article>
+
+      <article class="comp">
+        <div class="comp-h"><span class="ref" style="background:var(--w-in)">IR4</span><span class="name">FC-51 IR Sensor · Malaking lagayan</span><span class="model">IR obstacle sensor · sa fill line ng coin box</span></div>
+        <p class="role">LOW = puno ang lagayan, kaya magla-lock: COIN STORAGE FULL.</p>
+        <div class="pins">
+          <div class="pr k-pwr"><span class="cp">VCC</span><span class="wl"></span><span class="dst"><b>5V</b><span>Mega 5V</span></span></div>
+          <div class="pr k-gnd"><span class="cp">GND</span><span class="wl"></span><span class="dst"><b>GND</b><span></span></span></div>
+          <div class="pr k-in"><span class="cp">OUT</span><span class="wl"></span><span class="dst"><b>29</b><span></span></span></div>
+        </div>
+      </article>
+
+      <article class="comp">
+        <div class="comp-h"><span class="ref" style="background:var(--w-out)">H1</span><span class="name">Coin Hopper ₱1 · Motor</span><span class="model">12V hopper motor · sa relay K1 CH3</span></div>
+        <p class="role">Naglalabas ng ₱1 na sukli. Titigil kapag nabilang na ng CT1.</p>
+        <div class="pins">
+          <div class="pr k-out"><span class="cp">Motor +</span><span class="wl"></span><span class="dst"><b>K1 NO3</b><span>COM3 ← 12V (PS1)</span></span></div>
+          <div class="pr k-gnd"><span class="cp">Motor −</span><span class="wl"></span><span class="dst"><b>GND</b><span>diode 1N4007 sa motor</span></span></div>
+        </div>
+      </article>
+
+      <article class="comp">
+        <div class="comp-h"><span class="ref" style="background:var(--w-out)">H2</span><span class="name">Coin Hopper ₱5 · Motor</span><span class="model">12V hopper motor · sa relay K1 CH4</span></div>
+        <p class="role">Naglalabas ng ₱5 na sukli. Titigil kapag nabilang na ng CT2.</p>
+        <div class="pins">
+          <div class="pr k-out"><span class="cp">Motor +</span><span class="wl"></span><span class="dst"><b>K1 NO4</b><span>COM4 ← 12V (PS1)</span></span></div>
+          <div class="pr k-gnd"><span class="cp">Motor −</span><span class="wl"></span><span class="dst"><b>GND</b><span>diode 1N4007 sa motor</span></span></div>
+        </div>
+      </article>
+
+      <article class="comp">
+        <div class="comp-h"><span class="ref" style="background:var(--w-in)">CT1</span><span class="name">Hopper Outlet Sensor ₱1</span><span class="model">Counter output ng hopper, o FC-51 sa labasan</span></div>
+        <p class="role">Bumibilang ng bawat ₱1 na lumalabas. LOW sandali kada barya.</p>
+        <div class="pins">
+          <div class="pr k-pwr"><span class="cp">VCC</span><span class="wl"></span><span class="dst"><b>5V</b><span>kung module</span></span></div>
+          <div class="pr k-gnd"><span class="cp">GND</span><span class="wl"></span><span class="dst"><b>GND</b><span></span></span></div>
+          <div class="pr k-in"><span class="cp">OUT</span><span class="wl"></span><span class="dst"><b>27</b><span></span></span></div>
+        </div>
+      </article>
+
+      <article class="comp">
+        <div class="comp-h"><span class="ref" style="background:var(--w-in)">CT2</span><span class="name">Hopper Outlet Sensor ₱5</span><span class="model">Counter output ng hopper, o FC-51 sa labasan</span></div>
+        <p class="role">Bumibilang ng bawat ₱5 na lumalabas. LOW sandali kada barya.</p>
+        <div class="pins">
+          <div class="pr k-pwr"><span class="cp">VCC</span><span class="wl"></span><span class="dst"><b>5V</b><span>kung module</span></span></div>
+          <div class="pr k-gnd"><span class="cp">GND</span><span class="wl"></span><span class="dst"><b>GND</b><span></span></span></div>
+          <div class="pr k-in"><span class="cp">OUT</span><span class="wl"></span><span class="dst"><b>28</b><span></span></span></div>
+        </div>
+      </article>
+    </div>
+
+    <p class="groupname">Tubig</p>
+    <div class="comps">
+      <article class="comp">
+        <div class="comp-h"><span class="ref" style="background:var(--w-in)">IR1</span><span class="name">FC-51 IR Sensor · Baso / bote</span><span class="model">IR obstacle sensor · sa ilalim ng gripo</span></div>
+        <p class="role">LOW = may baso, kaya tatakbo ang pump. Kapag inalis, hihinto ang pump at ang orasan.</p>
+        <div class="pins">
+          <div class="pr k-pwr"><span class="cp">VCC</span><span class="wl"></span><span class="dst"><b>5V</b><span>Mega 5V</span></span></div>
+          <div class="pr k-gnd"><span class="cp">GND</span><span class="wl"></span><span class="dst"><b>GND</b><span></span></span></div>
+          <div class="pr k-in"><span class="cp">OUT</span><span class="wl"></span><span class="dst"><b>22</b><span></span></span></div>
+        </div>
+      </article>
+
+      <article class="comp">
+        <div class="comp-h"><span class="ref" style="background:var(--w-out)">P1</span><span class="name">Water Pump · Palabas sa baso</span><span class="model">3–5V DC pump · sa relay K1 CH1</span></div>
+        <p class="role">Nagbubuhos ng binili, naka-time. Tanggalin ang sariling board at battery ng pump.</p>
+        <div class="pins">
+          <div class="pr k-out"><span class="cp">Motor +</span><span class="wl"></span><span class="dst"><b>K1 NO1</b><span>COM1 ← 3–5V (PS4)</span></span></div>
+          <div class="pr k-gnd"><span class="cp">Motor −</span><span class="wl"></span><span class="dst"><b>GND</b><span>diode 1N4007 sa motor</span></span></div>
+        </div>
+      </article>
+
+      <article class="comp">
+        <div class="comp-h"><span class="ref" style="background:var(--w-out)">P2</span><span class="name">Water Pump · Pagpuno ng tank</span><span class="model">3–5V DC pump · sa relay K1 CH2</span></div>
+        <p class="role">Gallon → tank. Hindi tatakbo kapag ubos ang gallon (FL3).</p>
+        <div class="pins">
+          <div class="pr k-out"><span class="cp">Motor +</span><span class="wl"></span><span class="dst"><b>K1 NO2</b><span>COM2 ← 3–5V (PS4)</span></span></div>
+          <div class="pr k-gnd"><span class="cp">Motor −</span><span class="wl"></span><span class="dst"><b>GND</b><span>diode 1N4007 sa motor</span></span></div>
+        </div>
+      </article>
+
+      <article class="comp">
+        <div class="comp-h"><span class="ref" style="background:var(--w-in)">FL1</span><span class="name">Float Switch · Tank gitna</span><span class="model">2-wire float · sarado kapag bumaba sa gitna</span></div>
+        <p class="role">Bubuksan ang P2 para punuin ang tank.</p>
+        <div class="pins">
+          <div class="pr k-in"><span class="cp">Wire 1</span><span class="wl"></span><span class="dst"><b>24</b><span></span></span></div>
+          <div class="pr k-gnd"><span class="cp">Wire 2</span><span class="wl"></span><span class="dst"><b>GND</b><span></span></span></div>
+        </div>
+      </article>
+
+      <article class="comp">
+        <div class="comp-h"><span class="ref" style="background:var(--w-in)">FL2</span><span class="name">Float Switch · Tank itaas</span><span class="model">2-wire float · sarado kapag puno na</span></div>
+        <p class="role">Papatayin ang P2.</p>
+        <div class="pins">
+          <div class="pr k-in"><span class="cp">Wire 1</span><span class="wl"></span><span class="dst"><b>25</b><span></span></span></div>
+          <div class="pr k-gnd"><span class="cp">Wire 2</span><span class="wl"></span><span class="dst"><b>GND</b><span></span></span></div>
+        </div>
+      </article>
+
+      <article class="comp">
+        <div class="comp-h"><span class="ref" style="background:var(--w-in)">FL3</span><span class="name">Float Switch · Gallon</span><span class="model">2-wire float · sarado kapag ubos ang gallon</span></div>
+        <p class="role">Proteksyon ng P2: hindi ito tatakbo nang tuyo.</p>
+        <div class="pins">
+          <div class="pr k-in"><span class="cp">Wire 1</span><span class="wl"></span><span class="dst"><b>26</b><span></span></span></div>
+          <div class="pr k-gnd"><span class="cp">Wire 2</span><span class="wl"></span><span class="dst"><b>GND</b><span></span></span></div>
+        </div>
+      </article>
+    </div>
+
+    <p class="groupname">Kontrol at display</p>
+    <div class="comps">
+      <article class="comp">
+        <div class="comp-h"><span class="ref" style="background:var(--relay)">K1</span><span class="name">4-Channel Relay Module 5V</span><span class="model">Opto-isolated · active-LOW (LOW = ON)</span></div>
+        <p class="role">Pinapatakbo ang dalawang pump at dalawang motor ng sukli. Sa karga: COM at NO.</p>
+        <div class="pins">
+          <div class="pr k-pwr"><span class="cp">VCC</span><span class="wl"></span><span class="dst"><b>5V</b><span>Mega 5V</span></span></div>
+          <div class="pr k-gnd"><span class="cp">GND</span><span class="wl"></span><span class="dst"><b>GND</b><span></span></span></div>
+          <div class="pr k-out"><span class="cp">IN1</span><span class="wl"></span><span class="dst"><b>31</b><span>P1 pump palabas</span></span></div>
+          <div class="pr k-out"><span class="cp">IN2</span><span class="wl"></span><span class="dst"><b>32</b><span>P2 pump pagpuno</span></span></div>
+          <div class="pr k-out"><span class="cp">IN3</span><span class="wl"></span><span class="dst"><b>33</b><span>H1 motor ₱1</span></span></div>
+          <div class="pr k-out"><span class="cp">IN4</span><span class="wl"></span><span class="dst"><b>34</b><span>H2 motor ₱5</span></span></div>
+          <div class="pr k-pwr"><span class="cp opt">JD-VCC</span><span class="wl"></span><span class="dst"><b>5V</b><span>PS3, tanggalin ang jumper</span></span></div>
+        </div>
+      </article>
+
+      <article class="comp">
+        <div class="comp-h"><span class="ref" style="background:var(--w-in)">SW1</span><span class="name">Push Button · CONFIRM</span><span class="model">Momentary push button · walang resistor</span></div>
+        <p class="role">Pipindutin pagkatapos maghulog ng barya.</p>
+        <div class="pins">
+          <div class="pr k-in"><span class="cp">Paa 1</span><span class="wl"></span><span class="dst"><b>40</b><span></span></span></div>
+          <div class="pr k-gnd"><span class="cp">Paa 2</span><span class="wl"></span><span class="dst"><b>GND</b><span></span></span></div>
+        </div>
+      </article>
+
+      <article class="comp">
+        <div class="comp-h"><span class="ref" style="background:var(--w-out)">BZ1</span><span class="name">Active Buzzer 5V</span><span class="model">Buzzer na may sariling oscillator</span></div>
+        <p class="role">Babala sa ika-15 at ika-18 segundo kapag walang baso.</p>
+        <div class="pins">
+          <div class="pr k-out"><span class="cp">+</span><span class="wl"></span><span class="dst"><b>35</b><span>transistor kung &gt;20 mA</span></span></div>
+          <div class="pr k-gnd"><span class="cp">−</span><span class="wl"></span><span class="dst"><b>GND</b><span></span></span></div>
+        </div>
+      </article>
+
+      <article class="comp">
+        <div class="comp-h"><span class="ref" style="background:var(--w-ser)">LCD1</span><span class="name">Nextion LCD (darating)</span><span class="model">Serial HMI touchscreen · 4-pin cable</span></div>
+        <p class="role">Pansamantala, Serial Monitor muna ang ginagamit.</p>
+        <div class="pins">
+          <div class="pr k-ser"><span class="cp">TX</span><span class="wl"></span><span class="dst"><b>17</b><span>RX2</span></span></div>
+          <div class="pr k-ser"><span class="cp">RX</span><span class="wl"></span><span class="dst"><b>16</b><span>TX2</span></span></div>
+          <div class="pr k-pwr"><span class="cp">+5V</span><span class="wl"></span><span class="dst"><b>5V</b><span>PS3 ≥2A, hindi sa Mega</span></span></div>
+          <div class="pr k-gnd"><span class="cp">GND</span><span class="wl"></span><span class="dst"><b>GND</b><span></span></span></div>
+        </div>
+      </article>
+
+      <article class="comp">
+        <div class="comp-h"><span class="ref" style="background:var(--w-ser)">RTC1</span><span class="name">DS3231 RTC Module</span><span class="model">Real-time clock · opsyonal</span></div>
+        <p class="role">Para sa petsa sa screen at sa pag-reset ng kita kada araw.</p>
+        <div class="pins">
+          <div class="pr k-ser"><span class="cp">SDA</span><span class="wl"></span><span class="dst"><b>20</b><span></span></span></div>
+          <div class="pr k-ser"><span class="cp">SCL</span><span class="wl"></span><span class="dst"><b>21</b><span></span></span></div>
+          <div class="pr k-pwr"><span class="cp">VCC</span><span class="wl"></span><span class="dst"><b>5V</b><span>Mega 5V</span></span></div>
+          <div class="pr k-gnd"><span class="cp">GND</span><span class="wl"></span><span class="dst"><b>GND</b><span></span></span></div>
+        </div>
+      </article>
+
+      <article class="comp">
+        <div class="comp-h"><span class="ref" style="background:var(--board)">U1</span><span class="name">Arduino Mega 2560</span><span class="model">Controller · COM11</span></div>
+        <p class="role">Hindi ikakabit: pin 0/1 (USB), pin 3 (flow, wala), pin 23 (DS18B20, wala), pin 36 (compressor, wala), pin 44–46 (servo timer). Opsyonal: pin 37–39 (LED).</p>
+        <div class="pins">
+          <div class="pr k-pwr"><span class="cp">VIN</span><span class="wl"></span><span class="dst"><b>12V</b><span>PS1, o DC jack</span></span></div>
+          <div class="pr k-gnd"><span class="cp">GND</span><span class="wl"></span><span class="dst"><b>GND</b><span>iisang ground</span></span></div>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <section>
+    <h2>Bago i-on</h2>
+    <ol class="notes">
+      <li><strong>Iisang GND para sa lahat:</strong> Mega, PS1 hanggang PS4, relay module, Allan at lahat ng sensor. Kung hiwalay ang GND, mali ang mababasa ng Mega at puwedeng lumabas ang multong barya.</li>
+      <li><strong>Huwag kumuha ng kuryente ng servo, motor o LCD sa 5V pin ng Mega.</strong> Hanggang 40 mA lang ang bawat pin.</li>
+      <li><strong>Diode (1N4007) sa bawat motor at pump,</strong> nakabaligtad: ang guhit ay sa positibo.</li>
+      <li><strong>FC-51 IR:</strong> dapat LOW ang OUT kapag may nakikita. Ayusin ang turnilyo ng sensitivity hanggang umilaw ang LED ng module kapag may baso o barya sa harap.</li>
+      <li><strong>Float:</strong> kapag baligtad ang basa, baligtarin ang float sa tangkay.</li>
+      <li><strong>Pagsubok:</strong> i-flash ang test build, buksan ang Serial Monitor sa 115200, at i-type ang <code>st</code>. Takpan ang bawat IR at galawin ang bawat float. Dapat lumabas ang <code>[IR] …</code>, <code>[bottle] …</code> at <code>[float] …</code>.</li>
+    </ol>
+  </section>
+</div>
+</body></html>
