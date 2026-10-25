@@ -54,13 +54,17 @@ static void beam_update(beam_t *b) {
 void coin_level_begin() {
   beam_begin(&s_p1);
   beam_begin(&s_p5);
+#if COIN_BOX_SENSOR_FITTED
   beam_begin(&s_box);
+#endif
 }
 
 void coin_level_update() {
   beam_update(&s_p1);
   beam_update(&s_p5);
+#if COIN_BOX_SENSOR_FITTED
   beam_update(&s_box);
+#endif
 }
 
 bool coin_level_hopper_full(hopper_id_t hopper) {
@@ -72,5 +76,6 @@ bool coin_level_hopper_full(hopper_id_t hopper) {
 }
 
 bool coin_level_box_full() {
-  return s_box.state;
+  // Not fitted: never full -- see COIN_BOX_SENSOR_FITTED.
+  return COIN_BOX_SENSOR_FITTED ? s_box.state : false;
 }

@@ -122,9 +122,8 @@ static uint32_t s_confirm_since = 0;
 static bool s_confirm_pressed = false;   // one-shot, consumed by reading
 
 static void confirm_update() {
-#ifdef SERIAL_CONSOLE
-  if (hmi_console_confirm()) s_confirm_pressed = true;
-#endif
+  // The on-screen CONFIRM (or the test console's "c") counts as a press.
+  if (hmi_confirm_take()) s_confirm_pressed = true;
   const bool raw = (digitalRead(PIN_CONFIRM_BTN) == LOW);
   const uint32_t now = millis();
 
@@ -597,6 +596,15 @@ static void state_update(state_t s) {
         break;
       }
 
+      // Cold tank below a full P20 pour, or its sensor lost. Refused here,
+      // before the first coin, and never mid-transaction: a pour already paid
+      // for draws on the margin TANK_SONAR_MIN_SERVE_MM leaves for it.
+      if (water_is_locked_out()) {
+        faults_raise(FAULT_OUT_OF_WATER);
+        transition_to(STATE_FAULT, TRIG_FAULT_RAISED_WHILE_IDLE);
+        break;
+      }
+
       // Coin box full: nowhere left for a P10 or P20 to go. Refuse money
       // before the first coin, like LOW CHANGE below.
       if (coin_level_box_full()) {
@@ -900,6 +908,11 @@ static void state_update(state_t s) {
       if (!coin_level_box_full()) {
         faults_clear(FAULT_STORAGE_FULL);
       }
+      // OUT OF WATER likewise clears once the pump has brought the tank back
+      // above the serve line.
+      if (!water_is_locked_out()) {
+        faults_clear(FAULT_OUT_OF_WATER);
+      }
       // TODO(M5-C): transient faults clear themselves in faults_update();
       // persistent ones need an Admin clear, which is why FAULT -> ADMIN
       // exists.
@@ -1067,6 +1080,7 @@ void loop() {
   bench_update();
 #else
   state_update(s_state);
+  hmi_sync(s_state);
 #endif
 
 #ifdef DEBUG

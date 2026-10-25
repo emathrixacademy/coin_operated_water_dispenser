@@ -1,25 +1,45 @@
 #ifndef HMI_H
 #define HMI_H
 
-// Nextion HMI -- serial commands and screen state.
+// Display link -- ESP32 LCD over UART.
 //
-// The Nextion runs the UI on its own processor and draws everything itself.
-// THE MEGA NEVER RENDERS. It sends short commands over Serial2 and reads touch
-// events. No graphics work on the Mega -- CLAUDE.md.
+// The ESP32 runs the UI on its own processor and draws everything itself.
+// THE MEGA NEVER RENDERS. It sends short text lines over Serial2 and reads
+// touch events back. No graphics work on the Mega -- CLAUDE.md.
 //
-// Every command is terminated with three 0xFF bytes.
+// PROTOCOL. ASCII, one message per line, terminated by '\n' ('\r' ignored),
+// fields separated by one space. Numbers are decimal integers.
+//
+//   Mega -> ESP32
+//     PG <page>                       show page (page_t value)
+//     TX <component> <text>           set a text field; text runs to end of line
+//     VL <component> <int>            set a numeric field
+//     OP <index> <0|1>                volume option enabled / dimmed
+//     FT <fault>                      show fault (fault_t value, 0 = none)
+//     VL state <n>                    raw state_t, so a screen can tell apart
+//                                     states that share a page
+//     LV <tank%> <tank_ok> <galA> <galB>
+//                                     levels; galA/galB 1 = that gallon is low.
+//                                     Sent on change and every
+//                                     HMI_STATUS_RESEND_MS. The app shows a
+//                                     small "gallon low" warning when either is
+//                                     1 -- it is a notice, not a lockout.
+//
+//   ESP32 -> Mega
+//     EV <event> [payload]            touch event (hmi_event_t value)
+//
+// The numeric values of page_t, hmi_event_t and fault_t ARE the protocol.
+// Append new values at the end; never renumber. The ESP32 sketch must be
+// changed in the same commit as any of them.
 //
 // Fixed buffers only. No String, no dynamic allocation. Amounts are formatted
 // from integer centavos into a char[] with snprintf -- there is no float
 // anywhere in the display path either, because the value being displayed is the
 // value being charged.
-//
-// Firmware and HMI project versions must match. Adding a screen means changing
-// hmi/watervendo.HMI as well as this module, in the same commit.
 
 #include "types.h"
 
-// Pages. Order and names must match the Nextion project.
+// Pages. Values are on the wire -- see PROTOCOL above.
 enum page_t : uint8_t {
   PAGE_STANDBY = 0,
   PAGE_SELECT_VOLUME,
@@ -34,7 +54,7 @@ enum page_t : uint8_t {
   PAGE_FAULT
 };
 
-// Touch events read back from the display.
+// Touch events read back from the display. Values are on the wire.
 enum hmi_event_t : uint8_t {
   HMI_EVENT_NONE = 0,
   HMI_EVENT_SELECT_VOLUME,   // payload = target in mL
@@ -56,7 +76,10 @@ enum hmi_event_t : uint8_t {
   HMI_EVENT_ADMIN_SET_P5,    // payload = count
   HMI_EVENT_ADMIN_CONFIRM,   // explicit confirm for an inventory edit
   HMI_EVENT_ADMIN_CANCEL,
-  HMI_EVENT_ADMIN_EXIT
+  HMI_EVENT_ADMIN_EXIT,
+  // On-screen stand-in for the physical CONFIRM button (ACCEPTING ->
+  // SELECTING). Not queued with the others -- see hmi_confirm_take().
+  HMI_EVENT_CONFIRM
 };
 
 void hmi_begin();
@@ -95,9 +118,17 @@ bool hmi_event_available();
 // event carries one.
 hmi_event_t hmi_take_event(int32_t *payload);
 
-#ifdef SERIAL_CONSOLE
-// Test console only: a typed "c" stands in for the physical CONFIRM button.
-bool hmi_console_confirm();
-#endif
+// True once per on-screen CONFIRM (or a typed "c" on the test console). Kept
+// out of the event slot because ACCEPTING reads the button, not events: a
+// CONFIRM parked in the slot would block the next real touch until some later
+// state happened to take it.
+bool hmi_confirm_take();
+
+// Push what the screen shows for this state: PG on a page change, and the VL
+// fields state, credit, inserted, maxml, target, poured, total -- each only
+// when it changed, and only when the TX buffer has room, so it never blocks the
+// loop. Everything is re-sent every HMI_STATUS_RESEND_MS for a display that
+// rebooted. Call once per loop, after the state machine.
+void hmi_sync(state_t s);
 
 #endif  // HMI_H

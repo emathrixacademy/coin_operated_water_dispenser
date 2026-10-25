@@ -5,8 +5,8 @@ Guidance for Claude Code when working in this repository.
 ## Project
 
 Firmware for a coin-operated water refill vending machine. Standalone machine, no
-network, no cloud. Arduino Mega 2560 is the controller. A Nextion HMI runs the UI on
-its own processor.
+network, no cloud. Arduino Mega 2560 is the controller. An ESP32 LCD runs the UI on
+its own processor, linked to the Mega by UART.
 
 Client project EMX-2026-WATERVENDO-01, eMathrix Technologies. Academic research
 prototype for a TUP-Cavite thesis team.
@@ -42,11 +42,12 @@ src/
   coin_hopper.*       change payout, outlet counting, jam retry
   flow.*              flow pulse capture, volume accumulation
   bottle.*            proximity sensor debounce, present/absent
-  water_level.*       three floats, pump control, lockout states
+  water_level.*       tank ultrasonic, two gallon sensors, pump control, lockout states
   dispense.*          valve control, cutoff, partial-stop handling
   billing.*           coin-to-volume allocation, refund computation
   persist.*           EEPROM read/write of coin inventory and open transaction
-  hmi.*               Nextion serial commands, screen state
+  tank_level.*        A02YYUW framing, median filter, pump/serve decisions (host tested)
+  hmi.*               ESP32 display line protocol, screen state
   faults.*            lockout conditions and alert routing
 ```
 
@@ -92,12 +93,17 @@ succeeded.
 
 ## Water level
 
-Two floats in the cold tank control the pump: mid turns it on, high turns it off. One
-float in the gallon bay detects empty and locks the machine.
+An A02YYUW ultrasonic (UART, `Serial3`) over the cold tank controls the pump: it starts
+at `TANK_SONAR_REFILL_MM` and stops at `TANK_SONAR_FULL_MM`, keeping the tank topped up.
+Below `TANK_SONAR_MIN_SERVE_MM` (less than a full ₱20 pour left) the machine locks with
+OUT OF WATER, checked in STANDBY only. A lost sensor locks it too.
 
-The gallon-bay float is a safety lockout, not pump control. Running the pump dry
-destroys it. If the gallon float reads empty, the pump must not run regardless of what
-the cold tank floats say.
+Two supply gallons, one capacitive sensor each at the reserve line. One low is a small
+warning on the display, not a lockout. Both low stops the pump.
+
+Running the pump dry destroys it. If both gallons read low, or the tank sensor is lost,
+the pump must not run regardless of what the tank level says. The interlock lives in
+`pump_write()`, where the output is written.
 
 ## Power loss
 
@@ -109,9 +115,10 @@ Write per transaction, never per loop iteration. EEPROM is rated for roughly 100
 writes per cell. Use `EEPROM.update()`, not `EEPROM.write()`. Wear-level the daily
 counters across a small ring of cells.
 
-## Nextion HMI
+## Display (ESP32 LCD)
 
-The Mega sends short commands over `Serial2` and reads touch events. It never renders.
+The display is an ESP32 LCD running its own UI. The Mega sends short text lines over
+`Serial2` at 115200 and reads touch events back. It never renders.
 
 ```cpp
 hmi_setText("t_amount", "20.00");
@@ -120,16 +127,18 @@ hmi_setPage(PAGE_DISPENSING);
 
 Screens: Home, Statistics, System Status, Coin Inventory, plus an Admin page for change
 loading and inventory correction. Alert states: out of water, low change, coin storage
-full, change jam.
+full, change jam. Plus a small gallon-low notice from the `LV` line.
 
-Every command is terminated with three `0xFF` bytes. If you are adding a screen, the
-`.HMI` project file changes too, not just the firmware.
+The line protocol is documented in `include/hmi.h`. The numeric values of `page_t`,
+`hmi_event_t` and `fault_t` are on the wire: append, never renumber, and change the
+ESP32 sketch in the same commit. The ESP32 is 3.3 V: Mega TX2 goes through a divider.
+Its WiFi and Bluetooth stay off (see Out of scope).
 
 ## Fault states that lock the machine
 
 | Condition | Display |
 |---|---|
-| Gallon bay empty | OUT OF WATER — PLEASE REFILL |
+| Cold tank below a full ₱20 pour, or tank sensor lost | OUT OF WATER — PLEASE REFILL |
 | ₱1 below 25 pcs or ₱5 below 5 pcs | LOW CHANGE — SERVICE REQUIRED |
 | Profit chamber full | COIN STORAGE FULL |
 | Hopper payout failed after retries | CHANGE JAM — SERVICE REQUIRED |

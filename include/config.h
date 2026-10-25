@@ -112,12 +112,31 @@ typedef int32_t volume_t;   // millilitres
 
 #define PIN_BOTTLE_PROX     22  // LOW = bottle present
 #define PIN_TEMP_ONEWIRE    23  // DS18B20 waterproof probe, 4.7k pull-up to 5V
-#define PIN_FLOAT_TANK_MID  24  // LOW = below mid  -> pump on
-#define PIN_FLOAT_TANK_HIGH 25  // LOW = at high    -> pump off
-#define PIN_FLOAT_GALLON    26  // LOW = empty      -> SAFETY LOCKOUT, pump inhibited
+// D24/D25 were the cold tank mid/high floats; the A02YYUW on Serial3 replaced
+// both. Left unallocated.
+//
+// Capacitive non-contact sensors on the outside wall of the two supply gallons,
+// at the reserve line -- see GALLON_SENSOR_WET_LEVEL for the polarity and why
+// it changes the pinMode. EXCEPTION to the active-low rule above.
+#define PIN_GALLON_A        26
+#define PIN_GALLON_B        43
 #define PIN_HOPPER_P1_COUNT 27  // Falling edge, polled. Confirms a coin left
 #define PIN_HOPPER_P5_COUNT 28  // Falling edge, polled. Confirms a coin left
 #define PIN_CHAMBER_FULL    29  // IR break-beam at fill line. LOW = beam broken = full
+
+// 1 = coin box IR fitted on pin 29; locks with COIN STORAGE FULL when the beam
+//     is blocked.
+// 0 = not fitted. The machine never locks with COIN STORAGE FULL and pin 29 is
+//     not read, so a missing sensor cannot float into a false lockout. What it
+//     gives up: an overfull box backs coins up the chute and jams it, so empty
+//     it between test sessions.
+//
+// Currently 0: the team decided not to fit it (2026-10-25) -- the box is large
+// and this is a thesis prototype. The firmware cannot tell whether the sensor
+// is there, so this must match the hardware.
+#ifndef COIN_BOX_SENSOR_FITTED
+#define COIN_BOX_SENSOR_FITTED 0
+#endif
 #define PIN_CONFIRM_BTN     40  // LOW = pressed. Advances ACCEPTING -> SELECTING
 // IR at the top of each change hopper. LOW = full. A full hopper's coins are
 // routed to the coin box instead -- see coin_level.h and coin_route.h.
@@ -212,16 +231,26 @@ typedef int32_t volume_t;   // millilitres
 // Serial
 // ---------------------------------------------------------------------------
 
+// The display is an ESP32 LCD running its own UI, linked by plain UART. Same
+// rule as the Nextion it replaced: the Mega never renders, it sends short text
+// lines and reads events back. Protocol in hmi.h.
+//
+// The ESP32 is 3.3 V and NOT 5 V tolerant. Mega TX2 (D16) goes to ESP32 RX
+// through a 1k/2k divider; ESP32 TX to Mega RX2 (D17) direct. Common ground.
+// Its WiFi and Bluetooth stay off -- both are out of scope (CLAUDE.md).
 #define HMI_SERIAL      Serial2  // D16 TX2 / D17 RX2
 
-// SPEC 1.4. The panel and the firmware must agree or the display does not
-// respond at all. If a panel is found already flashed at another rate, change
-// the PANEL -- or change config.h, SPECIFICATION.md and wiring.md together.
-//
-// Budget note for M6: a pour refresh every HMI_DISPENSE_REFRESH_MS sends on the
-// order of 60 characters, which is ~62 ms of transmit time at this rate against
-// a 250 ms budget. Workable, with little headroom for adding fields.
-#define HMI_BAUD        9600
+// Both ends must agree or nothing is understood. 115200 rather than the
+// Nextion's 9600: HardwareSerial blocks once its 64-byte TX buffer is full, and
+// at 9600 one full buffer is ~67 ms of loop stall -- long enough to drop hopper
+// outlet counts. At 115200 it is under 6 ms.
+#define HMI_BAUD        115200
+
+// A02YYUW ultrasonic over the cold tank. Sensor TX (white) to Mega RX3 (D15).
+// Sensor RX (yellow) left unconnected: that selects the sensor's own filtered
+// output, one frame about every 100 ms. Powered from 5 V, so its TX is 5 V TTL.
+#define TANK_SONAR_SERIAL Serial3  // D15 RX3 (D14 TX3 unused)
+#define TANK_SONAR_BAUD   9600     // fixed by the sensor
 
 #define DEBUG_BAUD      115200
 
@@ -523,7 +552,8 @@ typedef int32_t volume_t;   // millilitres
 //     same seconds pour less. Recalibrate if the pump, tubing or supply change.
 //   - NO STALL DETECTION. Nothing can tell that water stopped coming -- an
 //     empty tank or a dead pump still "pours" on the clock, and the user is
-//     charged for water they did not get. Keep the cold tank floats working.
+//     charged for water they did not get. TANK_SONAR_MIN_SERVE_MM is what
+//     stands between that and the user: keep the tank sensor working.
 #ifndef DISPENSE_TIMED
 #define DISPENSE_TIMED 1
 #endif
@@ -531,7 +561,7 @@ typedef int32_t volume_t;   // millilitres
 // Timed mode only: milliseconds the dispense pump takes to deliver 100 mL.
 // MEASURE IT: run the pump into a measuring cup for a known time (say 30 s),
 // then DISPENSE_MS_PER_100ML = 30000 * 100 / mL collected. Measure with the
-// cold tank at its mid float, the level it runs at most of the time.
+// cold tank near full, the level it runs at most of the time.
 // 6000 (1 L/min) is a PLACEHOLDER.
 #define DISPENSE_MS_PER_100ML 6000
 
@@ -559,18 +589,74 @@ typedef int32_t volume_t;   // millilitres
 // Water level
 // ---------------------------------------------------------------------------
 
-// Float debounce -- SPEC 1.2. Water sloshes, especially while a pour is running
-// or the pump is filling. Without this the pump chatters at the threshold,
-// which is hard on the switching device and the pump both.
-#define FLOAT_DEBOUNCE_MS 250
-
-// The gallon bay float is debounced HARDER than the cold tank floats.
+// --- Cold tank: A02YYUW ultrasonic ----------------------------------------
 //
-// It is a safety interlock rather than pump control, and the cost of the two
-// error directions is not symmetric: a spurious "empty" costs an unnecessary
-// lockout, while a spurious "not empty" runs the pump dry and destroys it. The
-// bay is also refilled by hand, which sloshes far more than the tank ever does.
-#define FLOAT_GALLON_DEBOUNCE_MS 500
+// All distances are mm from the sensor face DOWN to the water. Larger = less
+// water. EVERY NUMBER BELOW IS A PLACEHOLDER until measured on the real tank:
+// fill it with a measuring jug and read the distances off the `st` status
+// line of the test console.
+//
+// Order must hold: BLIND < FULL < REFILL < MIN_SERVE < EMPTY.
+
+// The A02YYUW cannot see closer than 30 mm. Mount it so that FULL is at least
+// 20 mm below that, or the top of every fill reads as garbage.
+#define TANK_SONAR_BLIND_MM 30
+
+// Pump stops here. The tank is kept as full as it can be, so the dispense side
+// always has head and the timed-dispense rate stays where it was calibrated.
+#define TANK_SONAR_FULL_MM 60
+
+// Pump starts here. A 20 mm band is the "keep it topped up" setting: the tank
+// never sits more than a cupful down. Narrower and every pour short-cycles the
+// pump, which shortens its life; PUMP_MIN_OFF_MS backs this up regardless.
+#define TANK_SONAR_REFILL_MM 80
+
+// OUT OF WATER lockout. Set it so the water ABOVE this line is a full P20 pour
+// (2000 mL) plus a 20% margin, all above the dispense pump intake -- measured,
+// not computed from a drawing. Lower than that and a P20 customer can be sold
+// air on a timed-dispense unit, which cannot detect it. Checked only in
+// STANDBY, so a pour already paid for always finishes.
+#define TANK_SONAR_MIN_SERVE_MM 220
+
+// The tank floor. A reading past it is an echo off something else and is
+// dropped. Also the 0% point on the display.
+#define TANK_SONAR_EMPTY_MM 300
+
+// Readings in the median. Five frames is ~0.5 s: enough to reject a wave or an
+// echo off the inlet stream, short enough that the pump still stops at FULL
+// rather than a centimetre past it.
+#define TANK_FILTER_SAMPLES 5
+
+// No plausible frame for this long = sensor lost (unplugged, condensation on
+// the face, wrong sensor variant). The pump stops at once and the machine
+// locks at the next STANDBY. Ten missed frames: a lone dropout never trips it.
+#define TANK_SONAR_TIMEOUT_MS 1000
+
+// --- Supply gallons: capacitive sensors -----------------------------------
+//
+// One XKC-Y25-class sensor per gallon, strapped flat to the outside wall at the
+// RESERVE line: about 50 mm above the floor of a round 5-gallon jug, which is
+// still ~2.5-3 L of water. The pump pickup tube must reach BELOW the sensor.
+//
+//   one gallon low   -> small warning on the display, nothing else
+//   both gallons low -> warning, and the fill pump stops so it never runs dry.
+//                       The cold tank keeps selling until MIN_SERVE locks it.
+//
+// Polarity: the pin level that means "water at the sensor".
+//   HIGH (default) -- XKC-Y25-V / PNP output. Fit a 10k pull-DOWN on the
+//                     signal; the pin is set INPUT. A broken wire then reads
+//                     LOW = dry, which fails safe (warning shown, pump stopped).
+//   LOW            -- NPN output. Pin is INPUT_PULLUP; a broken wire reads
+//                     HIGH = dry, also safe.
+// CHECK ON THE BENCH: hold the sensor against a full bottle and an empty one
+// and measure the signal wire. If it is the other way round, flip this.
+#define GALLON_SENSOR_WET_LEVEL HIGH
+
+// "Low" acts at once -- it can stop the pump, and a sloshing jug near the line
+// may never hold low for a full window. Only the return to "water present" is
+// debounced, so a jug being swapped (which sloshes hard) does not flicker the
+// warning off and on.
+#define GALLON_SENSOR_DEBOUNCE_MS 2000
 
 // Coin level IR debounce -- SPEC 1.2. Applies to the coin box beam and the two
 // hopper-full beams. Coins tumbling past a beam break it for a few ms; only a
@@ -586,8 +672,9 @@ typedef int32_t volume_t;   // millilitres
 #define PUMP_MIN_OFF_MS 3000
 
 // Absolute ceiling on a single pump run. A pump that has run this long without
-// reaching the high float is pumping air, pumping against a blockage, or
-// looking at a failed float. Any of those destroys it. Stop and raise a fault.
+// bringing the tank to TANK_SONAR_FULL_MM is pumping air, pumping against a
+// blockage, or looking at a sensor that is lying. Any of those destroys it.
+// Stop and raise a fault.
 #define PUMP_MAX_RUN_MS 300000  // 5 minutes
 
 // ---------------------------------------------------------------------------
@@ -698,15 +785,16 @@ typedef int32_t volume_t;   // millilitres
 // HMI
 // ---------------------------------------------------------------------------
 
-// Every Nextion command terminates with three 0xFF bytes.
-#define HMI_TERMINATOR_BYTE 0xFF
-#define HMI_TERMINATOR_COUNT 3
-
-// Fixed command buffer. No String, no dynamic allocation -- CLAUDE.md. The
-// longest command this firmware sends is a setText with a formatted amount,
-// comfortably inside this.
+// Fixed line buffers. No String, no dynamic allocation -- CLAUDE.md. The
+// longest line this firmware sends is a TX with a formatted amount, comfortably
+// inside TX. RX only ever carries "EV <n> <payload>".
 #define HMI_TX_BUFFER 64
-#define HMI_RX_BUFFER 16
+#define HMI_RX_BUFFER 24
+
+// The LV status line (tank and gallons) is re-sent this often even when nothing
+// changed, so an ESP32 that rebooted on its own shows the right warning within
+// two seconds instead of waiting for the next level change.
+#define HMI_STATUS_RESEND_MS 2000
 
 // Screen refresh during a pour. Fast enough that the progress bar looks live,
 // slow enough that the serial line is not saturated while flow pulses are

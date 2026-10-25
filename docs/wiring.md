@@ -83,16 +83,19 @@ that arithmetic.
 | Port | Pins | Use |
 |---|---|---|
 | Serial | D0 / D1 (USB) | Debug output, `DEBUG` builds only. Never enabled in a release build. |
-| Serial2 | D16 TX2 / D17 RX2 | Nextion HMI, **9600 baud** |
+| Serial2 | D16 TX2 / D17 RX2 | ESP32 LCD, **115200 baud**, line protocol in `include/hmi.h` |
+| Serial3 | D15 RX3 (D14 unused) | A02YYUW tank ultrasonic, 9600 baud, receive only |
 
-The Nextion panel and the firmware must agree on baud or the display does not respond
-at all. 9600 is the specified value (`SPECIFICATION.md` §1.4); if a panel is found
-already flashed at another rate, change the panel rather than the firmware, or change
-both documents together.
+**ESP32 LCD.** Mega TX2 (D16) → **1 kΩ / 2 kΩ divider** → ESP32 RX. The ESP32 is 3.3 V
+and a direct 5 V line damages it. ESP32 TX → Mega RX2 (D17) direct; 3.3 V reads as HIGH
+on the Mega (use a level shifter if the link is unreliable). Common ground. The ESP32
+draws every screen itself; WiFi and Bluetooth stay off.
 
-Nextion TX to Mega RX2 (D17), Nextion RX to Mega TX2 (D16), common ground. The Nextion
-runs on its own processor and draws every screen itself — the Mega only sends short
-commands terminated with three `0xFF` bytes.
+**A02YYUW.** Red 5 V, black GND, white (TX) → D15, yellow (RX) **not connected**, which
+selects the sensor's filtered output. Mount it looking straight down, with the full
+water line at least 50 mm below the face (30 mm blind zone plus margin). A cold tank
+sweats; condensation on the face reads as no echo, and the firmware treats that as a
+lost sensor (pump off, OUT OF WATER), not as a full tank.
 
 ## Digital inputs
 
@@ -105,9 +108,16 @@ rather than as a phantom coin or a phantom bottle.
 | Coin acceptor pulse | D2 | INPUT_PULLUP | Falling edge | Interrupt INT0 |
 | Flow sensor pulse | D3 | INPUT_PULLUP | Falling edge | Interrupt INT1 |
 | Bottle proximity | D22 | INPUT_PULLUP | LOW = bottle present | Debounced in software; a flicker must not trigger the removed-bottle pause |
-| Cold tank float, mid | D24 | INPUT_PULLUP | LOW = below mid | Pump on |
-| Cold tank float, high | D25 | INPUT_PULLUP | LOW = at high | Pump off |
-| Gallon bay float | D26 | INPUT_PULLUP | LOW = empty | **Safety lockout.** Inhibits the pump unconditionally |
+| Gallon A capacitive | D26 | INPUT + 10 kΩ pull-down (see note) | default HIGH = water at sensor | Reserve line, ~50 mm up a round 5-gal jug. Low = display warning |
+| Gallon B capacitive | D43 | INPUT + 10 kΩ pull-down (see note) | default HIGH = water at sensor | Same. **Both low stops the pump** |
+
+Gallon sensor polarity is `GALLON_SENSOR_WET_LEVEL` in `config.h`. A PNP / "-V" output
+(HIGH when wet) needs the external pull-down so that a cut wire reads dry. An NPN output
+(LOW when wet) needs no resistor; set the constant to `LOW` and the pin becomes
+INPUT_PULLUP. Test it before fitting: hold the sensor against a full and an empty
+bottle and read the signal wire. The sensor sits flat on the outside of the jug wall,
+and the pump pickup tube must reach below it. D24 and D25, the old cold tank floats,
+are free.
 | ₱1 hopper outlet count | D27 | INPUT_PULLUP | Falling edge | Polled. Confirms coins actually left |
 | ₱5 hopper outlet count | D28 | INPUT_PULLUP | Falling edge | Polled. Confirms coins actually left |
 | Profit chamber full | D29 | INPUT_PULLUP | LOW = beam broken | IR break-beam at the fill line. Locks the machine (COIN STORAGE FULL), clears when emptied |
@@ -176,12 +186,12 @@ motors through it — none of these loads may be driven from a Mega pin directly
 |---|---|---|---|---|
 | Coin acceptor inhibit | D30 | HIGH = inhibited | Acceptor inhibit line | Asserted first in every lockout, and during `COIN_LOCKOUT_MS` |
 | Solenoid valve | D31 | LOW (relay) | 12 V solenoid | Flyback diode required at the valve |
-| Pump | D32 | **LOW (DC SSR)** | 12 V diaphragm pump | Gated by the gallon bay float in firmware. See SSR note below |
+| Pump | D32 | **LOW (DC SSR)** | 12 V diaphragm pump | Off in firmware when both gallons are low or the tank sensor is lost. See SSR note below |
 | ₱1 hopper motor | D33 | LOW (relay) | Hopper motor | Runs only until the outlet sensor counts out |
 | ₱5 hopper motor | D34 | LOW (relay) | Hopper motor | Runs only until the outlet sensor counts out |
 | Buzzer | D35 | HIGH | Active buzzer | Bottle wait warnings at 15 s and 18 s |
 | Compressor | D36 | **LOW (AC SSR)** | Mains compressor | Thermostat control. See SSR note below |
-| Level LED, low | D37 | HIGH | Indicator | Driven from the debounced floats |
+| Level LED, low | D37 | HIGH | Indicator | Driven from the tank ultrasonic level |
 | Level LED, mid | D38 | HIGH | Indicator | |
 | Level LED, high | D39 | HIGH | Indicator | |
 
