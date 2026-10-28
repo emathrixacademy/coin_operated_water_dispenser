@@ -117,7 +117,7 @@ code { font-family: var(--mono); font-size: .9em; }
       <g fill="var(--chip-fg)" font-size="13" font-weight="600">
         <text x="442" y="144">2</text>
         <text x="442" y="214">22</text>
-        <text x="442" y="268">RX3 15</text><text x="442" y="298">26</text><text x="442" y="328">43</text>
+        <text x="442" y="268">TX1 18</text><text x="442" y="298">26</text><text x="442" y="328">43</text>
         <text x="442" y="388">27</text><text x="442" y="418">28</text>
         <text x="442" y="538">41</text><text x="442" y="568">42</text>
         <text x="442" y="628">40</text>
@@ -141,7 +141,7 @@ code { font-family: var(--mono); font-size: .9em; }
       <path d="M260 210 H436" stroke="var(--w-in)" stroke-width="2.5" fill="none"/>
 
       <rect x="30" y="246" width="230" height="96" rx="8" fill="var(--panel)" stroke="var(--w-in)" stroke-width="2"/>
-      <g fill="var(--fg)" font-size="12"><text x="44" y="268">US1 A02YYUW · tank (TX puti)</text><text x="44" y="298">CP1 Capacitive · galon A</text><text x="44" y="328">CP2 Capacitive · galon B</text></g>
+      <g fill="var(--fg)" font-size="12"><text x="44" y="268">US1 Ultrasonic PWM · tank (puti)</text><text x="44" y="298">CP1 Capacitive · galon A</text><text x="44" y="328">CP2 Capacitive · galon B</text></g>
       <g stroke="var(--w-in)" stroke-width="2.5" fill="none"><path d="M260 264 H436"/><path d="M260 294 H436"/><path d="M260 324 H436"/></g>
 
       <rect x="30" y="364" width="230" height="66" rx="8" fill="var(--panel)" stroke="var(--w-in)" stroke-width="2"/>
@@ -183,9 +183,9 @@ code { font-family: var(--mono); font-size: .9em; }
       <path d="M664 434 H840" stroke="var(--w-out)" stroke-width="2.5" fill="none"/>
 
       <rect x="840" y="476" width="230" height="66" rx="8" fill="var(--panel)" stroke="var(--w-ser)" stroke-width="2" stroke-dasharray="6 4"/>
-      <text x="955" y="497" text-anchor="middle" fill="var(--fg)" font-size="12" font-weight="600">LCD1 ESP32 touch (darating)</text>
-      <text x="955" y="514" text-anchor="middle" fill="var(--muted)" font-size="11">16 → 1k/2k divider → LCD RX</text>
-      <text x="955" y="531" text-anchor="middle" fill="var(--muted)" font-size="11">LCD TX → 17 · 5V hiwalay · GND</text>
+      <text x="955" y="497" text-anchor="middle" fill="var(--fg)" font-size="12" font-weight="600">ESP32 (dev board ngayon)</text>
+      <text x="955" y="514" text-anchor="middle" fill="var(--muted)" font-size="11">16 → R1/R2 → GPIO16 · 17 ← GPIO17</text>
+      <text x="955" y="531" text-anchor="middle" fill="var(--muted)" font-size="11">GND · LCD ang papalit pagdating</text>
       <g stroke="var(--w-ser)" stroke-width="2.5" fill="none"><path d="M664 494 H840"/><path d="M664 524 H840"/></g>
 
       <rect x="840" y="574" width="230" height="66" rx="8" fill="var(--panel)" stroke="var(--w-ser)" stroke-width="2" stroke-dasharray="6 4"/>
@@ -239,9 +239,9 @@ code { font-family: var(--mono); font-size: .9em; }
         <tr><td rowspan="3">PWM</td><td>2</td><td>CS1 Allan · COIN</td></tr>
         <tr><td>9</td><td>M1 servo gate ₱5 · orange</td></tr>
         <tr><td>10</td><td>M2 servo gate ₱1 · orange</td></tr>
-        <tr><td rowspan="5">COMMUNICATION</td><td>RX3 15</td><td>US1 A02YYUW · puting wire (TX)</td></tr>
-        <tr><td>TX2 16</td><td>R1 1 kΩ → RX ng ESP32 (may R2 2 kΩ sa GND)</td></tr>
-        <tr><td>RX2 17</td><td>TX ng ESP32 · diretso</td></tr>
+        <tr><td rowspan="5">COMMUNICATION</td><td>TX1 18</td><td>US1 ultrasonic (PWM) · puting wire. Hindi sa RX3 15.</td></tr>
+        <tr><td>TX2 16</td><td>R1 1 kΩ → RX ng ESP32 (may R2 2 kΩ sa GND). Ngayon: ESP32 dev board GPIO16. Pagdating ng LCD: ang LCD na.</td></tr>
+        <tr><td>RX2 17</td><td>TX ng ESP32 · diretso. Ngayon: ESP32 dev board GPIO17.</td></tr>
         <tr><td>SDA 20</td><td>RTC1 SDA (opsyonal)</td></tr>
         <tr><td>SCL 21</td><td>RTC1 SCL (opsyonal)</td></tr>
         <tr><td rowspan="14">DIGITAL</td><td>22</td><td>IR1 baso / bote · OUT</td></tr>
@@ -270,7 +270,7 @@ code { font-family: var(--mono); font-size: .9em; }
       var NS = "http://www.w3.org/2000/svg", svg = document.getElementById("megamap");
       function el(n, a, t) { var e = document.createElementNS(NS, n); for (var k in a) e.setAttribute(k, a[k]); if (t != null) e.textContent = t; svg.appendChild(e); return e; }
       var USE = { "2": ["CS1", "coin"], "9": ["M1", "servo"], "10": ["M2", "servo"],
-        "15": ["US1", "ser"], "16": ["LCD1", "ser"], "17": ["LCD1", "ser"], "20": ["RTC1", "ser"], "21": ["RTC1", "ser"],
+        "18": ["US1", "in"], "16": ["ESP32", "ser"], "17": ["ESP32", "ser"], "20": ["RTC1", "ser"], "21": ["RTC1", "ser"],
         "22": ["IR1", "in"], "26": ["CP1", "in"], "27": ["CT1", "in"], "28": ["CT2", "in"],
         "30": ["CS1", "out"], "31": ["K1", "out"], "32": ["K1", "out"], "33": ["K1", "out"], "34": ["K1", "out"],
         "35": ["BZ1", "out"], "40": ["SW1", "in"], "41": ["IR2", "in"], "42": ["IR3", "in"], "43": ["CP2", "in"],
@@ -412,37 +412,66 @@ code { font-family: var(--mono); font-size: .9em; }
       <li><strong>Pin ng ESP32:</strong> GPIO16 (RX) at GPIO17 (TX) sa ESP32 dev board na test bridge. Sa ESP32 LCD board, iba ang pin; aalamin pagdating nito, pero pareho pa rin ang R1, R2 at ang Mega pin 16 at 17.</li>
     </ol>
 
-    <h2 style="margin-top:22px">Detalye: pull-down ng capacitive sensor (CP1, CP2)</h2>
-    <div class="drawing" role="img" aria-label="OUT ng capacitive sensor papunta sa pin 26 o 43 ng Mega, at may 10k ohm mula sa pin papuntang GND.">
-      <svg viewBox="0 0 1000 260" xmlns="http://www.w3.org/2000/svg" font-family="IBM Plex Mono, Consolas, monospace" font-size="13">
-        <rect x="30" y="40" width="230" height="190" rx="10" fill="var(--panel)" stroke="var(--w-in)" stroke-width="2"/>
-        <text x="145" y="70" text-anchor="middle" fill="var(--fg)" font-weight="600">CP1 / CP2 capacitive</text>
-        <g fill="var(--fg)" font-weight="600" font-size="14">
-          <text x="250" y="95" text-anchor="end">VCC</text>
-          <text x="250" y="125" text-anchor="end">OUT</text>
-          <text x="250" y="205" text-anchor="end">GND</text>
+    <h2 style="margin-top:22px">Detalye: dalawang capacitive sensor, CP1 (galon A) at CP2 (galon B)</h2>
+    <div class="drawing" role="img" aria-label="CP1 ng galon A: OUT papunta sa pin 26 na may sariling 10k ohm papuntang GND. CP2 ng galon B: OUT papunta sa pin 43 na may sariling 10k ohm papuntang GND. Parehong VCC sa 5V at GND sa GND.">
+      <svg viewBox="0 0 1000 460" xmlns="http://www.w3.org/2000/svg" font-family="IBM Plex Mono, Consolas, monospace" font-size="13">
+        <g>
+          <rect x="30" y="30" width="230" height="180" rx="10" fill="var(--panel)" stroke="var(--w-in)" stroke-width="2"/>
+          <text x="145" y="58" text-anchor="middle" fill="var(--fg)" font-weight="700">CP1 · galon A</text>
+          <g fill="var(--fg)" font-weight="600" font-size="14">
+            <text x="250" y="85" text-anchor="end">VCC</text>
+            <text x="250" y="115" text-anchor="end">OUT</text>
+            <text x="250" y="195" text-anchor="end">GND</text>
+          </g>
+          <rect x="740" y="30" width="230" height="180" rx="10" fill="var(--board)"/>
+          <text x="855" y="58" text-anchor="middle" fill="var(--chip-fg)" font-family="Archivo Narrow, sans-serif" font-size="18" font-weight="700">MEGA</text>
+          <g fill="var(--chip-fg)" font-weight="600" font-size="14">
+            <text x="750" y="85">5V</text>
+            <text x="750" y="115">pin 26</text>
+            <text x="750" y="195">GND</text>
+          </g>
+          <path d="M260 80 H740" stroke="var(--w-pwr)" stroke-width="3" fill="none"/>
+          <path d="M260 110 H740" stroke="var(--w-in)" stroke-width="3" fill="none"/>
+          <path d="M260 190 H740" stroke="var(--w-gnd)" stroke-width="3" fill="none"/>
+          <text x="400" y="102" text-anchor="middle" fill="var(--fg)" font-weight="600">OUT → pin 26</text>
+          <circle cx="560" cy="110" r="6" fill="var(--fg)"/>
+          <path d="M560 110 V128" stroke="var(--fg)" stroke-width="2.5" fill="none"/>
+          <rect x="546" y="128" width="28" height="44" rx="3" fill="var(--panel)" stroke="var(--fg)" stroke-width="2"/>
+          <path d="M560 172 V190" stroke="var(--fg)" stroke-width="2.5" fill="none"/>
+          <circle cx="560" cy="190" r="6" fill="var(--w-gnd)"/>
+          <text x="586" y="148" fill="var(--fg)" font-weight="600">R3 · 10 kΩ</text>
+          <text x="586" y="165" fill="var(--muted)" font-size="11">brown-black-orange</text>
         </g>
-        <rect x="740" y="40" width="230" height="190" rx="10" fill="var(--board)"/>
-        <text x="855" y="70" text-anchor="middle" fill="var(--chip-fg)" font-family="Archivo Narrow, sans-serif" font-size="20" font-weight="700">ARDUINO MEGA</text>
-        <g fill="var(--chip-fg)" font-weight="600" font-size="14">
-          <text x="750" y="95">5V</text>
-          <text x="750" y="125">26 (CP1) / 43 (CP2)</text>
-          <text x="750" y="205">GND</text>
+        <g transform="translate(0 230)">
+          <rect x="30" y="30" width="230" height="180" rx="10" fill="var(--panel)" stroke="var(--w-in)" stroke-width="2"/>
+          <text x="145" y="58" text-anchor="middle" fill="var(--fg)" font-weight="700">CP2 · galon B</text>
+          <g fill="var(--fg)" font-weight="600" font-size="14">
+            <text x="250" y="85" text-anchor="end">VCC</text>
+            <text x="250" y="115" text-anchor="end">OUT</text>
+            <text x="250" y="195" text-anchor="end">GND</text>
+          </g>
+          <rect x="740" y="30" width="230" height="180" rx="10" fill="var(--board)"/>
+          <text x="855" y="58" text-anchor="middle" fill="var(--chip-fg)" font-family="Archivo Narrow, sans-serif" font-size="18" font-weight="700">MEGA</text>
+          <g fill="var(--chip-fg)" font-weight="600" font-size="14">
+            <text x="750" y="85">5V</text>
+            <text x="750" y="115">pin 43</text>
+            <text x="750" y="195">GND</text>
+          </g>
+          <path d="M260 80 H740" stroke="var(--w-pwr)" stroke-width="3" fill="none"/>
+          <path d="M260 110 H740" stroke="var(--w-in)" stroke-width="3" fill="none"/>
+          <path d="M260 190 H740" stroke="var(--w-gnd)" stroke-width="3" fill="none"/>
+          <text x="400" y="102" text-anchor="middle" fill="var(--fg)" font-weight="600">OUT → pin 43</text>
+          <circle cx="560" cy="110" r="6" fill="var(--fg)"/>
+          <path d="M560 110 V128" stroke="var(--fg)" stroke-width="2.5" fill="none"/>
+          <rect x="546" y="128" width="28" height="44" rx="3" fill="var(--panel)" stroke="var(--fg)" stroke-width="2"/>
+          <path d="M560 172 V190" stroke="var(--fg)" stroke-width="2.5" fill="none"/>
+          <circle cx="560" cy="190" r="6" fill="var(--w-gnd)"/>
+          <text x="586" y="148" fill="var(--fg)" font-weight="600">R4 · 10 kΩ</text>
+          <text x="586" y="165" fill="var(--muted)" font-size="11">brown-black-orange</text>
         </g>
-        <path d="M260 90 H740" stroke="var(--w-pwr)" stroke-width="3" fill="none"/>
-        <path d="M260 120 H740" stroke="var(--w-in)" stroke-width="3" fill="none"/>
-        <path d="M260 200 H740" stroke="var(--w-gnd)" stroke-width="3" fill="none"/>
-        <text x="400" y="112" text-anchor="middle" fill="var(--fg)" font-weight="600">OUT → pin</text>
-        <circle cx="560" cy="120" r="6" fill="var(--fg)"/>
-        <path d="M560 120 V138" stroke="var(--fg)" stroke-width="2.5" fill="none"/>
-        <rect x="546" y="138" width="28" height="44" rx="3" fill="var(--panel)" stroke="var(--fg)" stroke-width="2"/>
-        <path d="M560 182 V200" stroke="var(--fg)" stroke-width="2.5" fill="none"/>
-        <circle cx="560" cy="200" r="6" fill="var(--w-gnd)"/>
-        <text x="586" y="158" fill="var(--fg)" font-weight="600">10 kΩ</text>
-        <text x="586" y="175" fill="var(--muted)" font-size="11">brown-black-orange</text>
       </svg>
     </div>
-    <p class="tip">Isang 10 kΩ bawat sensor, mula sa signal wire (pin 26 o 43) papuntang GND. Kapag naputol ang wire, babasahin ito bilang "paubos" kaya ligtas. Kailangan lang ito kapag HIGH ang OUT ng sensor tuwing may tubig; tingnan ang "Bago i-on".</p>
+    <p class="tip">Dalawang sensor, dalawang signal pin (26 at 43), dalawang hiwalay na 10 kΩ (R3 at R4). Puwedeng pagsamahin ang VCC sa iisang 5V at ang GND sa iisang GND. Kapag naputol ang signal wire, babasahin itong "paubos", kaya ligtas. Kailangan lang ang resistor kapag HIGH ang OUT ng sensor tuwing may tubig; tingnan ang "Bago i-on".</p>
   </section>
 
   <section class="pagebreak">
@@ -574,12 +603,12 @@ code { font-family: var(--mono); font-size: .9em; }
       </article>
 
       <article class="comp">
-        <div class="comp-h"><span class="ref" style="background:var(--w-in)">US1</span><span class="name">A02YYUW Ultrasonic · Tank</span><span class="model">Waterproof · UART 9600 · nakaharap pababa sa takip ng tank</span></div>
+        <div class="comp-h"><span class="ref" style="background:var(--w-in)">US1</span><span class="name">Ultrasonic · Tank (PWM)</span><span class="model">Waterproof · PWM 3–450 cm · nakaharap pababa sa takip ng tank</span></div>
         <p class="role">Sinusukat ang layo hanggang tubig. Siya ang nagbubukas at nagpapatay ng P2, at nagla-lock ng OUT OF WATER kapag kulang na para sa ₱20.</p>
         <div class="pins">
           <div class="pr k-pwr"><span class="cp">Pula VCC</span><span class="wl"></span><span class="dst"><b>5V</b><span>Mega 5V</span></span></div>
           <div class="pr k-gnd"><span class="cp">Itim GND</span><span class="wl"></span><span class="dst"><b>GND</b><span></span></span></div>
-          <div class="pr k-ser"><span class="cp">Puti TX</span><span class="wl"></span><span class="dst"><b>15</b><span>RX3</span></span></div>
+          <div class="pr k-in"><span class="cp">Puti</span><span class="wl"></span><span class="dst"><b>18</b><span>TX1 18 (PWM signal)</span></span></div>
           <div class="pr k-nc"><span class="cp">Dilaw RX</span><span class="wl"></span><span class="dst"><b>—</b><span>hindi ikakabit</span></span></div>
         </div>
         <p class="tip"><strong>Taas ng pagkakabit:</strong> dapat 5 cm man lang ang layo ng puno sa harap ng sensor (3 cm ang hindi nito nakikita). Ilagay sa <code>config.h</code> ang mga sukat mula sa <code>tank_mm</code> ng <code>st</code>.</p>

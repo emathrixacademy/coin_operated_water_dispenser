@@ -67,8 +67,15 @@ static void gallon_update(gallon_t *g) {
 #endif
 }
 
-static bool gallons_both_low() {
-  return s_gal_a.low && s_gal_b.low;
+// True when the supply can no longer be trusted to feed the pump.
+//
+// The two gallons are drawn through ONE Y fitting (bench photo 2026-10-27).
+// Once either jug is down to its reserve line its hose is close to sucking
+// air, and air in a shared suction line starves the pump just as surely as two
+// empty jugs. So with a Y, either one low stops the pump -- GALLON_STOP_ON_EITHER.
+static bool gallons_supply_low() {
+  return GALLON_STOP_ON_EITHER ? (s_gal_a.low || s_gal_b.low)
+                               : (s_gal_a.low && s_gal_b.low);
 }
 
 // ---------------------------------------------------------------------------
@@ -84,12 +91,157 @@ static uint16_t s_tank_mm = 0;       // median, meaningful only while valid
 static bool s_tank_valid = false;
 static uint32_t s_last_frame_ms = 0; // last PLAUSIBLE frame
 
+// Diagnostics for bench bring-up: every checksummed frame, plausible or not.
+// A sensor aimed past TANK_SONAR_EMPTY_MM reads as "lost" to the pump logic,
+// and only these tell that apart from a sensor that sends nothing at all.
+static uint16_t s_raw_mm = 0;
+static uint32_t s_raw_frames = 0;
+static uint32_t s_raw_bytes = 0;
+
+// PWM variant: the ISR timestamps edges and publishes the last HIGH width.
+// Everything else -- conversion, plausibility, filtering -- happens in
+// sonar_update(), same as for the UART frames.
+static volatile uint32_t s_pwm_rise_us = 0;
+static volatile uint32_t s_pwm_width_us = 0;
+static volatile uint32_t s_pwm_period_us = 0;
+static volatile bool s_pwm_new = false;
+static volatile uint32_t s_pwm_pulses = 0;
+static volatile uint32_t s_pwm_edges = 0;     // every edge, noise included
+static volatile bool s_pwm_have_rise = false;
+static volatile uint32_t s_pwm_any_width_us = 0;
+
+static void sonar_pwm_isr() {
+  const uint32_t t = micros();
+  s_pwm_edges++;
+  if (digitalRead(PIN_TANK_SONAR_PWM)) {
+    s_pwm_period_us = t - s_pwm_rise_us;
+    s_pwm_rise_us = t;
+    s_pwm_have_rise = true;
+  } else {
+    // A fall with no rise before it is half a glitch.
+    if (!s_pwm_have_rise) return;
+    s_pwm_have_rise = false;
+    const uint32_t w = t - s_pwm_rise_us;
+    s_pwm_any_width_us = w;   // diagnostics: every width, rejected or not
+    // Shorter than the blind zone or longer than the tank is not an echo.
+    // Rejected here so a glitch cannot overwrite a good width before
+    // sonar_update() has read it.
+    if (w < TANK_SONAR_MIN_PULSE_US || w > TANK_SONAR_MAX_PULSE_US) return;
+    s_pwm_width_us = w;
+    s_pwm_new = true;
+    s_pwm_pulses++;
+  }
+}
+
+// Interrupt-storm guard. A noisy line can fire this ISR tens of thousands of
+// times a second, which starves the main loop -- hopper counting, the pump,
+// everything. When the edge rate is far above what a sensor sends, stop
+// listening for TANK_SONAR_STORM_HOLDOFF_MS; the sensor then reads as lost,
+// which stops the fill pump and locks at STANDBY. Never wrong, just blind.
+static uint32_t s_storm_check_ms = 0;
+static uint32_t s_storm_edges_seen = 0;
+static uint32_t s_storm_off_since = 0;
+static bool s_storm_off = false;
+static uint16_t s_storm_count = 0;
+
+static void sonar_storm_guard(uint32_t now) {
+  if (s_storm_off) {
+    if ((uint32_t)(now - s_storm_off_since) < TANK_SONAR_STORM_HOLDOFF_MS) return;
+    s_storm_off = false;
+    s_pwm_have_rise = false;
+    noInterrupts();
+    s_storm_edges_seen = s_pwm_edges;
+    interrupts();
+    s_storm_check_ms = now;
+    attachInterrupt(digitalPinToInterrupt(PIN_TANK_SONAR_PWM), sonar_pwm_isr, CHANGE);
+    return;
+  }
+  if ((uint32_t)(now - s_storm_check_ms) < TANK_SONAR_STORM_WINDOW_MS) return;
+  noInterrupts();
+  const uint32_t edges = s_pwm_edges;
+  interrupts();
+  const uint32_t delta = edges - s_storm_edges_seen;
+  s_storm_edges_seen = edges;
+  s_storm_check_ms = now;
+  if (delta > TANK_SONAR_STORM_MAX_EDGES) {
+    detachInterrupt(digitalPinToInterrupt(PIN_TANK_SONAR_PWM));
+    s_storm_off = true;
+    s_storm_off_since = now;
+    if (s_storm_count < 0xFFFF) s_storm_count++;
+  }
+}
+
+// Trigger on the yellow wire, as two timed edges -- never a delay().
+//
+// Mode, selectable from the console ("trig <n>") while we find out which one
+// this sensor wants. On the bench it measured only while the Mega was booting
+// -- when pin 19 floats -- and went quiet once driven.
+//   0 = pin left floating (input), the state it worked in at boot
+//   1 = idle HIGH, pulled LOW for TANK_SONAR_TRIG_LOW_MS each period
+//   2 = idle LOW, pulsed HIGH for TANK_SONAR_TRIG_LOW_MS each period
+static uint8_t s_trig_mode = TANK_SONAR_TRIG_MODE;
+static uint32_t s_trig_since = 0;
+static bool s_trig_active = false;
+
+static void sonar_trigger_apply_idle() {
+  if (s_trig_mode == 0) {
+    pinMode(PIN_TANK_SONAR_TRIG, INPUT);
+  } else {
+    pinMode(PIN_TANK_SONAR_TRIG, OUTPUT);
+    digitalWrite(PIN_TANK_SONAR_TRIG, s_trig_mode == 1 ? HIGH : LOW);
+  }
+  s_trig_active = false;
+}
+
+void water_tank_trigger_mode(uint8_t mode) {
+  s_trig_mode = mode > 2 ? 2 : mode;
+  sonar_trigger_apply_idle();
+}
+
+static void sonar_trigger(uint32_t now) {
+  if (s_trig_mode == 0) return;
+  const uint8_t idle = (s_trig_mode == 1) ? HIGH : LOW;
+  if (s_trig_active) {
+    if ((uint32_t)(now - s_trig_since) >= TANK_SONAR_TRIG_LOW_MS) {
+      digitalWrite(PIN_TANK_SONAR_TRIG, idle);
+      s_trig_active = false;
+    }
+  } else if ((uint32_t)(now - s_trig_since) >= TANK_SONAR_TRIG_PERIOD_MS) {
+    digitalWrite(PIN_TANK_SONAR_TRIG, idle == HIGH ? LOW : HIGH);
+    s_trig_active = true;
+    s_trig_since = now;
+  }
+}
+
 static void sonar_update() {
   const uint32_t now = millis();
 
+#if TANK_SONAR_PWM
+  sonar_trigger(now);
+  sonar_storm_guard(now);
+  noInterrupts();
+  const bool fresh = s_pwm_new;
+  const uint32_t width = s_pwm_width_us;
+  s_pwm_new = false;
+  interrupts();
+  if (fresh) {
+    const uint32_t mm32 = width * 100UL / TANK_SONAR_US_PER_MM_X100;
+    const uint16_t mm = mm32 > 0xFFFFUL ? 0xFFFF : (uint16_t)mm32;
+    s_raw_mm = mm;
+    s_raw_frames++;
+    if (tank_reading_plausible(mm)) {
+      tank_filter_add(&s_filter, mm);
+      s_last_frame_ms = now;
+    }
+  }
+#endif
+
   while (TANK_SONAR_SERIAL.available()) {
     uint16_t mm = 0;
+    s_raw_bytes++;
     if (!a02_parser_feed(&s_parser, (uint8_t)TANK_SONAR_SERIAL.read(), &mm)) continue;
+    s_raw_mm = mm;
+    s_raw_frames++;
     // Blind-zone and past-the-floor readings are not levels. Dropped rather
     // than filtered, and they do not count as a sign of life.
     if (!tank_reading_plausible(mm)) continue;
@@ -125,6 +277,45 @@ static uint32_t s_pump_off_since = 0;   // when the pump last stopped
 static uint32_t s_pump_on_since = 0;    // when the current run started
 static bool s_pump_overrun = false;
 
+// Manual fill from the test console ("fill <s>"). A person is standing at the
+// machine watching the tank, so the sensor interlocks are set aside for this
+// run only; the run ceiling and the rest period still apply. Exists because a
+// first fill can deadlock: an empty tank the sensor cannot see, or gallon
+// sensors not yet adjusted, both hold the pump off -- and the tank never fills.
+static uint32_t s_manual_since = 0;
+static uint32_t s_manual_ms = 0;
+
+static bool manual_fill_active() {
+  return s_manual_ms != 0 && (uint32_t)(millis() - s_manual_since) < s_manual_ms;
+}
+
+// Volume-matched refill (team request 2026-10-28): after every pour, the fill
+// pump puts back what was poured, timed at FILL_MS_PER_100ML. Counted down only
+// while the pump is actually running, so a rest period or a refusal does not
+// lose any of it. Stops early if the tank sensor sees the tank full.
+static uint32_t s_refill_owed_ms = 0;
+static uint32_t s_refill_tick_ms = 0;
+
+void water_refill_add(volume_t ml) {
+  if (ml <= 0) return;
+  s_refill_owed_ms += (uint32_t)ml * FILL_MS_PER_100ML / 100UL;
+  if (s_refill_owed_ms > REFILL_OWED_MAX_MS) s_refill_owed_ms = REFILL_OWED_MAX_MS;
+}
+
+uint32_t water_refill_owed_ms() {
+  return s_refill_owed_ms;
+}
+
+static bool refill_active() {
+  return s_refill_owed_ms > 0;
+}
+
+void water_manual_fill(uint32_t seconds) {
+  if (seconds > MANUAL_FILL_MAX_S) seconds = MANUAL_FILL_MAX_S;
+  s_manual_ms = seconds * 1000UL;
+  s_manual_since = millis();
+}
+
 // =========================================================================
 // THE SINGLE CHOKE POINT FOR THE PUMP OUTPUT -- SPEC 5.3, SPEC 9 invariant 1.
 //
@@ -139,11 +330,17 @@ static void pump_write(bool want_on) {
   const uint32_t now = millis();
 
   // 1. SAFETY INTERLOCK. Unconditional, checked first, no exceptions.
-  //    Dry running destroys the pump. Whatever the tank wants, both supply
-  //    gallons at their reserve line means the pump does not run. So does a
-  //    tank sensor that has gone quiet: blind, the pump can overflow the tank
-  //    or empty a gallon the sensors have not caught yet.
-  if (gallons_both_low() || !s_tank_valid) {
+  //    Dry running destroys the pump. Whatever the tank wants, a supply
+  //    gallon at its reserve line (see gallons_supply_low()) means the pump
+  //    does not run. So does a tank sensor that has gone quiet: blind, the
+  //    pump can overflow the tank or empty a gallon the sensors have not
+  //    caught yet. The one exception is a console manual fill, watched by a
+  //    person.
+  //    A volume-matched refill is the same kind of exception while
+  //    REFILL_IGNORES_SENSORS is 1: it pumps a measured amount, not "until a
+  //    sensor says stop", so it does not need the tank sensor to run.
+  if ((gallons_supply_low() || !s_tank_valid) && !manual_fill_active() &&
+      !(REFILL_IGNORES_SENSORS && refill_active())) {
     digitalWrite(PIN_PUMP, RELAY_OFF);
     if (s_pump_on) {
       s_pump_on = false;
@@ -335,7 +532,16 @@ void water_level_begin() {
   gallon_begin(&s_gal_a);
   gallon_begin(&s_gal_b);
 
+#if TANK_SONAR_PWM
+  // Pull-up: on the bench the line floated between pulses and picked up
+  // ~10 kHz of noise, every edge of it an interrupt. The sensor drives the line
+  // during a pulse, so the pull-up costs nothing when it is talking.
+  pinMode(PIN_TANK_SONAR_PWM, INPUT_PULLUP);
+  sonar_trigger_apply_idle();
+  attachInterrupt(digitalPinToInterrupt(PIN_TANK_SONAR_PWM), sonar_pwm_isr, CHANGE);
+#else
   TANK_SONAR_SERIAL.begin(TANK_SONAR_BAUD);
+#endif
   a02_parser_reset(&s_parser);
   tank_filter_reset(&s_filter);
   s_tank_valid = false;
@@ -366,7 +572,31 @@ void water_level_update() {
   //
   // The decision is only a REQUEST. pump_write() applies the dry-run
   // interlock, the rest period and the run ceiling, and may refuse it.
-  pump_write(tank_pump_want(s_tank_mm, s_tank_valid, s_pump_on));
+  // A manual fill still ends the moment the sensor sees the tank full -- the
+  // person watching should not have to be the only thing stopping an overflow.
+  if (manual_fill_active() && s_tank_valid && s_tank_mm <= TANK_SONAR_FULL_MM) {
+    s_manual_ms = 0;
+#ifdef DEBUG
+    Serial.println(F("[fill pump] tank FULL (ultrasonic) -- manual fill stopped"));
+#endif
+  }
+  // Refill: pay down the owed run time while the pump is on; a full tank (if
+  // the sensor can see it) cancels the rest.
+  {
+    const uint32_t now_ms = millis();
+    if (refill_active()) {
+      if (s_tank_valid && s_tank_mm <= TANK_SONAR_FULL_MM) {
+        s_refill_owed_ms = 0;
+      } else if (s_pump_on) {
+        const uint32_t ran = now_ms - s_refill_tick_ms;
+        s_refill_owed_ms = (ran >= s_refill_owed_ms) ? 0 : s_refill_owed_ms - ran;
+      }
+    }
+    s_refill_tick_ms = now_ms;
+  }
+  pump_write((manual_fill_active() || refill_active())
+                 ? true
+                 : tank_pump_want(s_tank_mm, s_tank_valid, s_pump_on));
 
   temperature_update();
   cooling_update();
@@ -376,6 +606,19 @@ void water_level_update() {
 bool water_tank_sensor_ok()        { return s_tank_valid; }
 uint16_t water_tank_distance_mm()  { return s_tank_valid ? s_tank_mm : 0; }
 uint8_t water_tank_percent()       { return tank_percent(s_tank_mm, s_tank_valid); }
+uint16_t water_tank_raw_mm()       { return s_raw_mm; }
+uint32_t water_tank_raw_frames()   { return s_raw_frames; }
+uint32_t water_tank_raw_bytes()    { return s_raw_bytes; }
+
+void water_tank_pwm_diag(uint32_t *width_us, uint32_t *period_us, uint32_t *pulses) {
+  noInterrupts();
+  *width_us = s_pwm_width_us;
+  *period_us = s_pwm_any_width_us;
+  *pulses = s_pwm_pulses;
+  interrupts();
+}
+
+uint16_t water_tank_storm_count() { return s_storm_count; }
 
 bool water_gallon_low(uint8_t which) {
   return which == 0 ? s_gal_a.low : s_gal_b.low;

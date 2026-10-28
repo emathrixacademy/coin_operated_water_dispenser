@@ -26,6 +26,10 @@ void coin_diverter_update();
 // Ignored if a route is already in progress.
 void coin_diverter_route(coin_t coin);
 
+// Test console only: close and reopen gate 1, then gate 2, `cycles` times
+// (max 20). Idle only; the acceptor is held off until it finishes.
+void coin_diverter_exercise(uint8_t cycles);
+
 // Aim the gates for an identified coin immediately, before it is credited or
 // routed. route() then keeps this decision. Gates return to rest after
 // COIN_AIM_TIMEOUT_MS if the coin is never routed. No-op while busy.

@@ -36,6 +36,10 @@ void coin_hopper_update();
 // Ignored if a payout is already running.
 void coin_hopper_dispense(hopper_id_t hopper, uint16_t count);
 
+// Test console only: run one hopper motor for `seconds` (max 10) with no
+// counting and no inventory change. Idle only. 0 stops it.
+void coin_hopper_manual(hopper_id_t hopper, uint8_t seconds);
+
 payout_result_t coin_hopper_status();
 
 // Coins the outlet sensor actually counted for the payout in progress or just

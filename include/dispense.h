@@ -56,4 +56,9 @@ bool dispense_valve_open();
 // has settled the transaction against dispense_delivered().
 void dispense_clear();
 
+// Test console only: run the dispense pump for `seconds` (capped at
+// MANUAL_FILL_MAX_S) while no sale is in progress. Not counted, not charged.
+// 0 stops it.
+void dispense_manual(uint32_t seconds);
+
 #endif  // DISPENSE_H

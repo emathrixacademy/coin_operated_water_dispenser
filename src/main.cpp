@@ -139,6 +139,31 @@ static void confirm_update() {
   if (raw) s_confirm_pressed = true;   // press edge only, not release
 }
 
+// ---------------------------------------------------------------------------
+// Buzzer
+// ---------------------------------------------------------------------------
+//
+// One active buzzer, owned here like the confirm button. A beep is a start
+// time, never a delay(): the pin goes high, and buzzer_update() drops it once
+// BUZZER_BEEP_MS has passed.
+
+static bool s_buzz_on = false;
+static uint32_t s_buzz_since = 0;
+static uint8_t s_bottle_warns = 0;   // AWAITING_BOTTLE warnings sounded so far
+
+static void buzzer_beep() {
+  digitalWrite(PIN_BUZZER, HIGH);
+  s_buzz_on = true;
+  s_buzz_since = millis();
+}
+
+static void buzzer_update() {
+  if (s_buzz_on && (uint32_t)(millis() - s_buzz_since) >= BUZZER_BEEP_MS) {
+    digitalWrite(PIN_BUZZER, LOW);
+    s_buzz_on = false;
+  }
+}
+
 static bool confirm_take() {
   const bool p = s_confirm_pressed;
   s_confirm_pressed = false;
@@ -211,6 +236,22 @@ static void commit_transaction() {
 //   amount_in  = centavos still OWED to the user
 //   volume_out = millilitres dispensed
 //   change_out = centavos of change actually counted out
+// Bench bypass ("skip", on from power-up in the test build). Never true in a
+// build that sells.
+static bool bench_bypass_on() {
+#ifdef SERIAL_CONSOLE
+  return hmi_console_bypass();
+#else
+  return false;
+#endif
+}
+
+// Change that could not be paid on the last transaction, for the Thank You
+// screen. With the bench bypass on, a failed payout is recorded and shown
+// instead of locking the machine (team request 2026-10-27, test build only).
+static money_t s_change_unpaid = 0;
+static bool s_jam_soft = false;
+
 static void record_unpaid_and_close() {
   money_t owed = billing_change_due() - s_change_paid;
   if (owed < 0) owed = 0;
@@ -464,6 +505,9 @@ static void on_enter(state_t s) {
       billing_reset();
       s_target_ml = 0;
       s_change_paid = 0;
+      s_change_unpaid = 0;
+      s_jam_soft = false;
+      hmi_set_unpaid(0);
 
       // Case 20 path (d): a fault latched while nothing was owed. There was no
       // payout to hang the release on, so it happens here. Without this the
@@ -485,7 +529,9 @@ static void on_enter(state_t s) {
     }
 
     case STATE_AWAITING_BOTTLE:
-      // TODO(M5-C): buzzer ladder at BOTTLE_WAIT_WARN1_MS / WARN2_MS.
+      // The warning ladder counts from this entry, so a second selection in
+      // the same transaction gets its own two warnings.
+      s_bottle_warns = 0;
       break;
 
     case STATE_DISPENSING:
@@ -511,6 +557,9 @@ static void on_enter(state_t s) {
       s_pay_p5 = 0;
       s_pay_leg = 2;          // assume nothing to do until a plan says otherwise
       s_change_paid = 0;
+      s_change_unpaid = 0;
+      s_jam_soft = false;
+      hmi_set_unpaid(0);
 
       const money_t due = billing_change_due();
       if (due <= 0) break;    // nothing owed; PAYING_CHANGE falls straight through
@@ -522,8 +571,14 @@ static void on_enter(state_t s) {
         // the full ceiling before the first coin was accepted. If it happens
         // anyway the machine cannot pay what it owes, which is a jam by any
         // other name -- and locking is the honest answer.
+        s_change_unpaid = due;
         record_unpaid_and_close();
-        faults_raise(FAULT_CHANGE_JAM);
+        if (bench_bypass_on()) {
+          s_jam_soft = true;
+          hmi_set_unpaid(s_change_unpaid);
+        } else {
+          faults_raise(FAULT_CHANGE_JAM);
+        }
         break;
       }
 
@@ -590,7 +645,13 @@ static void state_update(state_t s) {
       break;
 
     // -------------------------------------------------------------------
-    case STATE_STANDBY:
+    case STATE_STANDBY: {
+      const bool bench_bypass = bench_bypass_on();
+      // Bench bypass: nothing locks the test build (team request 2026-10-27).
+      // Every fault is cleared here, stored ones included, so hardware that is
+      // still being wired -- hopper relays, coin-line noise, the tank sensor --
+      // cannot leave the machine out of service between tests.
+      if (bench_bypass && faults_is_locked()) faults_clear_all();
       if (faults_is_locked()) {
         transition_to(STATE_FAULT, TRIG_FAULT_RAISED_WHILE_IDLE);
         break;
@@ -599,7 +660,7 @@ static void state_update(state_t s) {
       // Cold tank below a full P20 pour, or its sensor lost. Refused here,
       // before the first coin, and never mid-transaction: a pour already paid
       // for draws on the margin TANK_SONAR_MIN_SERVE_MM leaves for it.
-      if (water_is_locked_out()) {
+      if (!bench_bypass && water_is_locked_out()) {
         faults_raise(FAULT_OUT_OF_WATER);
         transition_to(STATE_FAULT, TRIG_FAULT_RAISED_WHILE_IDLE);
         break;
@@ -626,7 +687,7 @@ static void state_update(state_t s) {
       // transaction is invariant 8 from the other direction: once the money
       // is in, refusing is no longer an option.
       // ---------------------------------------------------------------
-      if (!coin_hopper_can_cover(billing_worst_case_change())) {
+      if (!bench_bypass && !coin_hopper_can_cover(billing_worst_case_change())) {
         faults_raise(FAULT_LOW_CHANGE);
         transition_to(STATE_FAULT, TRIG_FAULT_RAISED_WHILE_IDLE);
         break;
@@ -639,6 +700,7 @@ static void state_update(state_t s) {
         // here would happen before on_enter() opened the EEPROM record.
       }
       break;
+    }
 
     // -------------------------------------------------------------------
     case STATE_ACCEPTING:
@@ -672,6 +734,28 @@ static void state_update(state_t s) {
 
     // -------------------------------------------------------------------
     case STATE_SELECTING: {
+#if AUTO_DISPENSE_ALL_CREDIT
+      // No picker: CONFIRM means "pour everything I paid for". The selection
+      // is still made through billing_select(), so the price comes off the
+      // credit before the valve opens, exactly as a picked amount would.
+      {
+        volume_t all = billing_max_selectable_ml();
+        if (all > MAX_TRANSACTION_ML) all = MAX_TRANSACTION_ML;
+        if (all > 0 && billing_can_select(all)) {
+          s_target_ml = billing_select(all);
+
+          transaction_t txn;
+          billing_store(&txn);
+          persist_txn_update(&txn);
+
+          transition_to(STATE_AWAITING_BOTTLE, TRIG_TARGET_CHOSEN);
+        } else {
+          // Less than one peso of credit buys nothing; give it back.
+          transition_to(STATE_PAYING_CHANGE, TRIG_FINISH_NO_POUR);
+        }
+        break;
+      }
+#endif
       int32_t payload = 0;
       const hmi_event_t e = hmi_take_event(&payload);
 
@@ -725,6 +809,13 @@ static void state_update(state_t s) {
       }
       // Silent to 15 s, buzzer, buzzer, then cancel and refund in full. The
       // user gets two audible warnings before losing the transaction.
+      if (s_bottle_warns == 0 && state_elapsed() >= BOTTLE_WAIT_WARN1_MS) {
+        buzzer_beep();
+        s_bottle_warns = 1;
+      } else if (s_bottle_warns == 1 && state_elapsed() >= BOTTLE_WAIT_WARN2_MS) {
+        buzzer_beep();
+        s_bottle_warns = 2;
+      }
       if (state_elapsed() >= BOTTLE_WAIT_CANCEL_MS) {
         // Cancelled. The selection never poured, so its price goes back to
         // credit in full before the payout is planned -- otherwise the user
@@ -795,6 +886,9 @@ static void state_update(state_t s) {
         } else {
           billing_settle_partial(delivered);
         }
+        // Put back what physically left the tank (measured, not charged --
+        // this is plumbing, not money).
+        water_refill_add(delivered);
         dispense_clear();
         s_target_ml = 0;
 
@@ -836,6 +930,12 @@ static void state_update(state_t s) {
         transition_to(STATE_FAULT, TRIG_PAYOUT_SHORT);
         break;
       }
+      // Bench bypass: the unpaid change is already on record; show it and
+      // carry on selling.
+      if (s_jam_soft) {
+        transition_to(STATE_THANK_YOU, TRIG_PAYOUT_SHORT);
+        break;
+      }
 
       if (coin_hopper_is_busy()) break;
 
@@ -848,7 +948,16 @@ static void state_update(state_t s) {
         s_change_paid += (money_t)coin_hopper_counted() *
                          (s_pay_leg == 0 ? 500 : 100);
         coin_hopper_clear();
+        s_change_unpaid = billing_change_due() - s_change_paid;
+        if (s_change_unpaid < 0) s_change_unpaid = 0;
         record_unpaid_and_close();
+        if (bench_bypass_on()) {
+          // Bench bypass: recorded above (F19), shown on the Thank You screen
+          // for CHANGE_UNPAID_HOLD_MS, then back to selling.
+          hmi_set_unpaid(s_change_unpaid);
+          transition_to(STATE_THANK_YOU, TRIG_PAYOUT_SHORT);
+          break;
+        }
         // The machine has physically demonstrated it cannot pay. This is the
         // ONE fault that locks immediately rather than deferring -- there is
         // no payout left to protect and waiting would only take more money.
@@ -896,6 +1005,14 @@ static void state_update(state_t s) {
     case STATE_THANK_YOU:
       // Held long enough to read the change due and collect it. Bottle removal
       // dismisses it early -- the user has what they came for.
+      // With unpaid change the notice stays up the full CHANGE_UNPAID_HOLD_MS
+      // so the customer can read how much they are owed.
+      if (s_change_unpaid > 0) {
+        if (state_elapsed() >= CHANGE_UNPAID_HOLD_MS) {
+          transition_to(STATE_STANDBY, TRIG_THANKYOU_DONE);
+        }
+        break;
+      }
       if (state_elapsed() >= HMI_THANKYOU_HOLD_MS || bottle_just_removed()) {
         transition_to(STATE_STANDBY, TRIG_THANKYOU_DONE);
       }
@@ -903,6 +1020,8 @@ static void state_update(state_t s) {
 
     // -------------------------------------------------------------------
     case STATE_FAULT:
+      // Bench bypass: never stay locked (see STANDBY).
+      if (bench_bypass_on()) faults_clear_all();
       // COIN STORAGE FULL is transient: it clears when the box is emptied and
       // the beam is clear again.
       if (!coin_level_box_full()) {
@@ -995,6 +1114,9 @@ void setup() {
 
   // Confirm button. INPUT_PULLUP like every other input, so a broken wire reads
   // as "not pressed" rather than as a permanently held button.
+  pinMode(PIN_BUZZER, OUTPUT);
+  digitalWrite(PIN_BUZZER, LOW);
+
   pinMode(PIN_CONFIRM_BTN, INPUT_PULLUP);
   s_confirm_state = (digitalRead(PIN_CONFIRM_BTN) == LOW);
   s_confirm_candidate = s_confirm_state;
@@ -1074,6 +1196,7 @@ void loop() {
   hmi_update();
   faults_update();
   confirm_update();
+  buzzer_update();
 
 #ifdef BENCH_COIN_TEST
   (void)state_update;   // the sale path is compiled, just not run

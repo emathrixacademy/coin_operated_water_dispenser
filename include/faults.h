@@ -65,6 +65,9 @@ void faults_release_latched();
 // are re-evaluated in update() and do not need this.
 void faults_clear(fault_t fault);
 
+// Every fault, active and latched, stored ones included. Bench bypass only.
+void faults_clear_all();
+
 // Display text for a fault. Points at PROGMEM-backed storage; the caller does
 // not own it and must not modify it.
 const char *faults_message(fault_t fault);

@@ -58,7 +58,10 @@ typedef int32_t volume_t;   // millilitres
 // Raising this raises the worst-case change owed, which the hoppers must be
 // able to cover before any coin is accepted. Do not raise it without redoing
 // the hopper float arithmetic.
-#define MAX_TRANSACTION_PESOS 20
+// Team decision 2026-10-27: the most one customer can buy is 1.5 L (P15).
+// Was 20. A coin that crosses it is still credited (F8) and the excess comes
+// back as change, so the hoppers must be able to pay up to P15 - P1 + P20.
+#define MAX_TRANSACTION_PESOS 15
 #define MAX_TRANSACTION_CENTAVOS (MAX_TRANSACTION_PESOS * CENTAVOS_PER_PESO)
 #define MAX_TRANSACTION_ML (MAX_TRANSACTION_PESOS * ML_PER_PESO)
 
@@ -101,6 +104,25 @@ typedef int32_t volume_t;   // millilitres
 
 #define PIN_COIN_PULSE 2   // INT0. Missed pulse = wrong denomination = money error
 #define PIN_FLOW_PULSE 3   // INT1. Missed pulse = under-counted volume
+
+// THIRD INTERRUPT, approved by the team 2026-10-26: the tank ultrasonic we
+// have is the PWM variant, and its pulse can be as short as ~0.2 ms near a
+// full tank -- shorter than a loop pass, so it cannot be polled. The ISR only
+// timestamps the two edges, nothing else. Only used when TANK_SONAR_PWM is 1.
+#define PIN_TANK_SONAR_PWM 18   // INT3 (marked TX1 18). Sensor white wire
+
+// Trigger for the PWM ultrasonic, on its yellow (RX) wire. Our unit measures
+// only when told to: on the bench it sent ten readings at power-up and then
+// went silent. Idle HIGH, pulled LOW for TANK_SONAR_TRIG_LOW_MS every
+// TANK_SONAR_TRIG_PERIOD_MS. A free-running unit treats a HIGH line the same
+// as an unconnected one, so this is harmless on that variant.
+#define PIN_TANK_SONAR_TRIG 19   // marked RX1 19. Sensor yellow wire
+#define TANK_SONAR_TRIG_PERIOD_MS 100
+// 0 floating, 1 idle-high/low-pulse, 2 idle-low/high-pulse -- see sonar_trigger().
+#ifndef TANK_SONAR_TRIG_MODE
+#define TANK_SONAR_TRIG_MODE 0
+#endif
+#define TANK_SONAR_TRIG_LOW_MS 2
 
 // ---------------------------------------------------------------------------
 // Pin map -- digital inputs
@@ -222,10 +244,14 @@ typedef int32_t volume_t;   // millilitres
 // degree move is ~0.15-0.2 s on an MG996R, which is what lets the gate beat
 // the coin. A gate a few degrees short of closed lets a coin slip past into the
 // wrong place -- recheck these if a servo horn is refitted.
+//
+// 2026-10-26, on the bench: the team asked for the close to swing the other
+// way (left), so CLOSED moved from 0 to 110 -- the same 55 degree swing from
+// the same rest position, mirrored.
 #define GATE1_ANGLE_OPEN   55
-#define GATE1_ANGLE_CLOSED 0
+#define GATE1_ANGLE_CLOSED 110
 #define GATE2_ANGLE_OPEN   55
-#define GATE2_ANGLE_CLOSED 0
+#define GATE2_ANGLE_CLOSED 110
 
 // ---------------------------------------------------------------------------
 // Serial
@@ -252,6 +278,40 @@ typedef int32_t volume_t;   // millilitres
 #define TANK_SONAR_SERIAL Serial3  // D15 RX3 (D14 TX3 unused)
 #define TANK_SONAR_BAUD   9600     // fixed by the sensor
 
+// 1 = PWM variant (what we have): white wire on PIN_TANK_SONAR_PWM, distance
+//     read from the width of its HIGH pulse.
+// 0 = UART variant (A02YYUW): white wire on RX3, D15.
+// The two look identical from outside; only the listing or label tells them
+// apart. Wrong setting = "sensor LOST" and OUT OF WATER, never a wrong level.
+#ifndef TANK_SONAR_PWM
+#define TANK_SONAR_PWM 1
+#endif
+
+// PWM variant: pulse microseconds per millimetre, x100. 583 is the speed of
+// sound there and back (2 / 0.343 mm/us = 5.83 us/mm). CALIBRATE: hold a flat
+// board at a measured distance, read pwm_us from `st`, and set this to
+// pwm_us * 100 / distance_mm.
+#define TANK_SONAR_US_PER_MM_X100 583
+
+// Shortest PWM pulse accepted: the blind zone's worth of echo time. Anything
+// shorter is a glitch on the line, not a reading.
+#define TANK_SONAR_MIN_PULSE_US \
+  ((uint32_t)TANK_SONAR_BLIND_MM * TANK_SONAR_US_PER_MM_X100 / 100)
+
+// Longest accepted: twice the tank depth, so an echo off the floor still
+// counts as "seen" (and is then rejected as past EMPTY) while a stuck-high
+// line does not.
+#define TANK_SONAR_MAX_PULSE_US \
+  ((uint32_t)TANK_SONAR_EMPTY_MM * 2 * TANK_SONAR_US_PER_MM_X100 / 100)
+
+// Storm guard. A sensor sends ~10 pulses a second = ~5 edges per 250 ms.
+// Above 200 edges in a window the line is noise; the ISR is muted for the
+// hold-off so the main loop keeps running. Raising the limit lets noise eat
+// the loop; lowering it below a real sensor's rate mutes a good sensor.
+#define TANK_SONAR_STORM_WINDOW_MS   250
+#define TANK_SONAR_STORM_MAX_EDGES   200
+#define TANK_SONAR_STORM_HOLDOFF_MS  1000
+
 #define DEBUG_BAUD      115200
 
 // ---------------------------------------------------------------------------
@@ -269,6 +329,15 @@ typedef int32_t volume_t;   // millilitres
 //                 before the next coin may come.
 #define GATE_ROUTE_MS  900
 #define GATE_RETURN_MS 400
+
+// Test console "gate <n>": time per gate move. Long enough to watch each move
+// complete; the MG996R needs ~0.2 s for the 55 degree swing.
+#define GATE_EXERCISE_STEP_MS 600
+
+// Servo signal is cut this long after the last gate move, once the gate has
+// certainly arrived (a 55 degree swing is ~0.2 s). Shorter risks cutting a
+// move short; the servo then stops wherever it was.
+#define GATE_DETACH_MS 800
 
 // Acceptor is inhibited for this long after each accepted coin -- the whole
 // gate cycle above.
@@ -454,11 +523,12 @@ typedef int32_t volume_t;   // millilitres
 // scarcer than P1, and ten coins held back are simply P50 of float the machine
 // owns and never spends. On the P285 mockup float that is 36 sales before
 // lockout against 45 (docs/change-economics.md). The zero is not a mistake.
-#if COIN_ROUTING_MODE == COIN_ROUTING_COLLECT_ALL
+//
+// 2026-10-27, bench: set to 0 in both modes at the team's request. The test
+// hopper holds only a few P5, and with a reserve of 10 it never paid a P5 at
+// all -- P18 change came out as P1 coins. Revisit (10 was the design value)
+// once the hopper is loaded to a working float.
 #define HOPPER_RESERVE_P5 0
-#else
-#define HOPPER_RESERVE_P5 10
-#endif
 
 // ---------------------------------------------------------------------------
 // Bottle and dispense timing
@@ -563,7 +633,33 @@ typedef int32_t volume_t;   // millilitres
 // then DISPENSE_MS_PER_100ML = 30000 * 100 / mL collected. Measure with the
 // cold tank near full, the level it runs at most of the time.
 // 6000 (1 L/min) is a PLACEHOLDER.
-#define DISPENSE_MS_PER_100ML 6000
+// 2026-10-26: set to 7000 by the team on the bench -- P1 (100 mL) pours for
+// 7 seconds. Still to be checked against a measuring cup.
+//
+// TWO-POINT CALIBRATION (do this, a single number is only right at one size):
+//   1. Tank full. "pour 5" into the measuring cup, read mL = V1 (t1 = 5000).
+//   2. "pour 20" into the cup, read mL = V2 (t2 = 20000).
+//   3. Repeat each three times and average.
+//   4. DISPENSE_MS_PER_100ML = 100 * (t2 - t1) / (V2 - V1)
+//      DISPENSE_DEAD_MS      = t1 - V1 * (t2 - t1) / (V2 - V1)
+// Example: 5 s -> 60 mL, 20 s -> 300 mL gives 6250 ms per 100 mL and a dead
+// time of 1250 ms.
+#define DISPENSE_MS_PER_100ML 7000
+
+// Run time that delivers nothing at the cup: hose fill at the start, less the
+// dribble after the pump stops. 0 until the two-point calibration is done.
+// Signed -- negative when the dribble outweighs the hose fill.
+#define DISPENSE_DEAD_MS 0
+
+// 1 = no amount picker. CONFIRM (push button, or Continue on the screen) pours
+// the whole credit, P1 = 100 mL, once the bottle IR sees a bottle.
+// 0 = the screen's amount picker chooses how much to pour; what is left is
+//     poured again or returned as change.
+// Team decision 2026-10-27: the customer chooses the amount, so 0. (Was 1
+// from 2026-10-26.)
+#ifndef AUTO_DISPENSE_ALL_CREDIT
+#define AUTO_DISPENSE_ALL_CREDIT 0
+#endif
 
 // No flow pulses for this long while the valve is open = stall. Three physical
 // causes -- blocked line, dead sensor, closed upstream tap -- and all three need
@@ -620,7 +716,10 @@ typedef int32_t volume_t;   // millilitres
 
 // The tank floor. A reading past it is an echo off something else and is
 // dropped. Also the 0% point on the display.
-#define TANK_SONAR_EMPTY_MM 300
+// 2026-10-26: raised from 300 on the bench -- the empty tank reads deeper than
+// 300 mm, so every echo off its floor was thrown away and the sensor looked
+// dead. Set to the measured sensor-to-floor distance once known.
+#define TANK_SONAR_EMPTY_MM 1000
 
 // Readings in the median. Five frames is ~0.5 s: enough to reject a wave or an
 // echo off the inlet stream, short enough that the pump still stops at FULL
@@ -650,7 +749,14 @@ typedef int32_t volume_t;   // millilitres
 //                     HIGH = dry, also safe.
 // CHECK ON THE BENCH: hold the sensor against a full bottle and an empty one
 // and measure the signal wire. If it is the other way round, flip this.
-#define GALLON_SENSOR_WET_LEVEL HIGH
+// Bench 2026-10-25: our sensors read LOW against a full gallon -- NPN output.
+// The 10k pull-downs were removed; the pin runs INPUT_PULLUP.
+#define GALLON_SENSOR_WET_LEVEL LOW
+
+// 1 = EITHER gallon at its reserve line stops the fill pump. Right for our
+//     machine: both jugs feed one Y fitting, and one jug sucking air starves
+//     the pump. 0 = only both low stops it (separate suction lines).
+#define GALLON_STOP_ON_EITHER 1
 
 // "Low" acts at once -- it can stop the pump, and a sloshing jug near the line
 // may never hold low for a full window. Only the return to "water present" is
@@ -676,6 +782,28 @@ typedef int32_t volume_t;   // millilitres
 // blockage, or looking at a sensor that is lying. Any of those destroys it.
 // Stop and raise a fault.
 #define PUMP_MAX_RUN_MS 300000  // 5 minutes
+
+// Longest single manual fill from the test console. Two minutes is long enough
+// to see water arrive and short enough that a forgotten command cannot run a
+// gallon dry for long. PUMP_MAX_RUN_MS still applies on top.
+#define MANUAL_FILL_MAX_S 120
+
+// Volume-matched refill: fill-pump milliseconds per 100 mL, gallons -> tank
+// (a 1 m lift, so slower than the dispense pump). 7000 is a PLACEHOLDER --
+// measure it: "fill 10" into a measuring jug at the tank inlet, then
+// FILL_MS_PER_100ML = 10000 * 100 / mL collected. Too high overfills the tank,
+// too low lets it drain over the day.
+#define FILL_MS_PER_100ML 7000
+
+// Owed refill never banks more than this, so a miscount cannot run the pump
+// for ages. 120 s is more than one 1.5 L sale needs at the placeholder rate.
+#define REFILL_OWED_MAX_MS 120000UL
+
+// 1 = the refill runs even when the tank sensor is lost or a gallon reads low.
+// Bench setting (2026-10-28): neither sensor works yet, and with them in the
+// loop the refill would never run. It RISKS RUNNING THE PUMP DRY on an empty
+// gallon -- set to 0 once the gallon sensors read correctly.
+#define REFILL_IGNORES_SENSORS 1
 
 // ---------------------------------------------------------------------------
 // Temperature
@@ -796,6 +924,10 @@ typedef int32_t volume_t;   // millilitres
 // two seconds instead of waiting for the next level change.
 #define HMI_STATUS_RESEND_MS 2000
 
+// Sales screen: how many of the most recent purchases it lists. The EEPROM
+// ring holds HISTORY_ENTRIES events in all, purchases and others mixed.
+#define HMI_STATS_HISTORY 10
+
 // Screen refresh during a pour. Fast enough that the progress bar looks live,
 // slow enough that the serial line is not saturated while flow pulses are
 // arriving on an interrupt.
@@ -804,6 +936,11 @@ typedef int32_t volume_t;   // millilitres
 // How long the Thank You screen holds before returning to Standby, if the user
 // does not dismiss it. Long enough to read the change due and collect it.
 #define HMI_THANKYOU_HOLD_MS 8000
+
+// Bench bypass only: how long "change could not be given" stays on screen
+// before the machine goes back to taking coins. Long enough to read the
+// amount owed and photograph it; the amount is in the EEPROM history anyway.
+#define CHANGE_UNPAID_HOLD_MS 20000
 
 // ---------------------------------------------------------------------------
 // EEPROM

@@ -148,31 +148,38 @@ static void test_selection_deducts_before_the_valve_opens() {
 // Settlement
 // ---------------------------------------------------------------------------
 
+// The ceiling is P15 / 1500 mL (team decision 2026-10-27). P10 + P5 lands on
+// it exactly, so these tests buy the most a customer can.
+static void insert_the_ceiling() {
+  billing_add_coin(COIN_P10);
+  billing_add_coin(COIN_P5);
+}
+
 static void test_complete_pour_leaves_credit_alone() {
-  billing_add_coin(COIN_P20);
-  billing_select(2000);
+  insert_the_ceiling();
+  billing_select(MAX_TRANSACTION_ML);
   TEST_ASSERT_EQUAL_INT32(0, billing_credit());
-  billing_settle_complete(2000);
+  billing_settle_complete(MAX_TRANSACTION_ML);
   TEST_ASSERT_EQUAL_INT32(0, billing_change_due());
-  TEST_ASSERT_EQUAL_INT32(2000, billing_total_dispensed());
+  TEST_ASSERT_EQUAL_INT32(MAX_TRANSACTION_ML, billing_total_dispensed());
 }
 
 static void test_partial_pour_the_documented_case() {
-  // scenarios.md case 8: P20 in, 2000 mL selected, stopped at a measured
-  // 305 mL. Charge 300 mL = P3, refund P17.
-  billing_add_coin(COIN_P20);
-  billing_select(2000);
+  // scenarios.md case 8, at today's ceiling: P15 in, 1500 mL selected,
+  // stopped at a measured 305 mL. Charge 300 mL = P3, refund P12.
+  insert_the_ceiling();
+  billing_select(MAX_TRANSACTION_ML);
   billing_settle_partial(305);
-  TEST_ASSERT_EQUAL_INT32(1700, billing_change_due());
+  TEST_ASSERT_EQUAL_INT32(1200, billing_change_due());
   TEST_ASSERT_EQUAL_INT32(300, billing_total_dispensed());
 }
 
 static void test_partial_rounding_favours_the_machine() {
   // 399 mL measured is charged as 300, not 400. The user loses the 99 mL.
-  billing_add_coin(COIN_P20);
-  billing_select(2000);
+  insert_the_ceiling();
+  billing_select(MAX_TRANSACTION_ML);
   billing_settle_partial(399);
-  TEST_ASSERT_EQUAL_INT32(1700, billing_change_due());
+  TEST_ASSERT_EQUAL_INT32(1200, billing_change_due());
 }
 
 static void test_partial_below_one_step_refunds_everything() {
@@ -220,21 +227,25 @@ static void test_worst_case_change() {
   // from AWAITING_BOTTLE -- so a P20 refund is reachable and a guard sized at
   // P19 lets the machine accept a transaction it cannot refund by one peso.
   //
-  // F8 / WO-009: credit is unclamped, so P19 then a P20 is reachable -- P39.
-  TEST_ASSERT_EQUAL_INT32(3900, billing_worst_case_change());
+  // F8 / WO-009: credit is unclamped, so one peso short of the ceiling and then
+  // a P20 is reachable. At the P15 ceiling that is P14 + P20 = P34.
+  TEST_ASSERT_EQUAL_INT32(MAX_TRANSACTION_CENTAVOS - COIN_VALUE_P1 + COIN_VALUE_P20,
+                          billing_worst_case_change());
+  TEST_ASSERT_EQUAL_INT32(3400, billing_worst_case_change());
 }
 
 static void test_worst_case_change_covers_a_no_pour_refund() {
   // The path that proves the point: ceiling in, nothing selected, user walks.
-  billing_add_coin(COIN_P20);
-  TEST_ASSERT_EQUAL_INT32(2000, billing_change_due());
+  insert_the_ceiling();
+  TEST_ASSERT_EQUAL_INT32(MAX_TRANSACTION_CENTAVOS, billing_change_due());
   TEST_ASSERT_TRUE(billing_change_due() <= billing_worst_case_change());
 
-  // And the true worst case: P19 in, then a P20, then a no-pour finish.
+  // And the true worst case: one peso short of the ceiling, then a P20, then
+  // a no-pour finish.
   billing_reset();
-  for (int i = 0; i < 19; i++) billing_add_coin(COIN_P1);
+  for (int i = 0; i < MAX_TRANSACTION_PESOS - 1; i++) billing_add_coin(COIN_P1);
   billing_add_coin(COIN_P20);
-  TEST_ASSERT_EQUAL_INT32(3900, billing_change_due());
+  TEST_ASSERT_EQUAL_INT32(3400, billing_change_due());
   TEST_ASSERT_TRUE(billing_change_due() <= billing_worst_case_change());
 }
 
@@ -265,25 +276,25 @@ static void test_cancel_selection_refunds_in_full() {
 static void test_cancel_selection_leaves_nothing_selectable_behind() {
   // After a cancel the target must be cleared, or a later settle would price a
   // selection the user already backed out of.
-  billing_add_coin(COIN_P20);
-  billing_select(2000);
+  insert_the_ceiling();
+  billing_select(MAX_TRANSACTION_ML);
   billing_cancel_selection();
 
   // Settling again must be a no-op rather than refunding a second time.
   billing_settle_partial(0);
-  TEST_ASSERT_EQUAL_INT32(2000, billing_credit());
+  TEST_ASSERT_EQUAL_INT32(MAX_TRANSACTION_CENTAVOS, billing_credit());
 }
 
 static void test_cancel_after_the_bottle_timeout_refunds_the_ceiling() {
-  // The AWAITING_BOTTLE timeout path: P20 in, 2000 mL chosen, user never
-  // brings a bottle. They must be owed the entire P20 back -- which is also
-  // why billing_worst_case_change() is the full ceiling.
-  billing_add_coin(COIN_P20);
-  billing_select(2000);
+  // The AWAITING_BOTTLE timeout path: the ceiling in, the most chosen, user
+  // never brings a bottle. They must be owed all of it back -- which is also
+  // why billing_worst_case_change() covers the full ceiling.
+  insert_the_ceiling();
+  billing_select(MAX_TRANSACTION_ML);
   TEST_ASSERT_EQUAL_INT32(0, billing_credit());
 
   billing_cancel_selection();
-  TEST_ASSERT_EQUAL_INT32(2000, billing_change_due());
+  TEST_ASSERT_EQUAL_INT32(MAX_TRANSACTION_CENTAVOS, billing_change_due());
   TEST_ASSERT_TRUE(billing_change_due() <= billing_worst_case_change());
 }
 

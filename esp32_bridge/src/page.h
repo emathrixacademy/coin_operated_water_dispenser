@@ -9,7 +9,7 @@
 #include <pgmspace.h>
 
 static const char PAGE_HTML[] PROGMEM = R"HTML(<!doctype html>
-<html lang="tl">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -56,12 +56,12 @@ pre{white-space:pre-wrap;max-height:220px;overflow:auto;margin:8px 0 0}
 <header><h1>WATER VENDO</h1><span class="tag"><span id="dot" class="dot"></span><span id="conn">offline</span> · bench test</span></header>
 
 <section class="card">
-  <div class="levels"><span class="small">Tangke</span><div class="bar"><i id="tankbar"></i></div><b id="tankpct">--%</b></div>
-  <div id="sensor" class="notice">⚠ Walang basa ang tank sensor</div>
+  <div class="levels"><span class="small">Tank</span><div class="bar"><i id="tankbar"></i></div><b id="tankpct">--%</b></div>
+  <div id="sensor" class="notice">⚠ No reading from the tank sensor</div>
   <div id="gallon" class="notice"></div>
 </section>
 
-<section class="card" id="screen"><p class="title">Kumokonekta…</p></section>
+<section class="card" id="screen"><p class="title">Connecting…</p></section>
 
 <details class="card"><summary>Raw log</summary><pre id="log"></pre></details>
 </main>
@@ -81,30 +81,30 @@ function levels(){
   $("tankbar").style.width=m.tank+"%";$("tankpct").textContent=m.tankok?m.tank+"%":"--";
   $("sensor").classList.toggle("show",!m.tankok);
   const g=$("gallon"),n=m.ga+m.gb;
-  g.textContent=n===2?"⚠ Parehong galon paubos na — palitan na":n?`⚠ Galon ${m.ga?"A":"B"} paubos na`:"";
+  g.textContent=n===2?"⚠ Both gallons are low — replace them":n?`⚠ Gallon ${m.ga?"A":"B"} is low`:"";
   g.classList.toggle("show",n>0);
 }
 
 function screen(){
   const s=v.state;let h="";
-  if(m.fault&&s===ST.FAULT){h=`<p class="title">Hindi muna magagamit</p><p class="fault">${FAULTS[m.fault]||("FAULT "+m.fault)}</p>`;}
-  else if(s===ST.STANDBY||s===ST.BOOT){h=`<p class="title">Maghulog ng barya</p><p class="small">₱1 = 100 mL · hanggang ₱20</p>`;}
-  else if(s===ST.ACCEPTING){h=`<p class="small">Credit</p><p class="credit">${peso(v.credit)}</p><p class="small">Maghulog pa, o pindutin ang CONFIRM</p>
+  if(m.fault&&s===ST.FAULT){h=`<p class="title">Out of service</p><p class="fault">${FAULTS[m.fault]||("FAULT "+m.fault)}</p>`;}
+  else if(s===ST.STANDBY||s===ST.BOOT){h=`<p class="title">Insert coins</p><p class="small">₱1 = 100 mL · up to ₱15 (1.5 L)</p>`;}
+  else if(s===ST.ACCEPTING){h=`<p class="small">Credit</p><p class="credit">${peso(v.credit)}</p><p class="small">Insert more coins, or press CONFIRM</p>
     <div class="row"><button onclick="send(${EV.CONFIRM})">CONFIRM</button></div>`;}
   else if(s===ST.SELECTING){let b="";for(let p=1;p<=20;p++){const ml=p*100;
       b+=`<button ${ml>v.maxml?"disabled":""} onclick="send(${EV.SELECT},${ml})">${ml>=1000?(ml/1000)+" L":ml+" mL"}<small>₱${p}</small></button>`;}
-    h=`<p class="small">Credit</p><p class="credit">${peso(v.credit)}</p><p class="small">Pumili ng dami</p><div class="grid">${b}</div>
-    <div class="row"><button class="alt" onclick="send(${EV.FINISH})">Tapos na · ibalik ang sukli</button></div>`;}
-  else if(s===ST.AWAITING){h=`<p class="title">Ilagay ang bote</p><p class="small">${v.target} mL ang ilalabas</p>
-    <div class="row"><button class="alt" onclick="send(${EV.BACK})">Bumalik</button></div>`;}
+    h=`<p class="small">Credit</p><p class="credit">${peso(v.credit)}</p><p class="small">Choose an amount</p><div class="grid">${b}</div>
+    <div class="row"><button class="alt" onclick="send(${EV.FINISH})">Done · return my change</button></div>`;}
+  else if(s===ST.AWAITING){h=`<p class="title">Place your bottle</p><p class="small">${v.target} mL will be dispensed</p>
+    <div class="row"><button class="alt" onclick="send(${EV.BACK})">Back</button></div>`;}
   else if(s===ST.DISPENSING||s===ST.SETTLING){const pc=v.target?Math.min(100,Math.round(v.poured*100/v.target)):100;
-    h=`<p class="title">Naglalabas ng tubig…</p><div class="prog"><i style="width:${pc}%"></i></div><p class="small">${v.poured} / ${v.target} mL</p>`;}
-  else if(s===ST.PAUSED){h=`<p class="title">Ibalik ang bote</p><p class="small">May 10 segundo bago matapos ang transaksyon</p>`;}
-  else if(s===ST.COMPLETE){h=`<p class="title">Tapos!</p><p class="small">Nailabas: ${v.total} mL · Natitirang credit</p><p class="credit">${peso(v.credit)}</p>
-    <div class="row"><button onclick="send(${EV.AGAIN})">Dagdag</button><button class="alt" onclick="send(${EV.FINISH})">Tapusin</button></div>`;}
-  else if(s===ST.PAYING){h=`<p class="title">Ibinabalik ang sukli…</p><p class="credit">${peso(v.credit)}</p>`;}
-  else if(s===ST.THANKYOU){h=`<p class="title">Salamat!</p><p class="small">Kunin ang sukli: ${peso(v.credit)} · Nailabas: ${v.total} mL</p>`;}
-  else if(s===ST.FAULT){h=`<p class="title">Hindi muna magagamit</p>`;}
+    h=`<p class="title">Dispensing water…</p><div class="prog"><i style="width:${pc}%"></i></div><p class="small">${v.poured} / ${v.target} mL</p>`;}
+  else if(s===ST.PAUSED){h=`<p class="title">Put the bottle back</p><p class="small">You have 10 seconds ang transaksyon</p>`;}
+  else if(s===ST.COMPLETE){h=`<p class="title">Done!</p><p class="small">Dispensed: ${v.total} mL · Credit left</p><p class="credit">${peso(v.credit)}</p>
+    <div class="row"><button onclick="send(${EV.AGAIN})">More</button><button class="alt" onclick="send(${EV.FINISH})">Finish</button></div>`;}
+  else if(s===ST.PAYING){h=`<p class="title">Returning your change…</p><p class="credit">${peso(v.credit)}</p>`;}
+  else if(s===ST.THANKYOU){h=`<p class="title">Thank you!</p><p class="small">Take your change: ${peso(v.credit)} · Dispensed: ${v.total} mL</p>`;}
+  else if(s===ST.FAULT){h=`<p class="title">Out of service</p>`;}
   else {h=`<p class="title">Admin</p>`;}
   // Redraw only when something changed, so a button is not replaced under a finger.
   if(h!==drawn){$("screen").innerHTML=h;drawn=h;}

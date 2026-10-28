@@ -119,7 +119,10 @@ static void test_reserve_is_untouchable() {
 }
 
 static void test_below_reserve_pays_entirely_in_p1() {
-  TEST_ASSERT_TRUE(plan_pesos(15, 100, HOPPER_RESERVE_P5 - 1));
+  // Exercised with the design reserve of 10 explicitly: the configured
+  // HOPPER_RESERVE_P5 is 0 on the bench (2026-10-27), and "one below zero" is
+  // not a stock level.
+  TEST_ASSERT_TRUE(change_plan_reserve(15 * 100, 100, 9, 10, &P));
   TEST_ASSERT_EQUAL_UINT16(0, P.p5);
   TEST_ASSERT_EQUAL_UINT16(15, P.p1);
 }

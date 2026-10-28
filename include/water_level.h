@@ -34,6 +34,21 @@ uint16_t water_tank_distance_mm();    // filtered; 0 when the sensor is not ok
 uint8_t water_tank_percent();         // 0-100 for the display; 0 when not ok
 water_level_t water_tank_level();
 
+// Bench diagnostics: the last checksummed frame even when it was discarded as
+// implausible, and running counts of frames and raw bytes from the sensor.
+// bytes == 0 means nothing is arriving on RX3 at all (wiring or power).
+uint16_t water_tank_raw_mm();
+uint32_t water_tank_raw_frames();
+uint32_t water_tank_raw_bytes();
+
+// PWM variant bench diagnostics: last HIGH width, last rise-to-rise period,
+// and pulses seen. pulses == 0 means nothing on PIN_TANK_SONAR_PWM.
+void water_tank_pwm_diag(uint32_t *width_us, uint32_t *period_us, uint32_t *pulses);
+
+// Times the PWM line was muted for an interrupt storm since boot. Climbing =
+// the sensor wire is picking up noise; fit the RC filter.
+uint16_t water_tank_storm_count();
+
 // Supply gallons. which: 0 = A, 1 = B. "Low" = dry at the reserve line.
 bool water_gallon_low(uint8_t which);
 uint8_t water_gallons_low_count();    // 0, 1 or 2 -- drives the display warning
@@ -44,6 +59,18 @@ uint8_t water_gallons_low_count();    // 0, 1 or 2 -- drives the display warning
 bool water_is_locked_out();
 
 bool water_pump_running();
+
+// Test console only: run the fill pump for `seconds` (capped at
+// MANUAL_FILL_MAX_S) regardless of the tank and gallon sensors. 0 stops it.
+void water_manual_fill(uint32_t seconds);
+
+// Pump back into the tank what a pour took out: adds ml x FILL_MS_PER_100ML of
+// fill-pump run time, worked off while the pump runs. Called after every pour.
+void water_refill_add(volume_t ml);
+uint32_t water_refill_owed_ms();
+
+// Test console only: tank ultrasonic trigger mode, 0-2 (see sonar_trigger()).
+void water_tank_trigger_mode(uint8_t mode);
 
 // Absolute run ceiling. A pump that has run PUMP_MAX_RUN_MS without filling the
 // tank is pumping air, pumping against a blockage, or looking at a sensor that

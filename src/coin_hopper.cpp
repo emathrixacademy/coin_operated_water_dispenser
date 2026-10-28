@@ -119,6 +119,24 @@ static void start_attempt() {
   s_phase = HOP_RUNNING;
 }
 
+// Bench check from the test console ("hop1 <s>" / "hop5 <s>"): run one hopper
+// motor for a few seconds with no counting and no inventory change, to see the
+// relay click and the motor turn. Idle only -- never during a payout.
+static uint32_t s_manual_since = 0;
+static uint32_t s_manual_ms = 0;
+static uint8_t s_manual_pin = 0;
+
+void coin_hopper_manual(hopper_id_t hopper, uint8_t seconds) {
+  if (s_phase != HOP_IDLE) return;
+  motors_all_off();
+  if (seconds == 0) { s_manual_ms = 0; return; }
+  if (seconds > 10) seconds = 10;
+  s_manual_pin = (hopper == HOPPER_P1) ? PIN_HOPPER_P1_RUN : PIN_HOPPER_P5_RUN;
+  digitalWrite(s_manual_pin, RELAY_ON);
+  s_manual_since = millis();
+  s_manual_ms = seconds * 1000UL;
+}
+
 void coin_hopper_begin() {
   pinMode(PIN_HOPPER_P1_COUNT, INPUT_PULLUP);
   pinMode(PIN_HOPPER_P5_COUNT, INPUT_PULLUP);
@@ -130,6 +148,10 @@ void coin_hopper_begin() {
 }
 
 void coin_hopper_update() {
+  if (s_manual_ms && (uint32_t)(millis() - s_manual_since) >= s_manual_ms) {
+    digitalWrite(s_manual_pin, RELAY_OFF);
+    s_manual_ms = 0;
+  }
   switch (s_phase) {
     case HOP_RUNNING: {
       poll_outlet();
@@ -189,6 +211,7 @@ void coin_hopper_update() {
 void coin_hopper_dispense(hopper_id_t hopper, uint16_t count) {
   if (s_phase != HOP_IDLE) return;
   if (count == 0) return;
+  s_manual_ms = 0;   // a real payout takes over from any bench run
 
   s_hopper = hopper;
   s_commanded = count;

@@ -26,6 +26,7 @@ struct machine_t {
   int32_t target;
   int32_t poured;
   int32_t total;
+  int32_t unpaid;     // centavos of change the last payout could not give
   int32_t fault;      // fault_t, 0 = none
   int32_t tank;       // 0-100
   int32_t tank_ok;
@@ -35,6 +36,32 @@ struct machine_t {
 };
 
 extern machine_t g_m;
+
+// Sales screen data, from the Mega's SD / DT / HS / HE reply (EEPROM-backed
+// there, so it survives a power cut). Requested with EV 6.
+#define EV_STATS 6
+#define STATS_HISTORY 10
+
+struct sale_t {
+  uint32_t ts;     // Unix seconds, 0 = no clock when it was recorded
+  int32_t in;      // centavos inserted
+  int32_t ml;      // dispensed
+  int32_t change;  // centavos returned
+  int32_t owed;    // centavos of change NOT paid (0 = paid in full)
+};
+
+struct stats_t {
+  int32_t income;  // centavos, today
+  int32_t volume;  // mL, today
+  int32_t count;   // purchases, today
+  uint16_t year;   // 0 = the Mega has no clock
+  uint8_t month, day;
+  sale_t sale[STATS_HISTORY];
+  uint8_t n;       // rows in sale[]
+  bool ready;      // HE received since the last request
+};
+
+extern stats_t g_stats;
 
 // Apply one line from the Mega. Returns true if anything changed.
 bool model_apply(const char *line);

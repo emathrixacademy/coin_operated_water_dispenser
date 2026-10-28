@@ -51,16 +51,19 @@ src/
   faults.*            lockout conditions and alert routing
 ```
 
-Interrupts are used only for the coin acceptor pulse pin and the flow sensor pulse pin.
-ISRs set `volatile` counters and nothing else. All interpretation happens in `update()`.
+Interrupts are used only for the coin acceptor pulse pin, the flow sensor pulse pin and,
+since 2026-10-26 with the team's approval, the PWM tank ultrasonic on pin 18 (its pulse is
+too short to poll). ISRs set `volatile` counters and timestamps and nothing else. All
+interpretation happens in `update()`.
 
 ## Billing logic — do not invert this
 
 **Coins determine volume. Volume never determines coins.**
 
 The machine reads coins first, computes the volume entitlement, opens the valve, and
-uses the flow sensor purely as a cutoff. ₱1 = 100 mL. Maximum ₱20 per transaction, so
-2000 mL maximum.
+uses the flow sensor purely as a cutoff. ₱1 = 100 mL. Maximum ₱15 per transaction, so
+1500 mL maximum (team decision 2026-10-27; was ₱20). A coin that crosses the ceiling is
+still credited and the excess is returned as change.
 
 If you find yourself writing code that computes an amount owed from a measured volume,
 stop. That is the bug this design exists to prevent. The flow sensor has 2–5% tolerance
@@ -93,15 +96,17 @@ succeeded.
 
 ## Water level
 
-An A02YYUW ultrasonic (UART, `Serial3`) over the cold tank controls the pump: it starts
+A waterproof ultrasonic over the cold tank (the PWM variant on pin 18; the UART A02YYUW on
+`Serial3` is also supported, `TANK_SONAR_PWM`) controls the pump: it starts
 at `TANK_SONAR_REFILL_MM` and stops at `TANK_SONAR_FULL_MM`, keeping the tank topped up.
 Below `TANK_SONAR_MIN_SERVE_MM` (less than a full ₱20 pour left) the machine locks with
 OUT OF WATER, checked in STANDBY only. A lost sensor locks it too.
 
-Two supply gallons, one capacitive sensor each at the reserve line. One low is a small
-warning on the display, not a lockout. Both low stops the pump.
+Two supply gallons, one capacitive sensor each at the reserve line, drawn through one Y
+fitting. A low gallon is a small warning on the display, not a lockout. Because the
+suction line is shared, either gallon low stops the pump (`GALLON_STOP_ON_EITHER`).
 
-Running the pump dry destroys it. If both gallons read low, or the tank sensor is lost,
+Running the pump dry destroys it. If a gallon reads low, or the tank sensor is lost,
 the pump must not run regardless of what the tank level says. The interlock lives in
 `pump_write()`, where the output is written.
 

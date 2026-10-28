@@ -7,7 +7,11 @@
 #include "billing.h"
 #include "faults.h"
 #include "dispense.h"
+#include "persist.h"
+#include "rtc.h"
 #ifdef SERIAL_CONSOLE
+#include "coin_diverter.h"
+#include "coin_hopper.h"
 #include "persist.h"
 #include "coin_level.h"
 #include "bottle.h"
@@ -93,6 +97,64 @@ static bool s_rx_overflow = false;   // discard until the next newline
 
 static bool s_confirm = false;
 
+// Sales screen reply, one line per pass so it never blocks:
+//   SD <income centavos> <volume mL> <transactions>   today's totals
+//   DT <year> <month> <day>                            today (0 0 0: no clock)
+//   HS <n> <timestamp> <in> <volume> <change>          up to HMI_STATS_HISTORY
+//   HE                                                 end
+// Everything comes from EEPROM, so it survives a power cut.
+static uint8_t s_stats_step = 0;   // 0 idle, 1 SD, 2 DT, 3 HS rows, 4 HE
+static uint8_t s_stats_idx = 0;    // next history slot to look at
+static uint8_t s_stats_sent = 0;   // HS rows sent
+
+static bool try_send_line();
+
+static void stats_update() {
+  if (s_stats_step == 0) return;
+  switch (s_stats_step) {
+    case 1:
+      snprintf(s_tx, sizeof(s_tx), "SD %ld %ld %u", (long)persist_daily_profit(),
+               (long)persist_daily_volume(), (unsigned)persist_daily_transactions());
+      if (try_send_line()) s_stats_step = 2;
+      return;
+    case 2: {
+      const datetime_t *d = rtc_ok() ? rtc_now() : NULL;
+      snprintf(s_tx, sizeof(s_tx), "DT %u %u %u", d ? d->year : 0u,
+               d ? d->month : 0u, d ? d->day : 0u);
+      if (try_send_line()) { s_stats_step = 3; s_stats_idx = 0; s_stats_sent = 0; }
+      return;
+    }
+    case 3:
+      // Purchases only: completed sales, and sales whose change could not be
+      // paid (the EVT_CHANGE_JAM written by record_unpaid_and_close(), which
+      // carries no coin). Hopper-level jam records, admin edits and day closes
+      // are skipped. For the unpaid kind amount_in holds the amount OWED and
+      // goes out as the sixth field.
+      while (s_stats_idx < persist_history_count() && s_stats_sent < HMI_STATS_HISTORY) {
+        const history_entry_t *e = persist_history_get(s_stats_idx);
+        const bool sale = e && e->tag == EVT_TRANSACTION;
+        const bool unpaid = e && e->tag == EVT_CHANGE_JAM && e->denomination == (uint8_t)COIN_NONE;
+        if (!sale && !unpaid) { s_stats_idx++; continue; }
+        snprintf(s_tx, sizeof(s_tx), "HS %u %lu %ld %ld %ld %ld", (unsigned)s_stats_sent,
+                 (unsigned long)e->timestamp, sale ? (long)e->amount_in : 0L,
+                 (long)e->volume_out, (long)e->change_out, unpaid ? (long)e->amount_in : 0L);
+        if (!try_send_line()) return;   // TX full: same row next pass
+        s_stats_idx++;
+        s_stats_sent++;
+        return;
+      }
+      s_stats_step = 4;
+      return;
+    case 4:
+      snprintf(s_tx, sizeof(s_tx), "HE");
+      if (try_send_line()) s_stats_step = 0;
+      return;
+    default:
+      s_stats_step = 0;
+      return;
+  }
+}
+
 static void rx_line(char *line) {
   if (strncmp(line, "EV ", 3) != 0) return;
 
@@ -103,6 +165,12 @@ static void rx_line(char *line) {
 
   if (ev == (long)HMI_EVENT_CONFIRM) {
     s_confirm = true;
+    return;
+  }
+  // The sales screen asks for its numbers; answered by stats_update(), not
+  // through the event slot, since no state of the machine consumes it.
+  if (ev == (long)HMI_EVENT_NAV_STATISTICS) {
+    s_stats_step = 1;
     return;
   }
   const long payload = (*end == ' ') ? strtol(end + 1, NULL, 10) : 0;
@@ -148,10 +216,29 @@ void hmi_begin() {
 static char s_line[24];
 static uint8_t s_len = 0;
 
+// "skip 1": bench bypass of the OUT OF WATER and LOW CHANGE gates, so the coin
+// path can be tested before the tank sensor and the hopper float are sorted.
+// Test console builds only -- this flag does not exist in a build that sells.
+// On from power-up in the bench test build (platformio.ini, env:test), so a
+// Mega that browns out and restarts does not come back locked with nobody at
+// a laptop to type "skip 1" again.
+#ifndef BENCH_BYPASS_DEFAULT
+#define BENCH_BYPASS_DEFAULT 0
+#endif
+static bool s_bypass = BENCH_BYPASS_DEFAULT;
+
+bool hmi_console_bypass() {
+  return s_bypass;
+}
+
 static void console_help() {
   Serial.println(F("[console] c=CONFIRM  s <mL>=select (e.g. s 500)  f=finish/refund"));
   Serial.println(F("[console] b=back  a=dispense again  st=status"));
   Serial.println(F("[console] p1 <n> / p5 <n>=load hopper count  clr=clear faults  h=help"));
+  Serial.println(F("[console] fill <s>=run fill pump s seconds, ignores sensors (max 120)  fill 0=stop"));
+  Serial.println(F("[console] pour <s>=run dispense pump s seconds, idle only (max 120)  pour 0=stop"));
+  Serial.println(F("[console] gate <n>=close/open gate 1 then gate 2, n times (max 20)"));
+  Serial.println(F("[console] skip 1=ignore OUT OF WATER and LOW CHANGE for testing  skip 0=normal"));
 }
 
 static void console_status() {
@@ -172,8 +259,23 @@ static void console_status() {
   Serial.print(F("% sensor="));           Serial.print(water_tank_sensor_ok() ? F("ok") : F("LOST"));
   Serial.print(F(" galA_low="));          Serial.print(water_gallon_low(0) ? 1 : 0);
   Serial.print(F(" galB_low="));          Serial.println(water_gallon_low(1) ? 1 : 0);
+  Serial.print(F("[status] sonar raw_mm=")); Serial.print(water_tank_raw_mm());
+  Serial.print(F(" frames="));            Serial.print(water_tank_raw_frames());
+  Serial.print(F(" bytes="));             Serial.println(water_tank_raw_bytes());
+  {
+    uint32_t w = 0, per = 0, n = 0;
+    water_tank_pwm_diag(&w, &per, &n);
+    Serial.print(F("[status] pwm_us="));  Serial.print(w);
+    Serial.print(F(" last_any_us="));     Serial.print(per);
+    Serial.print(F(" (~"));               Serial.print(per * 100UL / TANK_SONAR_US_PER_MM_X100);
+    Serial.print(F("mm)"));
+    Serial.print(F(" pulses="));          Serial.print(n);
+    Serial.print(F(" noise_mutes="));     Serial.println(water_tank_storm_count());
+  }
   Serial.print(F("[status] fill_pump=")); Serial.print(water_pump_running() ? F("ON") : F("off"));
+  Serial.print(F(" refill_ms="));         Serial.print(water_refill_owed_ms());
   Serial.print(F(" fault="));             Serial.print((int)faults_active());
+  Serial.print(F(" skip="));              Serial.print(s_bypass ? 1 : 0);
   Serial.print(F(" today=P"));            Serial.print(persist_daily_profit() / 100);
   Serial.print(F(" "));                   Serial.print(persist_daily_volume());
   Serial.println(F("mL"));
@@ -190,6 +292,19 @@ static void console_exec(char *cmd) {
   else if (!strcmp(cmd, "b"))  { post_event(HMI_EVENT_BACK, 0); }
   else if (!strcmp(cmd, "a"))  { post_event(HMI_EVENT_DISPENSE_AGAIN, 0); }
   else if (!strcmp(cmd, "st")) { console_status(); return; }
+  else if (!strcmp(cmd, "fill")) { water_manual_fill(n < 0 ? 0 : (uint32_t)n); }
+  else if (!strcmp(cmd, "pour")) { dispense_manual(n < 0 ? 0 : (uint32_t)n); }
+  else if (!strcmp(cmd, "hop1")) { coin_hopper_manual(HOPPER_P1, n < 0 ? 0 : (n > 10 ? 10 : (uint8_t)n)); }
+  else if (!strcmp(cmd, "hop5")) { coin_hopper_manual(HOPPER_P5, n < 0 ? 0 : (n > 10 ? 10 : (uint8_t)n)); }
+  else if (!strcmp(cmd, "trig")) { water_tank_trigger_mode(n < 0 ? 0 : (uint8_t)n); }
+  else if (!strcmp(cmd, "skip")) {
+    s_bypass = (n != 0);
+    if (s_bypass) {
+      faults_clear(FAULT_OUT_OF_WATER);
+      faults_clear(FAULT_LOW_CHANGE);
+    }
+  }
+  else if (!strcmp(cmd, "gate")) { coin_diverter_exercise(n < 0 ? 0 : (n > 20 ? 20 : (uint8_t)n)); }
   else if (!strcmp(cmd, "p1") || !strcmp(cmd, "p5")) {
     if (n < 0) n = 0;
     persist_inventory_set(cmd[1] == '1' ? DEST_P1_HOPPER : DEST_P5_HOPPER, (uint16_t)n);
@@ -237,10 +352,16 @@ static page_t page_for(state_t s) {
 
 enum sync_field_t : uint8_t {
   SF_STATE = 0, SF_CREDIT, SF_INSERTED, SF_MAXML, SF_TARGET, SF_POURED, SF_TOTAL,
-  SF_COUNT
+  SF_UNPAID, SF_COUNT
 };
+
+static money_t s_unpaid = 0;
+
+void hmi_set_unpaid(money_t centavos) {
+  s_unpaid = centavos;
+}
 static const char *const SF_NAME[SF_COUNT] = {
-  "state", "credit", "inserted", "maxml", "target", "poured", "total"
+  "state", "credit", "inserted", "maxml", "target", "poured", "total", "unpaid"
 };
 
 static int32_t s_sf_sent[SF_COUNT];
@@ -293,7 +414,8 @@ void hmi_sync(state_t s) {
     (int32_t)billing_max_selectable_ml(),
     (int32_t)dispense_target(),
     (int32_t)dispense_delivered(),
-    (int32_t)billing_total_dispensed()
+    (int32_t)billing_total_dispensed(),
+    (int32_t)s_unpaid
   };
 
   for (uint8_t i = 0; i < SF_COUNT; i++) {
@@ -328,6 +450,7 @@ void hmi_update() {
 #endif
   rx_update();
   status_update();
+  stats_update();
   // TODO(M6): rate-limited refresh of the pour screen.
 }
 

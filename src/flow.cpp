@@ -38,9 +38,15 @@ static uint32_t s_last_flow_ms = 0;
 static uint32_t s_run_ms = 0;
 static uint32_t s_on_since = 0;
 
+// Two-point calibration: volume = (run time - DISPENSE_DEAD_MS) at the steady
+// rate. The dead time covers the first part of a run that delivers nothing
+// (filling the hose) less the dribble that still arrives after the pump stops;
+// it can be negative when the dribble is the larger of the two.
 static volume_t timed_ml(uint32_t run_ms) {
+  const int32_t effective = (int32_t)run_ms - (int32_t)DISPENSE_DEAD_MS;
+  if (effective <= 0) return 0;
   // 2000 mL at even 60 s per 100 mL is 1.2e6 ms; x100 stays far below 2^32.
-  return (volume_t)((run_ms * 100UL) / (uint32_t)DISPENSE_MS_PER_100ML);
+  return (volume_t)(((uint32_t)effective * 100UL) / (uint32_t)DISPENSE_MS_PER_100ML);
 }
 #endif
 

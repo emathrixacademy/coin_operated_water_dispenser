@@ -13,6 +13,8 @@
 #include <WebSocketsServer.h>
 #include <stdio.h>
 #include <string.h>
+#include "soc/soc.h"
+#include "soc/rtc_cntl_reg.h"
 
 #include "page.h"
 #include "model.h"
@@ -33,7 +35,7 @@ static const char AP_PASS[] = "emx-bench-01";   // WPA2 needs at least 8 chars
 #endif
 #define MEGA_BAUD   115200   // must match HMI_BAUD in the main project
 
-#define LINE_MAX  64
+#define BRIDGE_LINE_MAX  64
 #define CACHE_MAX 24
 #define KEY_MAX   16
 
@@ -43,7 +45,7 @@ static WebSocketsServer s_ws(81);
 // Latest line per field. Key = first token, or first two for VL / TX / OP,
 // which name a component ("VL credit", "TX t_amount").
 static char s_key[CACHE_MAX][KEY_MAX];
-static char s_line[CACHE_MAX][LINE_MAX];
+static char s_line[CACHE_MAX][BRIDGE_LINE_MAX];
 static uint8_t s_cached = 0;
 
 static void key_of(const char *line, char *key) {
@@ -62,13 +64,13 @@ static void cache_put(const char *line) {
   key_of(line, key);
   for (uint8_t i = 0; i < s_cached; i++) {
     if (!strcmp(s_key[i], key)) {
-      strncpy(s_line[i], line, LINE_MAX - 1);
+      strncpy(s_line[i], line, BRIDGE_LINE_MAX - 1);
       return;
     }
   }
   if (s_cached >= CACHE_MAX) return;
   strncpy(s_key[s_cached], key, KEY_MAX - 1);
-  strncpy(s_line[s_cached], line, LINE_MAX - 1);
+  strncpy(s_line[s_cached], line, BRIDGE_LINE_MAX - 1);
   s_cached++;
 }
 
@@ -105,11 +107,27 @@ static void on_ws(uint8_t client, WStype_t type, uint8_t *payload, size_t len) {
 }
 
 void setup() {
+  // BENCH WORKAROUND, 2026-10-25: brownout detector off. Wired to the Mega, the
+  // board tripped it every few seconds even on USB with the radio turned down,
+  // and rebooted in a loop. With it off the board rides through the dips. This
+  // hides a supply problem rather than fixing it -- the fix is a 470-1000 uF
+  // capacitor across 5V/GND at the board and a short, thick USB cable or a
+  // 5 V >= 1 A supply. Remove this line once that is fitted.
+  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
+
   Serial.begin(115200);
   Serial2.begin(MEGA_BAUD, SERIAL_8N1, MEGA_RX_PIN, MEGA_TX_PIN);
 
+  // Let the supply settle before the radio's first current spike, and run the
+  // radio at reduced power. At full power the AP start pulls ~400 mA peaks; on
+  // the bench that tripped the brownout detector in a reboot loop as soon as
+  // the board was wired to the Mega. 8.5 dBm still reaches a phone a few
+  // metres away, which is all a bench test needs.
+  delay(500);
   WiFi.mode(WIFI_AP);
+  WiFi.setTxPower(WIFI_POWER_8_5dBm);
   WiFi.softAP(AP_SSID, AP_PASS);
+  WiFi.setTxPower(WIFI_POWER_8_5dBm);
   Serial.print(F("[bridge] WiFi "));
   Serial.print(AP_SSID);
   Serial.print(F("  http://"));
@@ -128,7 +146,7 @@ void loop() {
   s_ws.loop();
   ui_loop();
 
-  static char buf[LINE_MAX];
+  static char buf[BRIDGE_LINE_MAX];
   static uint8_t len = 0;
   static bool overflow = false;
   while (Serial2.available()) {
@@ -145,7 +163,7 @@ void loop() {
       }
       len = 0;
       overflow = false;
-    } else if (len < LINE_MAX - 1) {
+    } else if (len < BRIDGE_LINE_MAX - 1) {
       buf[len++] = ch;
     } else {
       overflow = true;   // never relay a truncated line

@@ -147,6 +147,10 @@ void faults_release_latched() {
   }
 }
 
+void faults_clear_all() {
+  for (uint8_t f = 1; f <= (uint8_t)FAULT_ACCEPTOR; f++) faults_clear((fault_t)f);
+}
+
 void faults_clear(fault_t fault) {
   if (fault == FAULT_NONE) return;
 

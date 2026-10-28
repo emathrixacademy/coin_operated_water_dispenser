@@ -50,9 +50,22 @@ static coin_t s_aim_coin = COIN_NONE;
 static coin_dest_t s_aim_dest = DEST_BOX_UNKNOWN;
 static uint32_t s_aim_ms = 0;
 
+// Servo signal only while the gates are in use. With no signal an MG996R does
+// not move: it holds where it was left by friction. On the bench the servos
+// twitched at rest -- their pulse timing was being disturbed by interrupt
+// load -- and a servo that is not being driven cannot twitch. Detached
+// GATE_DETACH_MS after the last move, once it has certainly arrived.
+static uint32_t s_last_move_ms = 0;
+
+static void gate_write(Servo &s, uint8_t pin, int angle) {
+  if (!s.attached()) s.attach(pin);
+  s.write(angle);
+  s_last_move_ms = millis();
+}
+
 static void gates_rest() {
-  s_gate1.write(GATE1_ANGLE_OPEN);
-  s_gate2.write(GATE2_ANGLE_OPEN);
+  gate_write(s_gate1, PIN_GATE1_SERVO, GATE1_ANGLE_OPEN);
+  gate_write(s_gate2, PIN_GATE2_SERVO, GATE2_ANGLE_OPEN);
 }
 
 // Every box destination is the same straight run -- the denomination split is
@@ -60,12 +73,12 @@ static void gates_rest() {
 static void gates_for(coin_dest_t dest) {
   switch (dest) {
     case DEST_P5_HOPPER:
-      s_gate1.write(GATE1_ANGLE_CLOSED);
-      s_gate2.write(GATE2_ANGLE_OPEN);
+      gate_write(s_gate1, PIN_GATE1_SERVO, GATE1_ANGLE_CLOSED);
+      gate_write(s_gate2, PIN_GATE2_SERVO, GATE2_ANGLE_OPEN);
       break;
     case DEST_P1_HOPPER:
-      s_gate1.write(GATE1_ANGLE_OPEN);
-      s_gate2.write(GATE2_ANGLE_CLOSED);
+      gate_write(s_gate1, PIN_GATE1_SERVO, GATE1_ANGLE_OPEN);
+      gate_write(s_gate2, PIN_GATE2_SERVO, GATE2_ANGLE_CLOSED);
       break;
     default:
       gates_rest();
@@ -84,9 +97,7 @@ void coin_diverter_begin() {
   // for travel that will never happen.
   if (COLLECT_ALL) return;
 
-  s_gate1.attach(PIN_GATE1_SERVO);
-  s_gate2.attach(PIN_GATE2_SERVO);
-  gates_rest();
+  gates_rest();   // attaches; detached again once idle
 }
 
 void coin_diverter_aim(coin_t coin) {
@@ -100,7 +111,44 @@ void coin_diverter_aim(coin_t coin) {
   gates_for(s_aim_dest);
 }
 
+// Bench exercise from the test console ("gate <n>"): each cycle closes and
+// reopens gate 1, then gate 2, GATE_EXERCISE_STEP_MS per move. The acceptor
+// window is held for the whole run -- with the gates moving on their own, a
+// coin inserted now could land anywhere.
+static uint8_t s_ex_steps = 0;     // moves left; 4 per cycle
+static uint32_t s_ex_ms = 0;
+
+void coin_diverter_exercise(uint8_t cycles) {
+  if (COLLECT_ALL || s_state != DIV_IDLE || s_ex_steps) return;
+  if (cycles == 0) return;
+  if (cycles > 20) cycles = 20;
+  s_ex_steps = (uint8_t)(cycles * 4);
+  s_ex_ms = millis() - GATE_EXERCISE_STEP_MS;   // first move on the next pass
+  s_aim_coin = COIN_NONE;
+  coin_acceptor_window_inhibit();
+}
+
+static void exercise_update() {
+  if ((uint32_t)(millis() - s_ex_ms) < GATE_EXERCISE_STEP_MS) return;
+  s_ex_ms = millis();
+  switch (s_ex_steps % 4) {
+    case 0: gate_write(s_gate1, PIN_GATE1_SERVO, GATE1_ANGLE_CLOSED); break;
+    case 3: gate_write(s_gate1, PIN_GATE1_SERVO, GATE1_ANGLE_OPEN);   break;
+    case 2: gate_write(s_gate2, PIN_GATE2_SERVO, GATE2_ANGLE_CLOSED); break;
+    case 1: gate_write(s_gate2, PIN_GATE2_SERVO, GATE2_ANGLE_OPEN);   break;
+  }
+  s_ex_steps--;
+  if (s_ex_steps == 0) {
+    gates_rest();
+    coin_acceptor_window_release();
+  }
+}
+
 void coin_diverter_update() {
+  if (s_ex_steps) {
+    exercise_update();
+    return;
+  }
   if (s_state == DIV_IDLE) {
     // An aimed coin that was never routed: back to rest, so the next coin is
     // not caught by a hopper gate meant for this one.
@@ -108,6 +156,12 @@ void coin_diverter_update() {
         (uint32_t)(millis() - s_aim_ms) >= COIN_AIM_TIMEOUT_MS) {
       s_aim_coin = COIN_NONE;
       gates_rest();
+    }
+    // Idle and settled: drop the servo signal (see gate_write()).
+    if (s_aim_coin == COIN_NONE && s_gate1.attached() &&
+        (uint32_t)(millis() - s_last_move_ms) >= GATE_DETACH_MS) {
+      s_gate1.detach();
+      s_gate2.detach();
     }
     return;
   }
@@ -223,7 +277,7 @@ bool coin_diverter_is_settled() {
 }
 
 bool coin_diverter_is_busy() {
-  return s_state != DIV_IDLE;
+  return s_state != DIV_IDLE || s_ex_steps != 0;
 }
 
 coin_dest_t coin_destination(coin_t coin) {

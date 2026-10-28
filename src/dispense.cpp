@@ -69,6 +69,25 @@ static void bank_and_close() {
   s_settling = false;
 }
 
+// Manual run from the test console ("pour <s>"), for bench checks of the pump
+// and its plumbing. IDLE only: it can never open the output during a sale, and
+// nothing it pours is counted or charged.
+static uint32_t s_manual_since = 0;
+static uint32_t s_manual_ms = 0;
+
+void dispense_manual(uint32_t seconds) {
+  if (s_status != DISPENSE_IDLE) return;
+  if (seconds == 0) {
+    if (s_manual_ms) valve_write(false);
+    s_manual_ms = 0;
+    return;
+  }
+  if (seconds > MANUAL_FILL_MAX_S) seconds = MANUAL_FILL_MAX_S;
+  s_manual_ms = seconds * 1000UL;
+  s_manual_since = millis();
+  valve_write(true);
+}
+
 void dispense_begin() {
   pinMode(PIN_VALVE, OUTPUT);
   valve_write(false);
@@ -141,9 +160,15 @@ void dispense_update() {
       return;
     }
 
+    case DISPENSE_IDLE:
+      if (s_manual_ms && (uint32_t)(millis() - s_manual_since) >= s_manual_ms) {
+        valve_write(false);
+        s_manual_ms = 0;
+      }
+      return;
+
     case DISPENSE_PAUSED:
     case DISPENSE_STALLED:
-    case DISPENSE_IDLE:
     default:
       return;
   }
@@ -152,6 +177,7 @@ void dispense_update() {
 void dispense_start(volume_t target_ml) {
   if (target_ml <= 0) return;
   if (s_status == DISPENSE_RUNNING) return;
+  s_manual_ms = 0;   // a sale takes over from any bench run
 
   s_target = target_ml;
   s_banked = 0;

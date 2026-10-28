@@ -25,6 +25,16 @@
 //                                     small "gallon low" warning when either is
 //                                     1 -- it is a notice, not a lockout.
 //
+//     SD <income> <volume> <count>    sales today (centavos, mL, purchases)
+//     DT <year> <month> <day>         today's date, 0 0 0 with no clock
+//     HS <n> <time> <in> <ml> <chg> <owed>
+//                                     one recent purchase, n = 0 newest;
+//                                     time is Unix seconds, 0 = no clock;
+//                                     owed > 0: change not paid (in is 0)
+//     HE                              end of the sales reply
+//                                     (SD..HE are sent only when asked, by
+//                                     EV 6 = HMI_EVENT_NAV_STATISTICS)
+//
 //   ESP32 -> Mega
 //     EV <event> [payload]            touch event (hmi_event_t value)
 //
@@ -124,11 +134,20 @@ hmi_event_t hmi_take_event(int32_t *payload);
 // state happened to take it.
 bool hmi_confirm_take();
 
+#ifdef SERIAL_CONSOLE
+// Test console "skip 1": bench bypass of the OUT OF WATER and LOW CHANGE gates.
+bool hmi_console_bypass();
+#endif
+
 // Push what the screen shows for this state: PG on a page change, and the VL
 // fields state, credit, inserted, maxml, target, poured, total -- each only
 // when it changed, and only when the TX buffer has room, so it never blocks the
 // loop. Everything is re-sent every HMI_STATUS_RESEND_MS for a display that
 // rebooted. Call once per loop, after the state machine.
 void hmi_sync(state_t s);
+
+// Change the last payout could not give, in centavos; 0 = none. Sent as
+// "VL unpaid <n>" so the Thank You screen can say so.
+void hmi_set_unpaid(money_t centavos);
 
 #endif  // HMI_H
