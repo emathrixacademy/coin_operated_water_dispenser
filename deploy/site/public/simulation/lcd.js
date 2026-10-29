@@ -12,7 +12,9 @@ const F = { F9: "13px Arial, Helvetica, sans-serif", F9B: "bold 13px Arial, Helv
             F24B: "bold 33px Arial, Helvetica, sans-serif", FONT2: "12px Arial, Helvetica, sans-serif" };
 const FAULT_TEXT = ["", "Out of water", "Not enough change in the machine", "Coin box is full",
                     "Change dispenser jammed", "Water flow problem", "Refill pump problem", "Coin slot problem"];
-const UI = { SET: -3, STATS_CLOSE: -4, STATS_OPEN: -5 };
+const UI = { SET: -3, STATS_CLOSE: -4, STATS_OPEN: -5,
+             // Admin (SPEC 8). Handled on the screen, which then calls the machine.
+             A_PAGE: -10, A_STEP: -11, A_CONFIRM: -12, A_CLEAR: -13, A_RESET: -14, A_EXIT: -15 };
 
 function money(c) { return c % 100 ? `PHP ${Math.floor(c / 100)}.${String(c % 100).padStart(2, "0")}` : `PHP ${c / 100}`; }
 function volume(ml) {
@@ -26,10 +28,102 @@ class Lcd {
   constructor(canvas, machine) {
     this.cv = canvas; this.g = canvas.getContext("2d"); this.m = machine;
     this.btn = []; this.sel = 100; this.lastState = -1; this.statsOpen = false; this.statsSince = 0;
-    this.holdSince = null;
+    this.holdSince = null; this.iconHoldSince = null;
+    this.admin = { page: "menu", p1: 0, p5: 0, msg: "" };
     canvas.addEventListener("pointerdown", e => this.down(e));
-    canvas.addEventListener("pointerup", () => { this.holdSince = null; });
-    canvas.addEventListener("pointerleave", () => { this.holdSince = null; });
+    const up = () => { this.holdSince = null; this.iconHoldSince = null; };
+    canvas.addEventListener("pointerup", up);
+    canvas.addEventListener("pointerleave", up);
+  }
+
+  // --- Admin (SPEC 8) -------------------------------------------------------------
+  openAdmin() {
+    if (!this.m.enterAdmin()) return;
+    this.statsOpen = false;
+    this.admin = { page: "menu", p1: this.m.inv.p1, p5: this.m.inv.p5, msg: "" };
+  }
+
+  adminHeader(title) {
+    this.text(title, 14, TOP + 21, F.F12B, C.INK, "left");
+    if (this.admin.page === "menu") this.button(LCD_W - 104, TOP + 4, 94, 34, "Exit", UI.A_EXIT, 0, true, false, F.F9B);
+    else this.button(LCD_W - 104, TOP + 4, 94, 34, "Back", UI.A_PAGE, "menu", true, false, F.F9B);
+  }
+
+  counter(y, label, key) {
+    const a = this.admin;
+    this.text(label, 14, y + 26, F.F12B, C.INK, "left");
+    this.button(140, y, 52, 52, "-10", UI.A_STEP, { key, d: -10 }, a[key] > 0, false, F.F9B);
+    this.button(198, y, 52, 52, "-1", UI.A_STEP, { key, d: -1 }, a[key] > 0, false, F.F9B);
+    this.rr(256, y, 84, 52, 10, C.CARD, C.LINE);
+    this.text(String(a[key]), 298, y + 27, F.F18B, a[key] !== this.m.inv[key] ? C.WARN : C.INK);
+    this.button(346, y, 52, 52, "+1", UI.A_STEP, { key, d: 1 }, a[key] < CFG.HOPPER_CAPACITY, false, F.F9B);
+    this.button(404, y, 66, 52, "+10", UI.A_STEP, { key, d: 10 }, a[key] < CFG.HOPPER_CAPACITY, false, F.F9B);
+  }
+
+  drawAdmin() {
+    const m = this.m, a = this.admin, W = LCD_W, H = LCD_H;
+    if (a.page === "menu") {
+      this.adminHeader("Service mode");
+      const f = m.fault ? FAULT_TEXT[m.fault] : "No fault";
+      this.text(f, 14, TOP + 58, F.F9B, m.fault ? C.BAD : C.OK, "left");
+      this.text(`Change: P1 x ${m.inv.p1}   P5 x ${m.inv.p5}`, W - 14, TOP + 58, F.FONT2, C.MUTE, "right");
+      this.button(10, TOP + 76, 226, 58, "Load change", UI.A_PAGE, "change", true, true);
+      this.button(244, TOP + 76, 226, 58, "Clear fault", UI.A_CLEAR, 0, !!m.fault, false);
+      this.button(10, TOP + 142, 226, 58, "History", UI.A_PAGE, "history", true, false);
+      this.button(244, TOP + 142, 226, 58, "Daily totals", UI.A_PAGE, "totals", true, false);
+      if (a.msg) this.text(a.msg, W / 2, H - 28, F.F9B, C.WARN);
+    } else if (a.page === "change") {
+      this.adminHeader("Load change");
+      this.text("Count the coins in each hopper, enter it, then CONFIRM.", 14, TOP + 52, F.FONT2, C.MUTE, "left");
+      this.counter(TOP + 68, "P1 hopper", "p1");
+      this.counter(TOP + 128, "P5 hopper", "p5");
+      const changed = a.p1 !== m.inv.p1 || a.p5 !== m.inv.p5;
+      this.button(10, H - 58, 150, 52, "Cancel", UI.A_PAGE, "menu", true, false);
+      this.button(170, H - 58, 300, 52, "CONFIRM", UI.A_CONFIRM, 0, changed, true, F.F18B);
+    } else if (a.page === "history") {
+      this.adminHeader("History (last 20)");
+      if (!m.history.length) { this.text("Nothing recorded yet", W / 2, 180, F.F9, C.MUTE); return; }
+      const p2 = n => String(n).padStart(2, "0");
+      m.history.slice(0, 10).forEach((e, i) => {
+        const t = new Date(e.ts), y = TOP + 58 + i * 21;
+        this.text(`${p2(t.getHours())}:${p2(t.getMinutes())}`, 14, y, F.FONT2, C.MUTE, "left");
+        this.text(e.text.replace(/₱/g, "P").slice(0, 60), 60, y, F.FONT2,
+                  e.kind === "jam" || /OWED/.test(e.text) ? C.WARN : e.kind === "sale" ? C.INK : C.WATER, "left");
+      });
+      if (m.history.length > 10) this.text(`+ ${m.history.length - 10} older`, W - 14, H - 12, F.FONT2, C.MUTE, "right");
+    } else if (a.page === "totals") {
+      const s = m.sales;
+      this.adminHeader("Daily totals");
+      this.statCard(10, TOP + 46, "Total income", money(s.income), C.OK);
+      this.statCard(166, TOP + 46, "Water dispensed", volume(s.volume), C.WATER);
+      this.statCard(322, TOP + 46, "Purchases", String(s.count), C.INK);
+      this.button(110, H - 78, 260, 58, "Reset daily totals", UI.A_PAGE, "reset", true, false);
+    } else if (a.page === "reset") {
+      this.adminHeader("Reset daily totals?");
+      this.iconWarn(W / 2, 120, 30, C.WARN);
+      this.text("Today's income, volume and count go back to zero.", W / 2, 178, F.F9, C.INK);
+      this.text("The reset is written to the history.", W / 2, 200, F.F9, C.MUTE);
+      this.button(10, H - 64, 222, 56, "Cancel", UI.A_PAGE, "totals", true, false);
+      this.button(248, H - 64, 222, 56, "Reset", UI.A_RESET, 0, true, true);
+    }
+  }
+
+  adminAction(b) {
+    const a = this.admin, m = this.m;
+    if (b.ev === UI.A_PAGE) {
+      a.page = b.payload; a.msg = "";
+      if (a.page === "change") { a.p1 = m.inv.p1; a.p5 = m.inv.p5; }
+    } else if (b.ev === UI.A_STEP) {
+      a[b.payload.key] = Math.max(0, Math.min(CFG.HOPPER_CAPACITY, a[b.payload.key] + b.payload.d));
+    } else if (b.ev === UI.A_CONFIRM) {
+      m.adminSetChange(a.p1, a.p5); a.page = "menu"; a.msg = "Change count saved";
+    } else if (b.ev === UI.A_CLEAR) {
+      a.msg = m.adminClearFault();
+    } else if (b.ev === UI.A_RESET) {
+      m.adminResetDaily(); a.page = "totals";
+    } else if (b.ev === UI.A_EXIT) {
+      m.exitAdmin();
+    }
   }
 
   // --- drawing primitives -----------------------------------------------------
@@ -160,6 +254,7 @@ class Lcd {
 
   drawBody() {
     const m = this.m, W = LCD_W, H = LCD_H, c = money(m.credit);
+    if (m.state === ST.ADMIN) { this.drawAdmin(); return; }
     if (this.statsOpen) { this.drawStats(); return; }
     switch (m.state) {
       case ST.ACCEPTING:
@@ -226,6 +321,11 @@ class Lcd {
     if (this.holdSince !== null && realNow - this.holdSince >= 2000 && idle && !this.statsOpen) {
       this.statsOpen = true; this.statsSince = realNow; this.holdSince = null;
     }
+    // The Admin gesture: hold the big icon on the idle or out-of-service screen for 3 s.
+    if (this.iconHoldSince !== null && realNow - this.iconHoldSince >= CFG.ADMIN_HOLD_MS && idle && !this.statsOpen) {
+      this.iconHoldSince = null; this.openAdmin();
+    }
+    if (m.state !== ST.ADMIN && this.admin.page !== "menu") this.admin.page = "menu";
     this.btn = [];
     this.g.fillStyle = C.BG; this.g.fillRect(0, 0, LCD_W, LCD_H);
     this.drawTop();
@@ -236,9 +336,12 @@ class Lcd {
     const r = this.cv.getBoundingClientRect();
     const x = (e.clientX - r.left) * LCD_W / r.width, y = (e.clientY - r.top) * LCD_H / r.height;
     if (y < TOP && x < 260) this.holdSince = performance.now();   // hold the title for the sales screen
+    if (!this.statsOpen && (this.m.state === ST.STANDBY || this.m.state === ST.FAULT) &&
+        x > 180 && x < 300 && y > 64 && y < 168) this.iconHoldSince = performance.now();   // hold the icon for Admin
     for (const b of this.btn) {
       if (!b.enabled || x < b.x || x >= b.x + b.w || y < b.y || y >= b.y + b.h) continue;
-      if (b.ev === UI.SET) { this.sel = b.payload; this.clampSel(); }
+      if (b.ev <= UI.A_PAGE) this.adminAction(b);
+      else if (b.ev === UI.SET) { this.sel = b.payload; this.clampSel(); }
       else if (b.ev === UI.STATS_OPEN) { this.statsOpen = true; this.statsSince = performance.now(); }
       else if (b.ev === UI.STATS_CLOSE) this.statsOpen = false;
       else this.m.touch(b.ev, b.payload);

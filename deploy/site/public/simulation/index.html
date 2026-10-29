@@ -148,11 +148,13 @@
   <div class="card">
     <h2>Service (attendant)</h2>
     <div class="row">
-      <span class="k">Change stock</span>
-      <label class="chk">₱1 <input id="inP1" class="num" type="number" min="0" max="500" value="60"></label>
-      <label class="chk">₱5 <input id="inP5" class="num" type="number" min="0" max="300" value="20"></label>
-      <button id="bLoad" class="simbtn">Load change</button>
+      <span class="k">Admin</span>
+      <button id="bAdmin" class="simbtn on">Open Admin on the screen</button>
+      <span style="color:var(--muted);font-size:12px">or hold the big icon on the screen for 3 s</span>
     </div>
+    <div class="note" style="margin-top:4px">Admin: load change and confirm the count, clear a fault, view the last 20
+      events, view and reset the daily totals. It opens only when no customer is mid-sale.
+      <b>Built from the specification (section 8); the machine firmware does not have this screen yet.</b></div>
     <div class="row">
       <span class="k">Gallon A</span>
       <button class="simbtn" data-gal="a" data-ml="18900">Full</button>
@@ -169,10 +171,9 @@
     <div class="row">
       <span class="k">Next payout</span>
       <label class="chk"><input id="cJam" type="checkbox"> a hopper jams</label>
-      <button id="bClear" class="simbtn" style="margin-left:auto">Clear faults</button>
     </div>
     <div class="note">The machine checks, before it takes a coin, that it can pay change for the worst case (₱34: ₱14 then
-      a ₱20). If it cannot, it shows "Not enough change in the machine" and refuses money until change is loaded.</div>
+      a ₱20). If it cannot, it shows "Not enough change in the machine" and refuses money until change is loaded in Admin.</div>
   </div>
 
   <div class="card">

@@ -30,7 +30,11 @@ const CFG = {
   TANK_MIN_SERVE_ML: 1800,        // a full P15 pour plus margin
   GALLON_ML: 18900,
   GALLON_LOW_ML: 2500,            // capacitive sensor at the reserve line
+  HOPPER_CAPACITY: 500,           // bounds the Admin change edit
+  HISTORY_N: 20,                  // Admin history ring
+  ADMIN_HOLD_MS: 3000,            // the gesture: hold the screen icon this long
 };
+const FAULT_NAMES = ["", "OUT OF WATER", "LOW CHANGE", "COIN STORAGE FULL", "CHANGE JAM"];
 
 const ST = { BOOT: 0, STANDBY: 1, ACCEPTING: 2, SELECTING: 3, AWAITING: 4, DISPENSING: 5, PAUSED: 6,
              SETTLING: 7, COMPLETE: 8, PAYING: 9, THANKYOU: 10, FAULT: 11, ADMIN: 12 };
@@ -69,6 +73,7 @@ class Machine {
     this.boxFull = false; this.jamNext = false;
     this.pay = null;
     this.sales = { income: 0, volume: 0, count: 0, list: [] };
+    this.history = [];
     this.story = "The machine is ready. Insert a coin to start.";
     this.events = [];          // things the 3D scene animates: {type, ...}
     this.emit({ type: "reset" });
@@ -153,11 +158,54 @@ class Machine {
     }
   }
 
-  // --- service ----------------------------------------------------------------
-  loadChange(p1, p5) {
-    this.inv.p1 = Math.max(0, p1 | 0); this.inv.p5 = Math.max(0, p5 | 0);
-    if (this.fault === FAULT.LOW_CHANGE) this.fault = FAULT.NONE;
-    this.say(`Attendant loaded the change hoppers: ${this.inv.p1} × ₱1 and ${this.inv.p5} × ₱5.`);
+  // --- Admin (SPEC 8) ----------------------------------------------------------
+  // Entered by a gesture not reachable in normal use, from STANDBY or FAULT only, so never
+  // with a customer's money in the machine. Arriving does NOT clear a fault.
+  canEnterAdmin() { return this.state === ST.STANDBY || this.state === ST.FAULT; }
+  enterAdmin() {
+    if (!this.canEnterAdmin()) { this.say("Admin opens only when no customer is using the machine."); return false; }
+    this.go(ST.ADMIN);
+    this.say("Admin (service mode). The coin slot is closed while it is open.");
+    return true;
+  }
+  exitAdmin() {
+    if (this.state !== ST.ADMIN) return;
+    this.say("Admin closed. The machine re-checks water, coin box and change before it takes money.");
+    this.go(this.fault ? ST.FAULT : ST.STANDBY);
+  }
+  // Load change: the one write that can put the records out of step with the hoppers, so it
+  // is committed only on an explicit confirm, and bounded by what a hopper can hold.
+  adminSetChange(p1, p5) {
+    const was = { p1: this.inv.p1, p5: this.inv.p5 };
+    this.inv.p1 = Math.max(0, Math.min(CFG.HOPPER_CAPACITY, p1 | 0));
+    this.inv.p5 = Math.max(0, Math.min(CFG.HOPPER_CAPACITY, p5 | 0));
+    this.log({ kind: "change", text: `Change set: ₱1 ${was.p1} → ${this.inv.p1}, ₱5 ${was.p5} → ${this.inv.p5}` });
+    // LOW CHANGE is condition-driven: it clears the moment the count covers the worst case.
+    if (this.fault === FAULT.LOW_CHANGE && changePlan(CFG.WORST_CASE_CHANGE, this.inv.p1, this.inv.p5)) this.fault = FAULT.NONE;
+    this.say(`Change count confirmed and saved: ${this.inv.p1} × ₱1, ${this.inv.p5} × ₱5.` +
+             (this.fault === FAULT.LOW_CHANGE ? " Still not enough for the worst case (₱34), so LOW CHANGE stays." : ""));
+  }
+  // Clear a fault: refused while its physical cause is still detectable.
+  adminClearFault() {
+    const f = this.fault;
+    if (!f) return "No fault to clear.";
+    if (f === FAULT.LOW_CHANGE) return "LOW CHANGE clears by loading change, not by clearing it.";
+    if (f === FAULT.OUT_OF_WATER && this.tank < CFG.TANK_MIN_SERVE_ML) return "The tank is still below the serve line.";
+    if (f === FAULT.STORAGE_FULL && this.boxFull) return "The coin box sensor still reads full. Empty the box first.";
+    this.fault = FAULT.NONE;
+    this.log({ kind: "clear", text: `Fault cleared: ${FAULT_NAMES[f]}` });
+    this.say(`Attendant cleared ${FAULT_NAMES[f]}.`);
+    return `${FAULT_NAMES[f]} cleared.`;
+  }
+  adminResetDaily() {
+    const s = this.sales;
+    this.log({ kind: "day", text: `Daily totals reset by hand (were ${s.count} sales, ₱${s.income / 100}, ${s.volume} mL)` });
+    this.sales = { income: 0, volume: 0, count: 0, list: [] };
+    this.say("Daily totals reset by the attendant. History keeps the record of it.");
+  }
+  log(e) {
+    this.history.unshift(Object.assign({ ts: Date.now() }, e));
+    if (this.history.length > CFG.HISTORY_N) this.history.length = CFG.HISTORY_N;   // 20-entry ring
   }
   setGallon(g, ml) {
     if (g === "a") this.galA = ml; else this.galB = ml;
@@ -165,9 +213,6 @@ class Machine {
       : `Gallon ${g.toUpperCase()} is nearly empty: its sensor reads low, so the refill pump will not run.`);
   }
   emptyBox() { this.inv.box10 = 0; this.inv.box20 = 0; this.emit({ type: "boxEmpty" }); this.say("Attendant emptied the coin box."); }
-  clearFaults() {
-    if (this.state === ST.FAULT) { this.fault = FAULT.NONE; this.say("Attendant cleared the fault. The machine re-checks everything before it takes money again."); }
-  }
 
   // --- the state machine ------------------------------------------------------
   onEnter(s) {
@@ -210,6 +255,8 @@ class Machine {
     this.sales.count += 1;
     this.sales.list.unshift({ ts: Date.now(), in: this.inserted, ml: this.total, change: paid, owed: this.unpaid });
     this.sales.list.length = Math.min(this.sales.list.length, 10);
+    this.log({ kind: "sale", text: `Sale ₱${this.inserted / 100} in, ${this.total} mL, change ₱${paid / 100}` +
+                                   (this.unpaid ? `, OWED ₱${this.unpaid / 100}` : "") });
   }
 
   tick(dt) {
@@ -329,6 +376,7 @@ class Machine {
           this.unpaid = this.credit - this.changePaid;
           this.commit();
           this.fault = FAULT.CHANGE_JAM;
+          this.log({ kind: "jam", text: `CHANGE JAM on the ${hopper === "p5" ? "₱5" : "₱1"} hopper, ₱${this.unpaid / 100} owed` });
           this.say(`Change jam. ₱${this.unpaid / 100} of change could not be paid; it is recorded as owed, and the machine ` +
                    "locks until an attendant clears the jam. It never assumes a payout succeeded.");
           this.pay = null;

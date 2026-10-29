@@ -268,12 +268,11 @@ $("bTray").addEventListener("click", () => {
   const sum = coins.reduce((a, c) => a + c, 0);
   machine.say(coins.length ? `Customer took ${coins.length} coin${coins.length > 1 ? "s" : ""} from the tray: ₱${sum}.` : "The tray is empty.");
 });
-$("bLoad").addEventListener("click", () => machine.loadChange(+$("inP1").value, +$("inP5").value));
+$("bAdmin").addEventListener("click", () => lcd.openAdmin());
 document.querySelectorAll("[data-gal]").forEach(b => b.addEventListener("click", () => machine.setGallon(b.dataset.gal, +b.dataset.ml)));
 $("cBoxFull").addEventListener("change", e => { machine.boxFull = e.target.checked; });
 $("bEmptyBox").addEventListener("click", () => { machine.emptyBox(); $("cBoxFull").checked = false; machine.boxFull = false; });
 $("cJam").addEventListener("change", e => { machine.jamNext = e.target.checked; });
-$("bClear").addEventListener("click", () => machine.clearFaults());
 document.querySelectorAll("[data-view]").forEach(b => b.addEventListener("click", () => setView(b.dataset.view)));
 
 $("bPlay").addEventListener("click", () => {
@@ -281,7 +280,7 @@ $("bPlay").addEventListener("click", () => {
 });
 $("bReset").addEventListener("click", () => {
   machine.reset(); bottleMl = 0; trayCoins.clear(); flying.splice(0).forEach(f => scene.remove(f.mesh));
-  $("cBoxFull").checked = false; $("cJam").checked = false; $("inP1").value = 60; $("inP5").value = 20;
+  $("cBoxFull").checked = false; $("cJam").checked = false;
 });
 document.querySelectorAll("[data-speed]").forEach(b => b.addEventListener("click", () => {
   speed = +b.dataset.speed; document.querySelectorAll("[data-speed]").forEach(x => x.classList.toggle("lit", x === b));
