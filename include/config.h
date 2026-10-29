@@ -21,7 +21,7 @@
 // ---------------------------------------------------------------------------
 //
 // Money is integer CENTAVOS. Volume is integer MILLILITRES. There is no
-// floating point anywhere in the money or volume path -- see CLAUDE.md. A float
+// floating point anywhere in the money or volume path -- see ENGINEERING_RULES.md. A float
 // in the change computation is how a machine loses a coin per transaction.
 //
 // Every coin this machine handles is a whole peso and the smallest sellable
@@ -48,7 +48,7 @@ typedef int32_t volume_t;   // millilitres
 // COINS DETERMINE VOLUME. VOLUME NEVER DETERMINES COINS.
 //
 // The flow sensor is a cutoff, not a cashier. Nothing may compute an amount
-// owed from a measured volume. See CLAUDE.md -- this is the bug the whole
+// owed from a measured volume. See ENGINEERING_RULES.md -- this is the bug the whole
 // design exists to prevent.
 
 // Billing rate. P1 buys 100 mL.
@@ -266,7 +266,7 @@ typedef int32_t volume_t;   // millilitres
 //
 // The ESP32 is 3.3 V and NOT 5 V tolerant. Mega TX2 (D16) goes to ESP32 RX
 // through a 1k/2k divider; ESP32 TX to Mega RX2 (D17) direct. Common ground.
-// Its WiFi and Bluetooth stay off -- both are out of scope (CLAUDE.md).
+// Its WiFi and Bluetooth stay off -- both are out of scope (ENGINEERING_RULES.md).
 #define HMI_SERIAL      Serial2  // D16 TX2 / D17 RX2
 
 // Both ends must agree or nothing is understood. 115200 rather than the
@@ -423,7 +423,7 @@ typedef int32_t volume_t;   // millilitres
 //     (bench 2026-10-29 -- three pulses gave exactly three P1, while the
 //     sensor on pin 27 counted none). What it gives up: a hopper that is
 //     empty or jammed still "pays", so the machine believes change went out
-//     that did not. CLAUDE.md requires the outlet count; set this back to 0
+//     that did not. ENGINEERING_RULES.md requires the outlet count; set this back to 0
 //     once CT1 / CT2 actually see the coins.
 // 0 = the outlet sensors on pins 27 / 28 count the coins (the design).
 #define HOPPER_COUNT_BY_PULSE 1
@@ -936,7 +936,7 @@ typedef int32_t volume_t;   // millilitres
 // HMI
 // ---------------------------------------------------------------------------
 
-// Fixed line buffers. No String, no dynamic allocation -- CLAUDE.md. The
+// Fixed line buffers. No String, no dynamic allocation -- ENGINEERING_RULES.md. The
 // longest line this firmware sends is a TX with a formatted amount, comfortably
 // inside TX. RX only ever carries "EV <n> <payload>".
 #define HMI_TX_BUFFER 64
@@ -1086,7 +1086,7 @@ typedef int32_t volume_t;   // millilitres
 #define DAILY_RING_SLOTS 8
 
 // Transaction history. Twenty entries of timestamp, amount in, volume out,
-// change out. The Mega has 4 KB of EEPROM and CLAUDE.md rules out an SD logger,
+// change out. The Mega has 4 KB of EEPROM and ENGINEERING_RULES.md rules out an SD logger,
 // so this is the ceiling. A longer history is a new scope item to be quoted,
 // not built.
 #define HISTORY_ENTRIES 20

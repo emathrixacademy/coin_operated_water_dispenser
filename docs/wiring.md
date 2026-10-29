@@ -9,7 +9,7 @@ moves in both places in the same commit.
 
 ## Why the Mega, and why these pins
 
-The Mega is load-bearing for two reasons stated in `CLAUDE.md`: the pin count and the
+The Mega is load-bearing for two reasons stated in `ENGINEERING_RULES.md`: the pin count and the
 5 V logic. Most of the peripherals on this machine are 5 V industrial parts — the coin
 acceptor pulse output, the float switches, the hopper outlet sensors and the relay
 board all expect 5 V. A 3.3 V controller would need level shifting on nearly every
@@ -17,7 +17,7 @@ line. Do not port this to an ESP32 or a Pi.
 
 ## Interrupt allocation
 
-Only two pins use hardware interrupts. This is a hard constraint from `CLAUDE.md`, not
+Only two pins use hardware interrupts. This is a hard constraint from `ENGINEERING_RULES.md`, not
 a preference. Both ISRs set a `volatile` counter and return; all interpretation happens
 in the owning module's `update()`.
 

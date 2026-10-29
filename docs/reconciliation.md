@@ -193,7 +193,7 @@ None of these are wrong. Each is a decision the client has not made.
 | B-5 | **`billing_settle_complete()` credits `target_ml`, not the measured volume**, to the daily totals. Spec §4.5 is silent. | **Adopt.** Without it the daily volume total disagrees with the daily profit total by the flow-sensor tolerance on every single transaction. |
 | B-6 | **`s_txn.inserted`** tracked separately from credit, for the summary screen. Spec §7.1's open-transaction region lists "Credit, target, dispensed, state" only. | **Adopt.** Needed for the Thank You summary; costs 4 bytes. |
 | B-7 | **`coin_acceptor_discarded_count()`** diagnostic counter. Not in spec. | **Adopt** as a System Status field, or remove. Cheap and useful for chasing D2 noise. |
-| B-8 | **`billing_at_ceiling()`**, **`LOOP_WARN_US`**, **two build environments (debug/release)**, **`-Wall -Wextra`**. | **Adopt.** All serve CLAUDE.md constraints. |
+| B-8 | **`billing_at_ceiling()`**, **`LOOP_WARN_US`**, **two build environments (debug/release)**, **`-Wall -Wextra`**. | **Adopt.** All serve ENGINEERING_RULES.md constraints. |
 | B-9 | **`EVT_ADMIN_EDIT` before/after logging** in `persist_inventory_set()`. Spec §8 requires a confirm and an immediate commit but not a log entry. | **Adopt.** It is the one write path that can desync EEPROM from physical contents. |
 | A-12 | **`HOPPER_CAPACITY` (500) is applied to the profit counters too.** The profit chamber is not a hopper and holds far more than 500 coins; the count would silently stop rising. | **Defect, arising from B-3.** Adding a separate profit-chamber ceiling. |
 | B-10 | **`HOPPER_START_FLOAT` (100)** defined, never used. | **Remove**, or wire it to an Admin "load standard float" shortcut. Commissioning counts are entered by hand per §8. |
@@ -277,7 +277,7 @@ Spec §6.1 lists LOW CHANGE under **Transient — auto-clear when the condition
 clears**. But the ₱1 and ₱5 counts only rise when coins enter the hoppers, and
 coins only enter while the acceptor is enabled — which it is not, because the
 machine is locked. The only escape is an Admin reload, which is the definition of
-a serviceable fault. CLAUDE.md's own table says "admin reload".
+a serviceable fault. ENGINEERING_RULES.md's own table says "admin reload".
 
 **Recommend reclassifying LOW CHANGE as serviceable** (auto-clears only after an
 Admin inventory edit raises the counts), or stating explicitly that the

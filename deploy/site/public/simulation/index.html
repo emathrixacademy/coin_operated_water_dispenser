@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Water Vendo Simulation</title>
+<style>
+  :root { --ink: #1d2730; --muted: #5d6b77; --line: #d5dde3; --accent: #1f6fa8; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #e9eef2; color: var(--ink);
+               font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  #view { position: fixed; top: 0; left: 0; bottom: 0; right: 560px; }
+  #top { position: fixed; top: 0; left: 0; right: 560px; padding: 10px 16px; display: flex; align-items: center; gap: 12px;
+         flex-wrap: wrap; background: linear-gradient(#ffffffee, #ffffffaa); border-bottom: 1px solid var(--line); z-index: 5; }
+  #top h1 { margin: 0; font-size: 16px; font-weight: 700; }
+  #top .sub { color: var(--muted); font-size: 12px; }
+  #top a { color: var(--accent); font-size: 12.5px; }
+  #concept { margin-left: auto; background: #fff4d6; border: 1px solid #e5c56a; color: #6b4e00; padding: 5px 10px;
+             border-radius: 6px; font-weight: 650; font-size: 12.5px; }
+  #side { position: fixed; top: 0; right: 0; bottom: 0; width: 560px; overflow-y: auto; background: #f5f7f9;
+          border-left: 1px solid var(--line); padding: 12px; display: flex; flex-direction: column; gap: 10px; z-index: 6; }
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+  .card h2 { font-size: 11px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
+  .note { color: var(--muted); font-size: 11.5px; margin-top: 6px; }
+  #story { font-size: 13.5px; min-height: 40px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .row + .row { margin-top: 8px; }
+  .simbtn { font: inherit; background: #fff; border: 1px solid #b9c5cd; border-radius: 7px; padding: 6px 10px; cursor: pointer; }
+  .simbtn:hover { border-color: var(--accent); }
+  .simbtn.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .simbtn:disabled { opacity: .45; cursor: default; }
+  label.chk { font-size: 12.5px; color: var(--muted); display: flex; gap: 5px; align-items: center; }
+  .k { color: var(--muted); font-size: 12px; min-width: 92px; }
+  input.num { width: 64px; font: inherit; padding: 4px 6px; border: 1px solid #b9c5cd; border-radius: 6px; }
+
+  /* --- the customer touchscreen: the 3.5" 480 x 320 LCD, drawn exactly as the ESP32 draws it --- */
+  #lcdWrap { background: #11171b; border-radius: 10px; padding: 10px; }
+  #lcd { display: block; width: 100%; aspect-ratio: 3 / 2; border-radius: 3px; cursor: pointer; image-rendering: auto; }
+  #lcdTag { color: #78909c; font-size: 10px; letter-spacing: .08em; text-align: right; margin-top: 4px; }
+
+  /* --- coins: round, so they read as coins and not as screen buttons --- */
+  .coin { width: 58px; height: 58px; border-radius: 50%; cursor: pointer; font: 800 14px/1 system-ui, sans-serif; color: #2b2b2b;
+          border: 3px solid rgba(0,0,0,.18); box-shadow: inset 0 -4px 0 rgba(0,0,0,.18), 0 3px 6px rgba(0,0,0,.18); }
+  .coin:active { transform: translateY(2px); box-shadow: inset 0 -1px 0 rgba(0,0,0,.18); }
+  .coin.p1 { background: radial-gradient(circle at 40% 35%, #f4f5f6, #a9adb2); width: 50px; height: 50px; }
+  .coin.p5 { background: radial-gradient(circle at 40% 35%, #f7e6a8, #c2a14a); width: 54px; height: 54px; }
+  .coin.p10 { background: radial-gradient(circle at 50% 50%, #e9eaec 0 46%, #d9b95a 48%, #b8962f 100%); }
+  .coin.p20 { background: radial-gradient(circle at 50% 50%, #f2d98a 0 46%, #c8cbd0 48%, #9ea3a9 100%); width: 62px; height: 62px; }
+  .readout { font: 12.5px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; background: #f3f6f8; border-radius: 6px;
+             padding: 8px 10px; white-space: pre-wrap; }
+
+  #loading { position: fixed; inset: 0; display: grid; place-items: center; font-size: 15px; color: var(--muted); z-index: 10; background: #e9eef2; }
+  .label3d { position: fixed; z-index: 4; transform: translate(-50%, -100%); background: rgba(255,255,255,.88); border: 1px solid #c7d1d8;
+             border-radius: 5px; padding: 2px 6px; font-size: 11.5px; white-space: nowrap; pointer-events: none; color: #22303a; }
+  #beep { position: fixed; top: 64px; left: calc((100% - 560px) / 2); transform: translateX(-50%); background: #f5a623; color: #1d2730;
+          font-weight: 800; padding: 8px 16px; border-radius: 8px; z-index: 6; display: none; }
+
+  /* --- round push buttons for the simulation (not machine controls) --- */
+  #tools { position: fixed; left: 16px; bottom: 14px; z-index: 6; display: flex; align-items: flex-end; gap: 14px;
+           background: rgba(255,255,255,.88); border: 1px solid var(--line); border-radius: 18px; padding: 10px 16px 6px;
+           box-shadow: 0 4px 16px rgba(0,0,0,.08); flex-wrap: wrap; max-width: calc(100% - 592px); }
+  .pb { display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); min-width: 52px; }
+  .sep { width: 1px; align-self: stretch; background: var(--line); margin: 0 2px 16px; }
+  .push { width: 52px; height: 52px; border-radius: 50%; cursor: pointer; padding: 0; color: #fff; font: 700 17px/1 system-ui, sans-serif;
+          border: 5px solid #cfd6db; box-shadow: 0 4px 0 #8a969f, 0 6px 10px rgba(0,0,0,.18);
+          transition: transform .06s, box-shadow .06s; display: grid; place-items: center; }
+  .push span { text-shadow: 0 1px 1px rgba(0,0,0,.35); }
+  .push:active, .push.down { transform: translateY(4px); box-shadow: 0 0 0 #8a969f, inset 0 3px 8px rgba(0,0,0,.45); }
+  .push.green { background: radial-gradient(circle at 40% 35%, #66d17a, #1f7a35); }
+  .push.red { background: radial-gradient(circle at 40% 35%, #ff7a7a, #a61b1b); }
+  .push.grey { background: radial-gradient(circle at 40% 35%, #a9b4bc, #5b6770); font-size: 15px; }
+  .push.blue { background: radial-gradient(circle at 40% 35%, #9fbfd6, #4f6f86); }
+  .push.lit { border-color: #ffd34d; box-shadow: 0 4px 0 #8a969f, 0 0 12px rgba(255,211,77,.8); }
+  .push.grey.lit, .push.blue.lit { background: radial-gradient(circle at 40% 35%, #7fc0f0, #1f6fa8); }
+  .push.grey span { font-size: 13px; }
+  .push.recording { animation: blink 1s steps(2) infinite; border-color: #ff4d4d; }
+  @keyframes blink { 50% { filter: brightness(1.6); } }
+  @media (max-width: 1000px) {
+    #tools { max-width: calc(100% - 32px); bottom: calc(52vh + 10px); }
+    #view { right: 0; bottom: 52vh; } #top { right: 0; } #side { top: 48vh; width: 100%; border-left: none; border-top: 1px solid var(--line); }
+    #beep { left: 50%; }
+  }
+</style>
+</head>
+<body>
+<div id="loading">Loading the machine…</div>
+<div id="view"></div>
+<div id="top">
+  <div>
+    <h1>Water refill vending machine: machine operation</h1>
+    <div class="sub">EMX-2026-WATERVENDO-01 · coin-operated chilled water kiosk · interactive simulation · <a href="../">back to the project page</a></div>
+  </div>
+  <div id="concept">Concept geometry, not to scale. Drawn from the bench photos.</div>
+</div>
+<div id="beep">BEEP: place your bottle</div>
+
+<!-- simulation controls, as round push buttons on the 3D view -->
+<div id="tools">
+  <div class="pb"><button id="bPlay" class="push green" title="Play / pause the simulation"><span id="iPlay">❚❚</span></button><span id="lPlay">Pause</span></div>
+  <div class="pb"><button id="bReset" class="push red" title="Start over: a fresh machine, stocked and full"><span>■</span></button><span>Reset</span></div>
+  <div class="sep"></div>
+  <div class="pb"><button class="push grey" data-speed="1" title="Real time"><span>1×</span></button><span>Real time</span></div>
+  <div class="pb"><button class="push grey" data-speed="2" title="Twice as fast"><span>2×</span></button><span>Fast</span></div>
+  <div class="pb"><button class="push grey lit" data-speed="5" title="Five times as fast"><span>5×</span></button><span>Faster</span></div>
+  <div class="pb"><button class="push grey" data-speed="10" title="Ten times as fast"><span>10×</span></button><span>Fastest</span></div>
+  <div class="sep"></div>
+  <div class="pb"><button id="bLabels" class="push blue lit" title="Show or hide the part labels"><span>Aa</span></button><span id="lLabels">Labels on</span></div>
+  <div class="pb"><button id="bPanels" class="push blue lit" title="Outer panels: see-through, solid or hidden"><span>▣</span></button><span id="lPanels">See-through</span></div>
+  <div class="sep"></div>
+  <div class="pb"><button id="bPhoto" class="push grey" title="Download a picture of the 3D view (JPG)"><span>JPG</span></button><span>Picture</span></div>
+  <div class="pb"><button id="bRec" class="push red" title="Record the 3D view as a video; press again to stop and download it"><span id="iRec">●</span></button><span id="lRec">Record</span></div>
+</div>
+
+<aside id="side">
+  <div class="card">
+    <h2>Customer touchscreen (as on the machine)</h2>
+    <div id="lcdWrap"><canvas id="lcd" width="480" height="320"></canvas><div id="lcdTag">3.5" LCD · 480 × 320 · SIMULATION</div></div>
+    <div class="note">Tap the screen as you would on the machine. It is drawn with the same layout, colours and words as the
+      machine's display firmware. Hold the WATER VENDO title for 2 seconds, or tap Sales, to see today's sales.</div>
+  </div>
+
+  <div class="card">
+    <h2>Customer</h2>
+    <div class="row">
+      <button class="coin p1" data-coin="1" title="Insert a ₱1 coin">₱1</button>
+      <button class="coin p5" data-coin="5" title="Insert a ₱5 coin">₱5</button>
+      <button class="coin p10" data-coin="10" title="Insert a ₱10 coin">₱10</button>
+      <button class="coin p20" data-coin="20" title="Insert a ₱20 coin">₱20</button>
+      <div style="margin-left:auto;display:flex;flex-direction:column;gap:6px">
+        <button id="bBottle" class="simbtn">Place bottle</button>
+        <button id="bTray" class="simbtn">Take coins from the tray</button>
+      </div>
+    </div>
+    <div class="note">₱1 buys 100 mL, up to ₱15 (1.5 L) per customer. After each coin the slot is closed for 1.3 s
+      while the coin gates move; a coin dropped in then comes straight back to the tray, as on the machine.</div>
+  </div>
+
+  <div class="card">
+    <h2>What is happening</h2>
+    <div id="story"></div>
+  </div>
+
+  <div class="card">
+    <h2>Machine readout</h2>
+    <div id="readout" class="readout"></div>
+  </div>
+
+  <div class="card">
+    <h2>Service (attendant)</h2>
+    <div class="row">
+      <span class="k">Change stock</span>
+      <label class="chk">₱1 <input id="inP1" class="num" type="number" min="0" max="500" value="60"></label>
+      <label class="chk">₱5 <input id="inP5" class="num" type="number" min="0" max="300" value="20"></label>
+      <button id="bLoad" class="simbtn">Load change</button>
+    </div>
+    <div class="row">
+      <span class="k">Gallon A</span>
+      <button class="simbtn" data-gal="a" data-ml="18900">Full</button>
+      <button class="simbtn" data-gal="a" data-ml="2000">Nearly empty</button>
+      <span class="k" style="margin-left:10px">Gallon B</span>
+      <button class="simbtn" data-gal="b" data-ml="18900">Full</button>
+      <button class="simbtn" data-gal="b" data-ml="2000">Nearly empty</button>
+    </div>
+    <div class="row">
+      <span class="k">Coin box</span>
+      <label class="chk"><input id="cBoxFull" type="checkbox"> box sensor reads full</label>
+      <button id="bEmptyBox" class="simbtn">Empty the coin box</button>
+    </div>
+    <div class="row">
+      <span class="k">Next payout</span>
+      <label class="chk"><input id="cJam" type="checkbox"> a hopper jams</label>
+      <button id="bClear" class="simbtn" style="margin-left:auto">Clear faults</button>
+    </div>
+    <div class="note">The machine checks, before it takes a coin, that it can pay change for the worst case (₱34: ₱14 then
+      a ₱20). If it cannot, it shows "Not enough change in the machine" and refuses money until change is loaded.</div>
+  </div>
+
+  <div class="card">
+    <h2>Simulation</h2>
+    <div class="row">
+      <span style="color:var(--muted);font-size:12.5px">View</span>
+      <button class="simbtn" data-view="whole">Whole machine</button>
+      <button class="simbtn" data-view="front">Front</button>
+      <button class="simbtn" data-view="coins">Coin path</button>
+      <button class="simbtn" data-view="bay">Dispensing bay</button>
+      <button class="simbtn" data-view="water">Water supply</button>
+    </div>
+    <div class="note">Drag to turn the view, scroll to zoom, right-drag to move. Play, pause, reset, the speed, the labels
+      and the outer panels are the round buttons at the bottom of the 3D view.</div>
+    <div class="note">The machine's rules (prices, the ₱15 ceiling, coin routing, change, bottle timers, lockouts) follow
+      the firmware. Pour and refill rates are placeholders until they are measured on the unit; times are simulated.</div>
+  </div>
+  <div class="note" style="text-align:center">3D display by three.js (MIT licence). © eMathrix Technologies.</div>
+</aside>
+
+<script src="vendor/three.min.js"></script>
+<script src="vendor/OrbitControls.js"></script>
+<script src="machine.js"></script>
+<script src="lcd.js"></script>
+<script src="scene.js"></script>
+</body>
+</html>

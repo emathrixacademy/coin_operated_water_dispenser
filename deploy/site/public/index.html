@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Water Refill Vending Machine</title>
+<style>
+  :root { --ink: #14212b; --muted: #5d6b76; --line: #d3e2e6; --brand: #0f5f73; --brand-ink: #fff; --soft: #e6f1f4;
+          --bg: #ffffff; --warn-bg: #fff7dc; --warn-line: #ecd27a; }
+  @media (prefers-color-scheme: dark) {
+    :root { --ink: #e6edf2; --muted: #9fb0bb; --line: #2b3b44; --brand: #2f9bb5; --brand-ink: #fff; --soft: #17262e; --bg: #0f171c;
+            --warn-bg: #3a3214; --warn-line: #6b5a1e; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 32px 16px 56px; }
+  h1 { color: var(--brand); font-size: 2rem; line-height: 1.15; margin: 0 0 4px; }
+  .by { color: var(--muted); font-size: .92rem; margin: 0 0 22px; }
+  .notice { background: var(--warn-bg); border: 1px solid var(--warn-line); border-radius: 10px; padding: 12px 16px; margin-bottom: 30px; }
+  h2 { font-size: 1.3rem; margin: 30px 0 10px; }
+  a.big { display: block; text-align: center; background: var(--brand); color: var(--brand-ink); font-weight: 700; font-size: 1.1rem;
+          text-decoration: none; padding: 16px; border-radius: 10px; margin: 8px 0; }
+  a.big:hover { filter: brightness(1.08); }
+  .help { background: var(--soft); border-radius: 10px; padding: 12px 16px; font-size: .95rem; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+  .doc { display: block; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; text-decoration: none; color: var(--ink); }
+  .doc:hover { border-color: var(--brand); }
+  .doc b { color: var(--brand); display: block; margin-bottom: 2px; }
+  .doc span { color: var(--muted); font-size: .88rem; }
+  footer { color: var(--muted); font-size: .85rem; margin-top: 40px; border-top: 1px solid var(--line); padding-top: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Water Refill Vending Machine</h1>
+  <p class="by">Built by eMathrix Technologies · Project EMX-2026-WATERVENDO-01</p>
+
+  <div class="notice"><b>Research prototype.</b> A coin-operated chilled-water kiosk: ₱1 buys 100 mL, up to ₱15 (1.5 L)
+    per customer, with automatic change from ₱1 and ₱5 hoppers. Everything on this page matches the firmware and the
+    as-built wiring of the unit on the bench.</div>
+
+  <h2>3D simulation</h2>
+  <a class="big" href="simulation/">Open the interactive 3D simulation</a>
+  <div class="help">Operate the machine in the browser: insert coins, choose an amount on the same touchscreen the machine
+    has, place a bottle and collect the change. Turn and zoom the cabinet to follow each coin through the gates and the water
+    from the gallons to the bottle. Try the faults too: empty gallons, low change, a jammed hopper.</div>
+
+  <h2>Firmware</h2>
+  <a class="big" href="https://github.com/emathrixacademy/coin_operated_water_dispenser/archive/refs/heads/main.zip">Download the firmware (full source code)</a>
+  <div class="help">Arduino Mega 2560 firmware (PlatformIO) and the ESP32 touchscreen firmware. The machine is standalone:
+    no network, no cloud. Build and flash instructions are in the README inside the download.</div>
+
+  <h2>Wiring and drawings</h2>
+  <div class="grid">
+    <a class="doc" href="docs/wiring-asbuilt.html"><b>As-built wiring schematic</b><span>Pin map per component, interactive (Oct 29, 2026)</span></a>
+    <a class="doc" href="docs/Water-Vendo-Wiring.pdf"><b>Wiring schematic, printable</b><span>PDF, 12 pages</span></a>
+    <a class="doc" href="docs/wiring.md"><b>Wiring notes</b><span>Power, grounds, and why each pin is where it is</span></a>
+    <a class="doc" href="docs/Emathrix_FabDrawing_CoinRouting_RevB.pdf"><b>Coin routing fabrication drawing</b><span>Rev B, PDF</span></a>
+  </div>
+
+  <h2>Documents</h2>
+  <div class="grid">
+    <a class="doc" href="docs/SPECIFICATION.md"><b>Specification</b><span>How the machine behaves, screen by screen</span></a>
+    <a class="doc" href="docs/scenarios.md"><b>Test scenarios</b><span>The acceptance cases and their expected results</span></a>
+    <a class="doc" href="docs/calibration.md"><b>Calibration manual</b><span>Per-unit pour rate, coin and sensor setup</span></a>
+    <a class="doc" href="docs/WATER-VENDO.pdf"><b>Original design brief</b><span>PDF</span></a>
+  </div>
+
+  <footer>© 2026 eMathrix Technologies. Prepared under the service agreement for EMX-2026-WATERVENDO-01.</footer>
+</main>
+</body>
+</html>

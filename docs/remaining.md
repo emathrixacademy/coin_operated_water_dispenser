@@ -39,7 +39,7 @@ hopper holds, and in COLLECT_ALL that error never washes out.
   passes). Brought up to date in item 3.
 - The mode is shown in the DEBUG boot trace only. Showing it on the Admin
   screen waits for Admin (Part C).
-- `CLAUDE.md`, `README.md`, `wiring.md` and SPEC §1.3/§3.2 still describe the
+- `ENGINEERING_RULES.md`, `README.md`, `wiring.md` and SPEC §1.3/§3.2 still describe the
   Rev A single servo. Rev B pass, item 5.
 - `coin_diverter.cpp` RECIRCULATE path still drives one three-position servo.
 

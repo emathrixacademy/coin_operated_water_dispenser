@@ -11,7 +11,7 @@ Append new rulings as they land. Never delete one — if a decision is reversed,
 strike it through and record the reversal underneath with its reasoning, so the
 history of why the machine behaves as it does stays readable.
 
-Authority: `CLAUDE.md` for coding constraints, `SPECIFICATION.md` for behaviour,
+Authority: `ENGINEERING_RULES.md` for coding constraints, `SPECIFICATION.md` for behaviour,
 this file for settled questions. Where they conflict, raise it rather than
 choosing.
 

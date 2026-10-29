@@ -14,7 +14,7 @@ transaction means a user looking at a stale balance.
 ## Planned pages
 
 Layout follows the client's mockup in `WATER-VENDO.pdf`. Where the mockup and
-`CLAUDE.md` disagree on layout, the mockup wins; on billing behaviour, `CLAUDE.md` wins.
+`ENGINEERING_RULES.md` disagree on layout, the mockup wins; on billing behaviour, `ENGINEERING_RULES.md` wins.
 
 | Page | Content |
 |---|---|
@@ -39,7 +39,7 @@ Every command terminates with three `0xFF` bytes.
 
 Transaction history is capped at a **twenty-entry ring buffer in EEPROM** holding
 timestamp, amount in, volume out and change out. The Mega has 4 KB of EEPROM and
-`CLAUDE.md` rules out an SD logger. A longer history is a new scope item to be quoted,
+`ENGINEERING_RULES.md` rules out an SD logger. A longer history is a new scope item to be quoted,
 not built.
 
 The Admin change-inventory edit needs an explicit confirm step and commits to EEPROM

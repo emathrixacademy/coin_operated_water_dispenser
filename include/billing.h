@@ -13,7 +13,7 @@
 //
 // There is deliberately NO function in this header that takes a millilitre
 // reading and returns an amount owed for it. If you find yourself needing one,
-// stop and re-read CLAUDE.md. Billing from a measured volume makes the change
+// stop and re-read ENGINEERING_RULES.md. Billing from a measured volume makes the change
 // computation drift against the flow sensor's 2-5% tolerance, and the drift
 // comes out of the hoppers on every transaction.
 //

@@ -22,7 +22,7 @@ static void test_round_down_exact_multiples() {
 }
 
 static void test_round_down_the_documented_case() {
-  // CLAUDE.md and scenarios.md case 8 both name this one explicitly.
+  // ENGINEERING_RULES.md and scenarios.md case 8 both name this one explicitly.
   TEST_ASSERT_EQUAL_INT32(300, billing_round_down(305));
 }
 

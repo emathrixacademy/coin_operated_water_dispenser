@@ -5,7 +5,7 @@
 //
 // The ESP32 runs the UI on its own processor and draws everything itself.
 // THE MEGA NEVER RENDERS. It sends short text lines over Serial2 and reads
-// touch events back. No graphics work on the Mega -- CLAUDE.md.
+// touch events back. No graphics work on the Mega -- ENGINEERING_RULES.md.
 //
 // PROTOCOL. ASCII, one message per line, terminated by '\n' ('\r' ignored),
 // fields separated by one space. Numbers are decimal integers.

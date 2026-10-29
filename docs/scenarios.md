@@ -3,7 +3,7 @@
 Project EMX-2026-WATERVENDO-01, eMathrix Technologies.
 
 Every case here must pass before the machine ships. This document is the acceptance
-test suite named in `CLAUDE.md`. Cases 1–10 come from the client's document. Cases
+test suite named in `ENGINEERING_RULES.md`. Cases 1–10 come from the client's document. Cases
 11–15 were added because the machine needs them and the client did not write them.
 Case 19 was proposed and adopted. Cases 16–18 remain proposals — see the note near the
 end.

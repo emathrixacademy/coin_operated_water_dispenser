@@ -8,7 +8,7 @@
 // Nothing in this module returns money, and nothing anywhere may compute an
 // amount owed from what this module reports. The target was fixed from the
 // user's coins before the valve opened; this module only counts toward it.
-// See CLAUDE.md -- billing from a measured volume is the bug the whole design
+// See ENGINEERING_RULES.md -- billing from a measured volume is the bug the whole design
 // exists to prevent.
 //
 // The ISR on PIN_FLOW_PULSE increments a volatile counter and returns.
@@ -17,7 +17,7 @@
 // Millilitres are computed as pulses * ML_PER_PULSE_NUM / ML_PER_PULSE_DEN with
 // the division remainder carried between calls, so truncation error stays under
 // one millilitre across a whole pour rather than accumulating once per pulse.
-// No floating point -- CLAUDE.md.
+// No floating point -- ENGINEERING_RULES.md.
 
 #include "types.h"
 

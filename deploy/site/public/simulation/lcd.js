@@ -1,0 +1,249 @@
+"use strict";
+// The 3.5" 480 x 320 customer screen, ported from esp32_bridge/src/ui_lcd.cpp: same coordinates,
+// colours, words and buttons. The amount picker is local to the screen until DISPENSE, as there.
+
+const LCD_W = 480, LCD_H = 320, TOP = 44, MAX_BUY_ML = 1500;
+const C = { BG: "rgb(12,24,36)", CARD: "rgb(22,38,56)", LINE: "rgb(48,70,92)", INK: "rgb(236,243,248)",
+            MUTE: "rgb(140,163,181)", ACC: "rgb(30,136,229)", WATER: "rgb(38,198,218)", OK: "rgb(46,204,113)",
+            WARN: "rgb(245,166,35)", BAD: "rgb(229,83,61)", DIM: "rgb(42,59,77)" };
+// The board's built-in fonts, matched by size.
+const F = { F9: "13px Arial, Helvetica, sans-serif", F9B: "bold 13px Arial, Helvetica, sans-serif",
+            F12B: "bold 17px Arial, Helvetica, sans-serif", F18B: "bold 24px Arial, Helvetica, sans-serif",
+            F24B: "bold 33px Arial, Helvetica, sans-serif", FONT2: "12px Arial, Helvetica, sans-serif" };
+const FAULT_TEXT = ["", "Out of water", "Not enough change in the machine", "Coin box is full",
+                    "Change dispenser jammed", "Water flow problem", "Refill pump problem", "Coin slot problem"];
+const UI = { SET: -3, STATS_CLOSE: -4, STATS_OPEN: -5 };
+
+function money(c) { return c % 100 ? `PHP ${Math.floor(c / 100)}.${String(c % 100).padStart(2, "0")}` : `PHP ${c / 100}`; }
+function volume(ml) {
+  ml = Math.floor(ml);
+  if (ml < 1000) return `${ml} mL`;
+  if (ml % 1000 === 0) return `${ml / 1000} L`;
+  return `${Math.floor(ml / 1000)}.${Math.floor((ml % 1000) / 100)} L`;
+}
+
+class Lcd {
+  constructor(canvas, machine) {
+    this.cv = canvas; this.g = canvas.getContext("2d"); this.m = machine;
+    this.btn = []; this.sel = 100; this.lastState = -1; this.statsOpen = false; this.statsSince = 0;
+    this.holdSince = null;
+    canvas.addEventListener("pointerdown", e => this.down(e));
+    canvas.addEventListener("pointerup", () => { this.holdSince = null; });
+    canvas.addEventListener("pointerleave", () => { this.holdSince = null; });
+  }
+
+  // --- drawing primitives -----------------------------------------------------
+  rr(x, y, w, h, r, fill, stroke) {
+    const g = this.g; g.beginPath(); g.roundRect(x, y, w, h, r);
+    if (fill) { g.fillStyle = fill; g.fill(); }
+    if (stroke) { g.strokeStyle = stroke; g.lineWidth = 1; g.stroke(); }
+  }
+  text(s, x, y, font, color, align = "center") {
+    const g = this.g; g.font = font; g.fillStyle = color; g.textAlign = align; g.textBaseline = "middle"; g.fillText(s, x, y);
+  }
+  button(x, y, w, h, label, ev, payload, enabled, primary, font = F.F12B) {
+    const fill = !enabled ? C.DIM : primary ? C.ACC : C.CARD;
+    this.rr(x, y, w, h, 12, fill, enabled && !primary ? C.LINE : null);
+    this.text(label, x + w / 2, y + h / 2 + 1, font, enabled ? C.INK : C.MUTE);
+    this.btn.push({ x, y, w, h, ev, payload, enabled });
+  }
+  circle(cx, cy, r, c) { const g = this.g; g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.fillStyle = c; g.fill(); }
+  tri(x1, y1, x2, y2, x3, y3, c) { const g = this.g; g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.lineTo(x3, y3); g.closePath(); g.fillStyle = c; g.fill(); }
+
+  iconDrop(cx, cy, r, c) {
+    this.circle(cx, cy + r / 3, r, c);
+    this.tri(cx, cy - r * 3 / 2, cx - r * 0.9, cy, cx + r * 0.9, cy, c);
+    this.circle(cx - r / 3, cy + r / 4, r / 4, C.INK);
+  }
+  iconCheck(cx, cy, r, c) {
+    this.circle(cx, cy, r, c);
+    const g = this.g; g.strokeStyle = C.BG; g.lineWidth = (r / 6 + 1) * 2; g.lineCap = "butt";
+    g.beginPath(); g.moveTo(cx - r / 2, cy); g.lineTo(cx - r / 8, cy + r / 3); g.lineTo(cx + r / 2, cy - r / 3); g.stroke();
+  }
+  iconWarn(cx, cy, r, c) {
+    this.tri(cx, cy - r, cx - r, cy + r * 3 / 4, cx + r, cy + r * 3 / 4, c);
+    this.rr(cx - r / 10, cy - r / 2, r / 5 + 1, r * 3 / 4, 2, C.BG);
+    this.circle(cx, cy + r / 2, r / 8 + 1, C.BG);
+  }
+  iconBottle(cx, cy, h, c) {
+    const w = h / 2;
+    this.rr(cx - w / 2, cy - h / 4, w, h * 3 / 4, 8, c);
+    this.g.fillStyle = c; this.g.fillRect(cx - w / 5, cy - h / 2, w * 2 / 5, h / 4 + 2);
+    this.g.fillStyle = C.ACC; this.g.fillRect(cx - w / 4, cy - h / 2 - 6, w / 2, 8);
+    this.g.fillStyle = C.WATER; this.g.fillRect(cx - w / 2 + 4, cy + h / 8, w - 8, h * 3 / 8 - 6);
+  }
+  iconCoin(cx, cy, r) {
+    this.circle(cx, cy, r, C.WARN);
+    const g = this.g; g.beginPath(); g.arc(cx, cy, r - 5, 0, Math.PI * 2); g.strokeStyle = C.BG; g.lineWidth = 1; g.stroke();
+    this.text("P", cx, cy + 2, F.F18B, C.BG);
+  }
+
+  // --- screens ----------------------------------------------------------------
+  drawTop() {
+    const m = this.m, g = this.g;
+    g.fillStyle = C.CARD; g.fillRect(0, 0, LCD_W, TOP - 4);
+    g.fillStyle = C.LINE; g.fillRect(0, TOP - 4, LCD_W, 1);
+    this.iconDrop(20, 19, 7, C.WATER);
+    this.text("WATER VENDO", 36, 21, F.F12B, C.INK, "left");
+    const a = m.gallonLow("a"), b = m.gallonLow("b");
+    if (a || b) {
+      this.rr(210, 9, 130, 22, 11, C.WARN);
+      this.text(a && b ? "Both gallons low" : a ? "Gallon A low" : "Gallon B low", 275, 21, F.FONT2, C.BG);
+    }
+    this.rr(352, 11, 76, 18, 9, null, C.LINE);
+    const pct = m.tankPct(), fill = Math.floor(72 * pct / 100);
+    if (fill > 0) this.rr(354, 13, fill, 14, 7, pct < 25 ? C.WARN : C.WATER);
+    this.text(`${pct}%`, 470, 21, F.FONT2, C.INK, "right");
+  }
+
+  drawProgress() {
+    const m = this.m, t = m.target > 0 ? m.target : 1;
+    const pc = Math.min(100, m.target > 0 ? Math.floor(m.segment * 100 / t) : 100);
+    this.text(`${pc}%`, LCD_W / 2, 150, F.F24B, C.INK);
+    this.rr(40, 190, 400, 24, 12, C.DIM);
+    if (pc > 0) this.rr(40, 190, Math.max(24, 400 * pc / 100), 24, 12, C.WATER);
+    this.text(`${volume(m.segment)} of ${volume(m.target)}`, LCD_W / 2, 232, F.F9, C.MUTE);
+  }
+
+  clampSel() {
+    const max = this.m.maxml();
+    if (this.sel > max) this.sel = max;
+    if (this.sel > MAX_BUY_ML) this.sel = MAX_BUY_ML;
+    if (this.sel < 100) this.sel = 100;
+  }
+
+  tile(x, y, w, h, ml) {
+    const enabled = ml <= this.m.maxml(), chosen = enabled && ml === this.sel;
+    this.rr(x, y, w, h, 10, !enabled ? C.DIM : chosen ? C.ACC : C.CARD, enabled && !chosen ? C.LINE : null);
+    this.text(volume(ml), x + w / 2, y + h / 2 - 8, F.F9B, enabled ? C.INK : C.MUTE);
+    this.text(`PHP ${ml / 100}`, x + w / 2, y + h / 2 + 13, F.FONT2, enabled ? (chosen ? C.INK : C.WATER) : C.MUTE);
+    this.btn.push({ x, y, w, h, ev: UI.SET, payload: ml, enabled });
+  }
+
+  drawSelect() {
+    const m = this.m;
+    this.text(`Credit  ${money(m.credit)}`, 14, TOP + 18, F.F12B, C.INK, "left");
+    this.clampSel();
+    const canBuy = m.maxml() >= 100;
+    if (canBuy) this.text(volume(this.sel), LCD_W - 14, TOP + 18, F.F12B, C.WATER, "right");
+    for (let i = 0; i < MAX_BUY_ML / 100; i++) this.tile(10 + (i % 5) * 93, TOP + 40 + Math.floor(i / 5) * 58, 86, 52, (i + 1) * 100);
+    this.button(10, LCD_H - 58, 150, 52, "Refund", EV.FINISH, -1, true, false);
+    this.button(170, LCD_H - 58, 300, 52, "DISPENSE", EV.SELECT, this.sel, canBuy, true, F.F18B);
+  }
+
+  statCard(x, y, label, value, c) {
+    this.rr(x, y, 148, 66, 10, C.CARD);
+    this.text(label, x + 12, y + 17, F.FONT2, C.MUTE, "left");
+    this.text(value, x + 12, y + 45, F.F12B, c, "left");
+  }
+
+  drawStats() {
+    const s = this.m.sales, d = new Date();
+    const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    this.text(`Sales today  -  ${d.getDate()} ${MON[d.getMonth()]} ${d.getFullYear()}`, 14, TOP + 21, F.F12B, C.INK, "left");
+    this.button(LCD_W - 104, TOP + 4, 94, 34, "Back", UI.STATS_CLOSE, 0, true, false, F.F9B);
+    this.statCard(10, TOP + 46, "Total income", money(s.income), C.OK);
+    this.statCard(166, TOP + 46, "Water dispensed", volume(s.volume), C.WATER);
+    this.statCard(322, TOP + 46, "Purchases", String(s.count), C.INK);
+    this.text("Last 10 purchases", 14, TOP + 128, F.FONT2, C.MUTE, "left");
+    this.g.fillStyle = C.LINE; this.g.fillRect(14, TOP + 138, LCD_W - 28, 1);
+    if (!s.list.length) { this.text("No purchases yet", LCD_W / 2, TOP + 190, F.F9, C.MUTE); return; }
+    s.list.forEach((r, i) => {
+      const x = 14 + Math.floor(i / 5) * 234, y = TOP + 153 + (i % 5) * 25, t = new Date(r.ts);
+      const p2 = n => String(n).padStart(2, "0");
+      this.text(`${p2(t.getDate())}/${p2(t.getMonth() + 1)} ${p2(t.getHours())}:${p2(t.getMinutes())}`, x, y, F.FONT2, C.MUTE, "left");
+      if (r.owed > 0) { this.text(`${volume(r.ml)} owed ${money(r.owed).slice(4)}`, x + 96, y, F.FONT2, C.WARN, "left"); return; }
+      this.text(money(r.in), x + 96, y, F.FONT2, C.INK, "left");
+      this.text(volume(r.ml), x + 160, y, F.FONT2, C.WATER, "left");
+    });
+  }
+
+  drawBody() {
+    const m = this.m, W = LCD_W, H = LCD_H, c = money(m.credit);
+    if (this.statsOpen) { this.drawStats(); return; }
+    switch (m.state) {
+      case ST.ACCEPTING:
+        this.text("Credit", W / 2, TOP + 36, F.F9, C.MUTE);
+        this.text(c, W / 2, TOP + 84, F.F24B, C.INK);
+        this.text("Insert more coins, or tap Continue", W / 2, TOP + 132, F.F9, C.MUTE);
+        this.button(120, H - 92, 240, 70, "CONTINUE", EV.CONFIRM, -1, true, true, F.F18B);
+        break;
+      case ST.SELECTING: this.drawSelect(); break;
+      case ST.AWAITING:
+        this.iconBottle(W / 2, 112, 84, C.INK);
+        this.text("Place your bottle under the nozzle", W / 2, 192, F.F12B, C.INK);
+        this.text(`${volume(m.target)} will be dispensed`, W / 2, 222, F.F9, C.MUTE);
+        this.button(150, H - 70, 180, 54, "Change amount", EV.BACK, -1, true, false, F.F9B);
+        break;
+      case ST.DISPENSING: case ST.SETTLING:
+        this.text("Dispensing", W / 2, TOP + 30, F.F12B, C.MUTE);
+        this.drawProgress();
+        break;
+      case ST.PAUSED:
+        this.iconWarn(W / 2, 118, 34, C.WARN);
+        this.text("Bottle removed", W / 2, 192, F.F18B, C.INK);
+        this.text("Put it back within 10 seconds to continue", W / 2, 230, F.F9, C.MUTE);
+        break;
+      case ST.COMPLETE:
+        this.iconCheck(60, TOP + 46, 26, C.OK);
+        this.text(`${volume(m.total)} dispensed`, 100, TOP + 46, F.F18B, C.INK, "left");
+        this.text("Credit left", W / 2, TOP + 104, F.F9, C.MUTE);
+        this.text(c, W / 2, TOP + 140, F.F24B, C.INK);
+        this.button(12, H - 78, 222, 64, "Dispense more", EV.AGAIN, -1, true, true);
+        this.button(246, H - 78, 222, 64, "Finish", EV.FINISH, -1, true, false);
+        break;
+      case ST.PAYING:
+        this.iconCoin(W / 2, 120, 32);
+        this.text("Returning your change", W / 2, 192, F.F12B, C.INK);
+        this.text(c, W / 2, 232, F.F18B, C.WARN);
+        break;
+      case ST.THANKYOU:
+        this.iconCheck(W / 2, 118, 36, C.OK);
+        this.text("Thank you!", W / 2, 192, F.F24B, C.INK);
+        this.text(`Dispensed ${volume(m.total)}   -   Change ${money(m.changePaid)}`, W / 2, 240, F.F9, C.MUTE);
+        break;
+      case ST.FAULT:
+        this.iconWarn(W / 2, 112, 34, C.BAD);
+        this.text("Out of service", W / 2, 180, F.F18B, C.INK);
+        if (m.fault > 0 && m.fault < FAULT_TEXT.length) this.text(FAULT_TEXT[m.fault], W / 2, 216, F.F9B, C.BAD);
+        this.text("Please contact the attendant", W / 2, 250, F.F9, C.MUTE);
+        break;
+      default:
+        this.iconDrop(W / 2, 118, 32, C.WATER);
+        this.text("Insert coins to start", W / 2, 200, F.F18B, C.INK);
+        this.text("1 peso = 100 mL   -   up to 15 pesos (1.5 L)", W / 2, 238, F.F9, C.MUTE);
+        this.button(W - 112, H - 48, 102, 38, "Sales", UI.STATS_OPEN, 0, true, false, F.F9B);
+    }
+  }
+
+  draw(realNow) {
+    const m = this.m;
+    // A fresh visit to the picker starts at the smallest size, 100 mL (team decision 2026-10-27).
+    if (m.state === ST.SELECTING && this.lastState !== ST.SELECTING) this.sel = 100;
+    this.lastState = m.state;
+    const idle = m.state === ST.STANDBY || m.state === ST.FAULT;
+    if (this.statsOpen && (!idle || realNow - this.statsSince > 60000)) this.statsOpen = false;
+    if (this.holdSince !== null && realNow - this.holdSince >= 2000 && idle && !this.statsOpen) {
+      this.statsOpen = true; this.statsSince = realNow; this.holdSince = null;
+    }
+    this.btn = [];
+    this.g.fillStyle = C.BG; this.g.fillRect(0, 0, LCD_W, LCD_H);
+    this.drawTop();
+    this.drawBody();
+  }
+
+  down(e) {
+    const r = this.cv.getBoundingClientRect();
+    const x = (e.clientX - r.left) * LCD_W / r.width, y = (e.clientY - r.top) * LCD_H / r.height;
+    if (y < TOP && x < 260) this.holdSince = performance.now();   // hold the title for the sales screen
+    for (const b of this.btn) {
+      if (!b.enabled || x < b.x || x >= b.x + b.w || y < b.y || y >= b.y + b.h) continue;
+      if (b.ev === UI.SET) { this.sel = b.payload; this.clampSel(); }
+      else if (b.ev === UI.STATS_OPEN) { this.statsOpen = true; this.statsSince = performance.now(); }
+      else if (b.ev === UI.STATS_CLOSE) this.statsOpen = false;
+      else this.m.touch(b.ev, b.payload);
+      if (this.onTouch) this.onTouch();
+      break;
+    }
+  }
+}

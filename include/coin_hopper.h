@@ -72,7 +72,7 @@ bool coin_hopper_can_cover(money_t centavos);
 // Plan a payout across the two hoppers.
 //
 // The P1 hopper covers P5 dissipation, so it is not drained first -- see
-// CLAUDE.md. Writes the coin counts for each denomination and returns false if
+// ENGINEERING_RULES.md. Writes the coin counts for each denomination and returns false if
 // the amount cannot be made from current stock, in which case the caller must
 // not promise it.
 bool coin_hopper_plan(money_t centavos, uint16_t *out_p1, uint16_t *out_p5);

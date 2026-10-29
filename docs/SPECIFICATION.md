@@ -2,7 +2,7 @@ SPECIFICATION — Water Refill Vending Machine
 
 Project EMX-2026-WATERVENDO-01. Complete functional, logical, and algorithmic specification for firmware and hardware.
 
-This document is authoritative for behaviour. CLAUDE.md remains authoritative for coding constraints. Where this document and the client's mockup PDF disagree on screen layout, the PDF wins. Where they disagree on money handling, this document wins.
+This document is authoritative for behaviour. ENGINEERING_RULES.md remains authoritative for coding constraints. Where this document and the client's mockup PDF disagree on screen layout, the PDF wins. Where they disagree on money handling, this document wins.
 
 0. The one rule everything else serves
 

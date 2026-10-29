@@ -100,7 +100,7 @@ static_assert(EEPROM_ADDR_INVENTORY_RING
 // ---------------------------------------------------------------------------
 //
 // Payloads are small and bounded by the structs above, so one fixed scratch
-// buffer serves every record. No dynamic allocation -- CLAUDE.md.
+// buffer serves every record. No dynamic allocation -- ENGINEERING_RULES.md.
 
 #define RECORD_SCRATCH 48
 static_assert((int)sizeof(hist_slot_t) + RECORD_OVERHEAD <= RECORD_SCRATCH,

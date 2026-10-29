@@ -159,7 +159,7 @@ void persist_daily_reset(uint32_t timestamp);
 
 // --- History ------------------------------------------------------------
 
-// Twenty entries, oldest overwritten. The Mega has 4 KB of EEPROM and CLAUDE.md
+// Twenty entries, oldest overwritten. The Mega has 4 KB of EEPROM and ENGINEERING_RULES.md
 // rules out an SD logger, so this is the ceiling. A longer history is a new
 // scope item to be quoted, not built.
 void persist_history_add(const history_entry_t *entry);
