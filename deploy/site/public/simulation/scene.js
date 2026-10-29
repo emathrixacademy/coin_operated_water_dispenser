@@ -318,9 +318,11 @@ $("bRec").addEventListener("click", () => {
 const STATE_NAME = ["BOOT", "STANDBY", "ACCEPTING", "SELECTING", "AWAITING BOTTLE", "DISPENSING", "PAUSED", "SETTLING",
                     "COMPLETE", "PAYING CHANGE", "THANK YOU", "FAULT", "ADMIN"];
 let last = performance.now(), beepUntil = 0;
+const simHooks = [];   // other scripts (sound, practice) listen to the machine's events here
 
 function handleEvents() {
   for (const e of machine.events.splice(0)) {
+    for (const f of simHooks) f(e);
     if (e.type === "coin") {
       const pts = coinPath(e.dest), sp = Math.max(speed, 1);
       if (e.dest === "tray") flyCoin(e.peso, pts, 900 / sp, 0, () => addTrayCoin(e.peso));

@@ -80,6 +80,7 @@ class Machine {
     this.pay = null;
     this.sales = { income: 0, volume: 0, count: 0, list: [] };
     this.history = [];
+    this.records = []; this.cur = null; this.recNo = 0; this.recVersion = 0;   // per-transaction log (simulation)
     this.stats = { today: blankStats(), all: blankStats() };
     this.pin = DEMO_PIN; this.pinFails = 0; this.pinLockUntil = 0; this.adminSeen = 0;
     this.story = "The machine is ready. Insert a coin to start.";
@@ -106,6 +107,10 @@ class Machine {
       this.emit({ type: "coin", peso, dest: "tray" });
       this.tray.push(peso);
       this.stats.today.returned++; this.stats.all.returned++;
+      if (this.cur) this.cur.rejected.push(peso);
+      else this.pushRecord(Object.assign(this.newRecord(), { rejected: [peso],
+        result: this.state === ST.FAULT ? `Coin returned: out of service (${FAULT_NAMES[this.fault]})` : "Coin returned: slot closed" }));
+      this.recVersion++;
       const why = this.state === ST.FAULT ? "The machine is out of service, so the coin slot is switched off"
         : (this.state === ST.STANDBY || this.state === ST.ACCEPTING) && this.now < this.coinBusyUntil
           ? "The slot was still closed while the gates moved for the last coin"
@@ -125,6 +130,8 @@ class Machine {
 
   coinIdentified(peso, dest) {
     if (this.state === ST.STANDBY) this.go(ST.ACCEPTING);
+    if (!this.cur) this.cur = this.newRecord();
+    this.cur.coins.push(peso); this.recVersion++;
     this.credit += peso * 100; this.inserted += peso * 100;
     this.stats.today.coins[peso]++; this.stats.all.coins[peso]++;
     this.gates = { g1: dest === "p5" ? "closed" : "open", g2: dest === "p1" ? "closed" : "open" };
@@ -154,11 +161,13 @@ class Machine {
       if (ev === EV.SELECT && payload > 0 && payload <= CFG.MAX_ML && payload % 100 === 0 &&
           payload * 1 <= this.credit) {
         this.credit -= payload; this.target = payload; this.segment = 0;   // price = mL in centavos
+        if (this.cur) { this.cur.ordered += payload; this.recVersion++; }
         this.go(ST.AWAITING);
       } else if (ev === EV.FINISH || ev === EV.BACK) {
         this.go(ST.PAYING);
       }
     } else if (s === ST.AWAITING && ev === EV.BACK) {
+      if (this.cur) { this.cur.ordered -= this.target; this.recVersion++; }
       this.credit += this.target; this.target = 0;
       this.say("Amount cancelled before any water poured. The whole price goes back to the credit.");
       this.go(ST.SELECTING);
@@ -258,6 +267,44 @@ class Machine {
   }
   emptyBox() { this.inv.box10 = 0; this.inv.box20 = 0; this.emit({ type: "boxEmpty" }); this.say("Attendant emptied the coin box."); }
 
+  // --- transaction records (simulation only) -----------------------------------
+  // One row per customer, built as the sale happens, so a tester can check each sale
+  // against the coins, the water and the change. Amounts come from the same billing
+  // variables the firmware uses; "poured" is what the pump actually ran for.
+  newRecord() {
+    return { no: 0, simMs: this.now, wall: Date.now(), coins: [], rejected: [], ordered: 0, poured: 0, charged: 0,
+             changeDue: 0, paid: { 1: 0, 5: 0 }, owed: 0, partial: false, noBottle: false, result: "", tankAfter: 0 };
+  }
+  pushRecord(r) {
+    r.no = ++this.recNo; r.tankAfter = Math.round(this.tank);
+    this.records.unshift(r);
+    if (this.records.length > 500) this.records.length = 500;
+  }
+  closeRecord() {
+    const r = this.cur; if (!r) return;
+    this.cur = null;
+    r.owed = this.unpaid;
+    r.result = this.unpaid ? `Change jam: ₱${this.unpaid / 100} owed`
+      : r.noBottle ? "Cancelled: no bottle in 20 s, refunded"
+      : r.partial ? "Partial: bottle removed, rounded down"
+      : r.charged === 0 ? "Cancelled by customer, refunded"
+      : "Completed";
+    this.pushRecord(r); this.recVersion++;
+  }
+  recordTotals() {
+    const t = { n: 0, coins: { 1: 0, 5: 0, 10: 0, 20: 0 }, in: 0, rejected: 0, ordered: 0, poured: 0, charged: 0,
+                changeDue: 0, changePaid: 0, owed: 0 };
+    for (const r of this.records) {
+      if (r.coins.length) t.n++;
+      for (const c of r.coins) { t.coins[c]++; t.in += c; }
+      t.rejected += r.rejected.length;
+      t.poured += r.poured; t.charged += r.charged;
+      t.changeDue += r.changeDue / 100; t.changePaid += r.paid[1] + r.paid[5] * 5; t.owed += r.owed / 100;
+    }
+    t.sales = t.charged / 100;                     // pesos kept = mL charged / 100
+    return t;
+  }
+
   // --- the state machine ------------------------------------------------------
   onEnter(s) {
     this.dispensePump = (s === ST.DISPENSING);
@@ -285,6 +332,7 @@ class Machine {
 
   startPayout() {
     const due = this.credit;
+    if (this.cur) { this.cur.changeDue = Math.max(0, due); this.recVersion++; }
     if (due <= 0) { this.say("No change due."); this.pay = null; return; }
     const plan = changePlan(due, this.inv.p1, this.inv.p5);
     this.pay = { plan: plan || { p1: 0, p5: 0 }, leg: 0, left: 0, phase: "idle", t: 0, retries: 0, counted: 0 };
@@ -302,6 +350,7 @@ class Machine {
     for (const s of [this.stats.today, this.stats.all]) {
       s.in += this.inserted; s.change += paid; s.sales += 1; s.ml += this.total; s.owed += this.unpaid;
     }
+    this.closeRecord();
     this.log({ kind: "sale", text: `Sale ₱${this.inserted / 100} in, ${this.total} mL, change ₱${paid / 100}` +
                                    (this.unpaid ? `, OWED ₱${this.unpaid / 100}` : "") });
   }
@@ -340,6 +389,7 @@ class Machine {
         if (this.warns === 0 && this.elapsed() >= CFG.BOTTLE_WARN1_MS) { this.warns = 1; this.emit({ type: "beep" }); this.say("15 s and no bottle: the buzzer sounds."); }
         else if (this.warns === 1 && this.elapsed() >= CFG.BOTTLE_WARN2_MS) { this.warns = 2; this.emit({ type: "beep" }); this.say("18 s: the buzzer sounds again. At 20 s the sale is cancelled and refunded."); }
         if (this.elapsed() >= CFG.BOTTLE_CANCEL_MS) {
+          if (this.cur) { this.cur.noBottle = true; this.recVersion++; }
           this.credit += this.target; this.target = 0;
           this.say("20 s and no bottle: cancelled. Everything paid is refunded in full.");
           this.go(ST.PAYING);
@@ -364,6 +414,11 @@ class Machine {
           this.credit += refund;
           this.total += charged;
           this.refillOwed += delivered;
+          if (this.cur) {
+            this.cur.poured += delivered; this.cur.charged += charged;
+            if (delivered < this.target) this.cur.partial = true;
+            this.recVersion++;
+          }
           if (delivered < this.target) {
             this.say(`Bottle not put back. ${delivered} mL poured is charged as ${charged} mL (always rounded down), ` +
                      `so ₱${refund / 100} goes back to the credit.`);
@@ -445,6 +500,7 @@ class Machine {
         const peso = hopper === "p5" ? 5 : 1;
         this.inv[hopper]--; p.left--; this.changePaid += peso * 100;
         this.tray.push(peso);
+        if (this.cur) { this.cur.paid[peso]++; this.recVersion++; }
         this.emit({ type: "payout", peso, hopper });
         p.phase = "off"; p.t = 0; this.hopperMotor = null;
       }

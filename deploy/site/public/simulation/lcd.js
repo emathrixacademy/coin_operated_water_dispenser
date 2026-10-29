@@ -32,7 +32,7 @@ class Lcd {
     this.holdSince = null; this.iconHoldSince = null;
     this.admin = { page: "menu", p1: 0, p5: 0, msg: "" };
     canvas.addEventListener("pointerdown", e => this.down(e));
-    const up = () => { this.holdSince = null; this.iconHoldSince = null; };
+    const up = () => this.release();
     canvas.addEventListener("pointerup", up);
     canvas.addEventListener("pointerleave", up);
   }
@@ -464,7 +464,12 @@ class Lcd {
 
   down(e) {
     const r = this.cv.getBoundingClientRect();
-    const x = (e.clientX - r.left) * LCD_W / r.width, y = (e.clientY - r.top) * LCD_H / r.height;
+    this.pressAt((e.clientX - r.left) * LCD_W / r.width, (e.clientY - r.top) * LCD_H / r.height);
+  }
+  release() { this.holdSince = null; this.iconHoldSince = null; }
+
+  // A touch at screen pixel (x, y): from the side-panel screen or the screen on the 3D machine.
+  pressAt(x, y) {
     if (y < TOP && x < 260) this.holdSince = performance.now();   // hold the title for the sales screen
     if (!this.statsOpen && !this.pinEntry && (this.m.state === ST.STANDBY || this.m.state === ST.FAULT) &&
         x > 180 && x < 300 && y > 64 && y < 168) this.iconHoldSince = performance.now();   // hold the icon for Admin

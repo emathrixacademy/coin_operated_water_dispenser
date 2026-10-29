@@ -75,7 +75,74 @@
   .push.grey span { font-size: 13px; }
   .push.recording { animation: blink 1s steps(2) infinite; border-color: #ff4d4d; }
   @keyframes blink { 50% { filter: brightness(1.6); } }
+  /* --- transaction records --- */
+  #recTable { max-height: 300px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; }
+  table.rec { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table.rec th { position: sticky; top: 0; background: #eef2f5; text-align: left; font-weight: 650; color: var(--muted); }
+  table.rec th, table.rec td { padding: 4px 6px; border-bottom: 1px solid #e6ebef; vertical-align: top; }
+  table.rec .rej, table.rec .sub2 { color: var(--muted); font-size: 11px; }
+  .ok { color: #1f7a35; } .warn { color: #9a6500; } .bad { color: #b3261e; }
+
+  /* --- the owner's phone (a simulation viewer, not a machine feature) --- */
+  #phone { position: fixed; left: 16px; top: 78px; z-index: 7; width: 300px; height: min(600px, calc(100vh - 210px));
+           min-height: 380px; background: #111; border-radius: 34px; padding: 12px; box-shadow: 0 12px 34px rgba(0,0,0,.35);
+           display: none; flex-direction: column; }
+  #phBar { color: #fff; font-size: 11px; display: flex; justify-content: space-between; padding: 2px 14px 6px; }
+  #phScreen { flex: 1; background: #f2f5f8; border-radius: 24px; overflow: hidden; display: flex; flex-direction: column; font-size: 12.5px; }
+  #phTag { color: #ffd34d; font-size: 10px; text-align: center; padding-top: 7px; line-height: 1.3; }
+  .ph-lock { flex: 1; display: flex; flex-direction: column; align-items: center; padding: 22px 16px 12px; background: linear-gradient(#0c1824, #1f3b52); color: #fff; }
+  .ph-logo { font-size: 34px; } .ph-title { font-size: 18px; font-weight: 750; } .ph-sub { color: #9fb6c8; margin-bottom: 14px; }
+  .ph-dots { display: flex; gap: 12px; margin: 6px 0; } .ph-dots i { width: 13px; height: 13px; border-radius: 50%; border: 2px solid #9fb6c8; }
+  .ph-dots i.f { background: #fff; border-color: #fff; }
+  .ph-msg { min-height: 34px; text-align: center; color: #cfe0ec; font-size: 12px; } .ph-lock .ph-msg.bad { color: #ff9b91; margin-top: 30px; }
+  .ph-keys { display: grid; grid-template-columns: repeat(3, 62px); gap: 10px; }
+  .ph-keys button { height: 50px; border-radius: 25px; border: none; background: rgba(255,255,255,.14); color: #fff; font: 600 18px system-ui; cursor: pointer; }
+  .ph-keys button:active { background: rgba(255,255,255,.35); }
+  .ph-foot { margin-top: auto; color: #7f97aa; font-size: 10.5px; }
+  .ph-head { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px 6px; background: #fff; }
+  .ph-head button, .ph-tabs button { font: inherit; border: 1px solid #c9d3da; background: #fff; border-radius: 14px; padding: 3px 10px; cursor: pointer; }
+  .ph-tabs { display: flex; gap: 6px; padding: 4px 12px 8px; background: #fff; border-bottom: 1px solid var(--line); }
+  .ph-tabs button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .ph-body { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 7px; }
+  .ph-card { background: #fff; border: 1px solid #e0e6eb; border-radius: 12px; padding: 8px 10px; }
+  .ph-card canvas { width: 100%; border-radius: 6px; display: block; margin-top: 4px; }
+  .ph-k { color: var(--muted); font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; }
+  .ph-big { font-weight: 750; font-size: 14px; } .ph-row { display: flex; justify-content: space-between; }
+  .ph-tl { display: flex; flex-direction: column; padding: 3px 0; border-bottom: 1px solid #eef1f4; } .ph-tl:last-child { border: none; }
+  .dim { color: var(--muted); }
+
+  /* --- practice: coach, lesson list, highlights, coin picker --- */
+  .hl { outline: 3px solid #ffb300 !important; outline-offset: 3px; animation: hlp 1s ease-in-out infinite; border-radius: 10px; }
+  .coin.hl { border-radius: 50%; }
+  @keyframes hlp { 50% { outline-color: rgba(255,179,0,.25); } }
+  #coach { position: sticky; top: -12px; z-index: 8; margin: -12px -12px 0; background: #fff; border: 2px solid #ffb300; border-top: none; border-radius: 0 0 14px 14px; padding: 12px 14px;
+           box-shadow: 0 8px 24px rgba(0,0,0,.18); display: none; }
+  #coach.ok { border-color: #2e9d4f; }
+  #cTitle { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+  #cProg { display: flex; gap: 4px; margin: 6px 0 8px; } #cProg i { flex: 1; height: 5px; border-radius: 3px; background: #e2e8ec; }
+  #cProg i.d { background: #2e9d4f; } #cProg i.c { background: #ffb300; }
+  #cSay { font-size: 17px; font-weight: 700; line-height: 1.3; }
+  #cWhy { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  #cHint { color: #b3261e; font-size: 13px; font-weight: 600; margin-top: 4px; } #cHint:empty { display: none; }
+  #cWait { color: var(--muted); font-size: 12px; margin-top: 4px; font-style: italic; }
+  #coach .row { margin-top: 10px; } #cNext { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 650; }
+  #lessons { position: fixed; inset: 0; z-index: 20; background: rgba(15,25,35,.45); display: none; align-items: center; justify-content: center; padding: 16px; }
+  #lessonBox { background: #fff; border-radius: 14px; width: min(560px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; padding: 16px 18px; }
+  #lessonBox h2 { margin: 0 0 4px; font-size: 18px; } #lessonBox h3 { margin: 14px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .lesson { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; text-align: left; font: inherit;
+            background: #f5f8fa; border: 1px solid var(--line); border-radius: 9px; padding: 8px 12px; margin-bottom: 6px; cursor: pointer; }
+  .lesson:hover { border-color: var(--accent); background: #eef5fb; } .lesson span { color: var(--muted); font-size: 12.5px; }
+  #tip { position: fixed; z-index: 30; background: #1d2730; color: #fff; font-size: 12px; padding: 4px 8px; border-radius: 6px; pointer-events: none; display: none; white-space: nowrap; }
+  #coinPick { position: fixed; z-index: 25; background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 8px 10px;
+              box-shadow: 0 8px 22px rgba(0,0,0,.22); display: none; }
+  #coinPick .row { flex-wrap: nowrap; } #coinPick .t { font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; margin-bottom: 6px; }
+  #pickClose { border: none; background: none; font-size: 16px; cursor: pointer; color: var(--muted); padding: 0 2px; }
+  .practice-card { background: linear-gradient(135deg, #fff8e1, #fff); border-color: #f0cf6a; }
+  .practice-card .simbtn.on { font-weight: 650; }
+
   @media (max-width: 1000px) {
+
+    #phone { top: 60px; height: calc(48vh - 70px); min-height: 0; width: 260px; }
     #tools { max-width: calc(100% - 32px); bottom: calc(52vh + 10px); }
     #view { right: 0; bottom: 52vh; } #top { right: 0; } #side { top: 48vh; width: 100%; border-left: none; border-top: 1px solid var(--line); }
     #beep { left: 50%; }
@@ -107,11 +174,60 @@
   <div class="pb"><button id="bLabels" class="push blue lit" title="Show or hide the part labels"><span>Aa</span></button><span id="lLabels">Labels on</span></div>
   <div class="pb"><button id="bPanels" class="push blue lit" title="Outer panels: see-through, solid or hidden"><span>▣</span></button><span id="lPanels">See-through</span></div>
   <div class="sep"></div>
+  <div class="pb"><button id="bPractice" class="push green" title="Guided lessons: learn to use the machine step by step"><span>🎓</span></button><span>Practice</span></div>
+  <div class="pb"><button id="bSound" class="push blue lit" title="Machine sounds on or off"><span>🔊</span></button><span id="lSound">Sound on</span></div>
+  <div class="sep"></div>
+  <div class="pb"><button id="bPhone" class="push blue" title="Show the owner's phone: log in with the Admin PIN to watch sales, records and stock"><span>📱</span></button><span id="lPhone">Phone</span></div>
+  <div class="sep"></div>
   <div class="pb"><button id="bPhoto" class="push grey" title="Download a picture of the 3D view (JPG)"><span>JPG</span></button><span>Picture</span></div>
   <div class="pb"><button id="bRec" class="push red" title="Record the 3D view as a video; press again to stop and download it"><span id="iRec">●</span></button><span id="lRec">Record</span></div>
 </div>
 
+<div id="lessons"><div id="lessonBox">
+  <div style="display:flex;justify-content:space-between;align-items:center"><h2>Practice using the machine</h2>
+    <button id="lessonsClose" class="simbtn">Close</button></div>
+  <div class="note" style="margin-top:0">Pick a lesson. The coach tells you what to do and lights up the button or part to
+    touch, in yellow. Use the machine itself: click the coin slot, the bay, the change tray and its screen, or the
+    controls on the right. Everything runs in real time, as on the machine.</div>
+  <div id="lessonList"></div>
+</div></div>
+<div id="tip"></div>
+<div id="coinPick">
+  <div class="t"><span>Pick a coin to drop in</span><button id="pickClose" title="Close">✕</button></div>
+  <div class="row">
+    <button class="coin p1" data-pick="1">₱1</button><button class="coin p5" data-pick="5">₱5</button>
+    <button class="coin p10" data-pick="10">₱10</button><button class="coin p20" data-pick="20">₱20</button>
+  </div>
+</div>
+
+<div id="phone">
+  <div id="phBar"><span id="phClock"></span><span>owner's phone</span></div>
+  <div id="phScreen"></div>
+  <div id="phTag">SIMULATION VIEWER ONLY · the real machine has no phone link<br>(WiFi and remote monitoring are not in this project)</div>
+</div>
+
 <aside id="side">
+<div id="coach">
+    <div id="cTitle"></div><div id="cProg"></div>
+    <div id="cSay"></div><div id="cWhy"></div><div id="cHint"></div>
+    <div id="cWait">Waiting? The 2× and 5× buttons at the bottom make it go faster.</div>
+    <div class="row">
+      <button id="cNext" class="simbtn"></button>
+      <button id="cSkip" class="simbtn">Skip this step</button>
+      <button id="cMenu" class="simbtn">All lessons</button>
+      <button id="cEnd" class="simbtn">End lesson</button>
+    </div>
+  </div>
+  <div class="card practice-card">
+    <h2>Practice</h2>
+    <div class="row">
+      <button id="bPractice2" class="simbtn on">🎓 Start a lesson</button>
+      <button id="bFree" class="simbtn">Try it freely</button>
+    </div>
+    <div class="note">Learn the machine hands-on: buying water, getting change, what the warnings mean, and the
+      attendant's jobs. You can touch the machine in the 3D view: drop coins in the coin slot, put a bottle in the bay,
+      take coins from the change tray and tap its screen. Turn on sound to hear the coins, the pump and the buzzer.</div>
+  </div>
   <div class="card">
     <h2>Customer touchscreen (as on the machine)</h2>
     <div id="lcdWrap"><canvas id="lcd" width="480" height="320"></canvas><div id="lcdTag">3.5" LCD · 480 × 320 · SIMULATION</div></div>
@@ -143,6 +259,21 @@
   <div class="card">
     <h2>Machine readout</h2>
     <div id="readout" class="readout"></div>
+  </div>
+
+  <div class="card">
+    <h2>Transaction records (simulation)</h2>
+    <div id="recTable"></div>
+    <div id="recTotals" class="readout" style="margin-top:8px"></div>
+    <div class="row" style="margin-top:8px">
+      <button id="bCsv" class="simbtn">Download CSV (opens in Excel)</button>
+      <span style="color:var(--muted);font-size:12px">one row per customer, oldest first</span>
+    </div>
+    <div class="note">Every customer gets a row as the sale happens: the coins put in, the water charged and the water the
+      pump actually ran for, the change due and the coins counted out, and how it ended. Profit is money in minus change
+      paid, and always equals the water charged at ₱1 per 100 mL (plus any change still owed after a jam). Use the
+      <b>📱 Phone</b> button at the bottom of the 3D view to watch the same records as the owner, after logging in with
+      the Admin PIN.</div>
   </div>
 
   <div class="card">
@@ -186,6 +317,7 @@
     <h2>Simulation</h2>
     <div class="row">
       <span style="color:var(--muted);font-size:12.5px">View</span>
+      <button class="simbtn" data-view="use">Customer's view</button>
       <button class="simbtn" data-view="whole">Whole machine</button>
       <button class="simbtn" data-view="front">Front</button>
       <button class="simbtn" data-view="coins">Coin path</button>
@@ -205,5 +337,7 @@
 <script src="machine.js"></script>
 <script src="lcd.js"></script>
 <script src="scene.js"></script>
+<script src="records.js"></script>
+<script src="practice.js"></script>
 </body>
 </html>
