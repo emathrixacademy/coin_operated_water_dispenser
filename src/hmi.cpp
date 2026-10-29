@@ -294,6 +294,16 @@ static void console_exec(char *cmd) {
   else if (!strcmp(cmd, "st")) { console_status(); return; }
   else if (!strcmp(cmd, "fill")) { water_manual_fill(n < 0 ? 0 : (uint32_t)n); }
   else if (!strcmp(cmd, "pour")) { dispense_manual(n < 0 ? 0 : (uint32_t)n); }
+  // "pay1 <n>" / "pay5 <n>": a real payout of n coins through the normal
+  // counted path (inventory goes down by what the outlet sensor counts).
+  // A console payout is never reaped by the state machine, so a finished one is
+  // cleared here first or the hopper would refuse the next.
+  else if (!strcmp(cmd, "pay1")) { coin_hopper_clear(); coin_hopper_dispense(HOPPER_P1, n < 0 ? 0 : (uint16_t)n); }
+  else if (!strcmp(cmd, "pay5")) { coin_hopper_clear(); coin_hopper_dispense(HOPPER_P5, n < 0 ? 0 : (uint16_t)n); }
+  else if (!strcmp(cmd, "hop1") || !strcmp(cmd, "hop5")) {
+    coin_hopper_clear();
+    coin_hopper_manual(cmd[3] == '1' ? HOPPER_P1 : HOPPER_P5, n < 0 ? 0 : (n > 10 ? 10 : (uint8_t)n));
+  }
   else if (!strcmp(cmd, "hop1")) { coin_hopper_manual(HOPPER_P1, n < 0 ? 0 : (n > 10 ? 10 : (uint8_t)n)); }
   else if (!strcmp(cmd, "hop5")) { coin_hopper_manual(HOPPER_P5, n < 0 ? 0 : (n > 10 ? 10 : (uint8_t)n)); }
   else if (!strcmp(cmd, "trig")) { water_tank_trigger_mode(n < 0 ? 0 : (uint8_t)n); }

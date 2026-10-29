@@ -23,6 +23,8 @@ static uint16_t s_counted = 0;     // total counted across all attempts
 static uint8_t s_retry = 0;
 static uint32_t s_attempt_ms = 0;
 static uint32_t s_settle_ms = 0;
+static bool s_pulse_on = false;     // HOPPER_PULSE_MODE: run line state
+static uint32_t s_pulse_ms = 0;     // when it last changed
 static payout_result_t s_result = PAYOUT_IDLE;
 
 // Outlet sensor debounce, per hopper.
@@ -52,8 +54,9 @@ static void motors_all_off() {
 
 // Poll the outlet sensor. Coins leave at 5-10/sec, slow enough to poll, which
 // is why neither of the two interrupts is spent here. This depends on the loop
-// staying fast -- no delay() outside setup().
-static void poll_outlet() {
+// staying fast -- no delay() outside setup(). Unused while
+// HOPPER_COUNT_BY_PULSE is 1, kept compiled for the day the sensors work.
+__attribute__((unused)) static void poll_outlet() {
   const uint8_t level = digitalRead(count_pin());
   const uint32_t now = millis();
 
@@ -116,6 +119,8 @@ static void start_attempt() {
   s_last_level = digitalRead(count_pin());
   s_last_edge_ms = millis();
   motor(true);
+  s_pulse_on = true;
+  s_pulse_ms = millis();
   s_phase = HOP_RUNNING;
 }
 
@@ -154,7 +159,10 @@ void coin_hopper_update() {
   }
   switch (s_phase) {
     case HOP_RUNNING: {
+      const uint16_t before = s_counted;
+#if !HOPPER_COUNT_BY_PULSE
       poll_outlet();
+#endif
 
       if (s_counted >= s_commanded) {
         motor(false);
@@ -162,6 +170,43 @@ void coin_hopper_update() {
         s_phase = HOP_SETTLING;
         return;
       }
+
+#if HOPPER_PULSE_MODE
+      // Our hoppers pay ONE coin per start and then stop themselves, however
+      // long the run line is held (bench, 2026-10-29). So the line is pulsed:
+      // on for HOPPER_PULSE_ON_MS, off for HOPPER_PULSE_OFF_MS, again and again
+      // until the outlet sensor has counted them all. Every counted coin is
+      // progress and re-arms the attempt timer, so the timeout means "no coin
+      // for HOPPER_TIMEOUT_MS", not "too slow overall".
+      if (s_counted != before) s_attempt_ms = millis();
+      {
+        const uint32_t in_phase = millis() - s_pulse_ms;
+        if (s_pulse_on && in_phase >= HOPPER_PULSE_ON_MS) {
+          motor(false);
+          s_pulse_on = false;
+          s_pulse_ms = millis();
+#if HOPPER_COUNT_BY_PULSE
+          // No working outlet sensor: one completed pulse is taken as one coin.
+          // See HOPPER_COUNT_BY_PULSE for what that gives up. A counted coin is
+          // progress, so the attempt timer re-arms here too -- otherwise a
+          // payout longer than HOPPER_TIMEOUT_MS would stop for a needless retry.
+          s_counted++;
+          s_attempt_ms = millis();
+          if (s_counted >= s_commanded) {
+            s_settle_ms = millis();
+            s_phase = HOP_SETTLING;
+            return;
+          }
+#endif
+        } else if (!s_pulse_on && in_phase >= HOPPER_PULSE_OFF_MS) {
+          motor(true);
+          s_pulse_on = true;
+          s_pulse_ms = millis();
+        }
+      }
+#else
+      (void)before;
+#endif
 
       if ((uint32_t)(millis() - s_attempt_ms) >= HOPPER_TIMEOUT_MS) {
         // Short on this attempt. Stop the motor and let the throat clear
@@ -177,7 +222,9 @@ void coin_hopper_update() {
       // A coin already in the outlet throat when the motor cut still has to
       // fall past the sensor. Declaring the count short before it lands makes
       // the machine retry a payout that actually succeeded, and overpay.
+#if !HOPPER_COUNT_BY_PULSE
       poll_outlet();
+#endif
       if ((uint32_t)(millis() - s_settle_ms) < HOPPER_SETTLE_MS) return;
 
       if (s_counted >= s_commanded) {

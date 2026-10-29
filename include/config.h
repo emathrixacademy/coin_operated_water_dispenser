@@ -191,6 +191,9 @@ typedef int32_t volume_t;   // millilitres
 #define PIN_VALVE         31  // Relay, active LOW
 #define PIN_PUMP          32  // DC SSR, active LOW
 #define PIN_HOPPER_P1_RUN 33  // Relay, active LOW
+// The hopper relays are a 2-channel module: IN1 = P1 (pin 33), IN2 = P5 (pin
+// 34). On 2026-10-29 the P5 relay did not switch because IN2 was not wired to
+// pin 34 yet; once it was, it worked unchanged.
 #define PIN_HOPPER_P5_RUN 34  // Relay, active LOW
 #define PIN_BUZZER        35  // Active HIGH
 #define PIN_COMPRESSOR    36  // AC SSR, active LOW
@@ -404,6 +407,26 @@ typedef int32_t volume_t;   // millilitres
 // 5000 ms comfortably covers a full payout at 5-10 coins/sec plus spin-up. Much
 // shorter and a slow but healthy hopper is declared jammed under a paying user.
 #define HOPPER_TIMEOUT_MS 5000
+
+// 1 = the hoppers pay one coin per start and stop by themselves (what ours do,
+// bench 2026-10-29), so the run line is pulsed once per coin.
+// 0 = the hopper runs while the line is held and pays continuously.
+#define HOPPER_PULSE_MODE 1
+// One pulse = one coin. ON must be long enough for a full cycle of the hopper
+// (it made one turn in under 2 s on the bench); OFF long enough for it to see
+// the line drop and re-arm. Too short ON skips coins; too short OFF and the
+// hopper may not take the next start.
+#define HOPPER_PULSE_ON_MS  1200
+#define HOPPER_PULSE_OFF_MS 400
+
+// 1 = no working outlet sensor: each completed pulse counts as one coin paid
+//     (bench 2026-10-29 -- three pulses gave exactly three P1, while the
+//     sensor on pin 27 counted none). What it gives up: a hopper that is
+//     empty or jammed still "pays", so the machine believes change went out
+//     that did not. CLAUDE.md requires the outlet count; set this back to 0
+//     once CT1 / CT2 actually see the coins.
+// 0 = the outlet sensors on pins 27 / 28 count the coins (the design).
+#define HOPPER_COUNT_BY_PULSE 1
 
 // Retries after an undercount, paying only the shortfall each time. After the
 // last one the machine locks with CHANGE JAM -- SERVICE REQUIRED.
