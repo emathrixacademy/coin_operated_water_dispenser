@@ -152,9 +152,15 @@
       <button id="bAdmin" class="simbtn on">Open Admin on the screen</button>
       <span style="color:var(--muted);font-size:12px">or hold the big icon on the screen for 3 s</span>
     </div>
-    <div class="note" style="margin-top:4px">Admin: load change and confirm the count, clear a fault, view the last 20
-      events, view and reset the daily totals. It opens only when no customer is mid-sale.
-      <b>Built from the specification (section 8); the machine firmware does not have this screen yet.</b></div>
+    <div class="note" style="margin-top:4px">Admin asks for a 4-digit PIN (<b>demo PIN 1234</b>; each machine's owner
+      sets their own under Change PIN). Three wrong PINs lock Admin for 5 minutes, and every login, wrong PIN and lockout
+      is written to the history. Admin logs itself out after 60 s untouched, and opens only when no customer is mid-sale.</div>
+    <div class="note">Inside: <b>Profit</b> (today and all time: money in, change paid out, profit, sales, water sold,
+      change owed), <b>Coins</b> (₱1 / ₱5 / ₱10 / ₱20 inserted, what is in each hopper and the coin box, coins returned),
+      <b>Water</b> (cold tank level, gallon A and B, refill pump), <b>Load change</b>, <b>Clear fault</b>, <b>History</b>,
+      <b>Change PIN</b>.</div>
+    <div class="note"><b>Built from the specification (section 8) and this request; the machine firmware does not have
+      these screens or the PIN yet.</b></div>
     <div class="row">
       <span class="k">Gallon A</span>
       <button class="simbtn" data-gal="a" data-ml="18900">Full</button>

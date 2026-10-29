@@ -14,7 +14,8 @@ const FAULT_TEXT = ["", "Out of water", "Not enough change in the machine", "Coi
                     "Change dispenser jammed", "Water flow problem", "Refill pump problem", "Coin slot problem"];
 const UI = { SET: -3, STATS_CLOSE: -4, STATS_OPEN: -5,
              // Admin (SPEC 8). Handled on the screen, which then calls the machine.
-             A_PAGE: -10, A_STEP: -11, A_CONFIRM: -12, A_CLEAR: -13, A_RESET: -14, A_EXIT: -15 };
+             A_PAGE: -10, A_STEP: -11, A_CONFIRM: -12, A_CLEAR: -13, A_RESET: -14, A_EXIT: -15,
+             K_DIGIT: -16, K_CLR: -17, K_OK: -18, K_CANCEL: -19 };
 
 function money(c) { return c % 100 ? `PHP ${Math.floor(c / 100)}.${String(c % 100).padStart(2, "0")}` : `PHP ${c / 100}`; }
 function volume(ml) {
@@ -37,10 +38,59 @@ class Lcd {
   }
 
   // --- Admin (SPEC 8) -------------------------------------------------------------
+  // The gesture (or the sidebar button) only opens the PIN pad; Admin opens on the right PIN.
   openAdmin() {
-    if (!this.m.enterAdmin()) return;
+    if (!this.m.canEnterAdmin()) { this.m.say("Admin opens only when no customer is using the machine."); return; }
     this.statsOpen = false;
-    this.admin = { page: "menu", p1: this.m.inv.p1, p5: this.m.inv.p5, msg: "" };
+    this.pinEntry = { digits: "", msg: "" };
+  }
+
+  keypad(x, y) {
+    const keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "Clear", "0", "OK"];
+    keys.forEach((k, i) => {
+      const bx = x + (i % 3) * 78, by = y + Math.floor(i / 3) * 50;
+      const ev = k === "Clear" ? UI.K_CLR : k === "OK" ? UI.K_OK : UI.K_DIGIT;
+      this.button(bx, by, 72, 44, k, ev, k, true, k === "OK", k.length > 1 ? F.F9B : F.F12B);
+    });
+  }
+
+  pinDots(cx, y, n) {
+    for (let i = 0; i < CFG.PIN_LEN; i++) {
+      const x = cx + (i - (CFG.PIN_LEN - 1) / 2) * 30;
+      this.g.beginPath(); this.g.arc(x, y, 9, 0, Math.PI * 2);
+      if (i < n) { this.g.fillStyle = C.INK; this.g.fill(); } else { this.g.strokeStyle = C.MUTE; this.g.lineWidth = 2; this.g.stroke(); }
+    }
+  }
+
+  drawPin() {
+    const p = this.pinEntry, m = this.m, locked = m.pinLockedMs();
+    this.text("Admin PIN", 14, TOP + 21, F.F12B, C.INK, "left");
+    this.button(LCD_W - 104, TOP + 4, 94, 34, "Cancel", UI.K_CANCEL, 0, true, false, F.F9B);
+    if (locked > 0) {
+      const s = Math.ceil(locked / 1000);
+      this.iconWarn(120, 150, 34, C.BAD);
+      this.text("Admin locked", 120, 205, F.F18B, C.INK);
+      this.text(`Too many wrong PINs. Try again in ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`, 120, 236, F.FONT2, C.MUTE);
+    } else {
+      this.text("Enter the 4-digit PIN", 120, 110, F.F9, C.MUTE);
+      this.pinDots(120, 145, p.digits.length);
+      if (p.msg) this.text(p.msg, 120, 190, F.F9B, C.BAD);
+    }
+    this.keypad(244, TOP + 50);
+  }
+
+  pinAction(b) {
+    const p = this.pinEntry, m = this.m;
+    if (b.ev === UI.K_CANCEL) { this.pinEntry = null; return; }
+    if (m.pinLockedMs() > 0) return;
+    if (b.ev === UI.K_DIGIT && p.digits.length < CFG.PIN_LEN) { p.digits += b.payload; p.msg = ""; }
+    else if (b.ev === UI.K_CLR) p.digits = "";
+    else if (b.ev === UI.K_OK) {
+      const r = m.tryPin(p.digits);
+      p.digits = "";
+      if (r.ok) { this.pinEntry = null; this.admin = { page: "menu", p1: m.inv.p1, p5: m.inv.p5, msg: "", pin: "" }; }
+      else p.msg = r.msg;
+    }
   }
 
   adminHeader(title) {
@@ -65,13 +115,80 @@ class Lcd {
     if (a.page === "menu") {
       this.adminHeader("Service mode");
       const f = m.fault ? FAULT_TEXT[m.fault] : "No fault";
-      this.text(f, 14, TOP + 58, F.F9B, m.fault ? C.BAD : C.OK, "left");
-      this.text(`Change: P1 x ${m.inv.p1}   P5 x ${m.inv.p5}`, W - 14, TOP + 58, F.FONT2, C.MUTE, "right");
-      this.button(10, TOP + 76, 226, 58, "Load change", UI.A_PAGE, "change", true, true);
-      this.button(244, TOP + 76, 226, 58, "Clear fault", UI.A_CLEAR, 0, !!m.fault, false);
-      this.button(10, TOP + 142, 226, 58, "History", UI.A_PAGE, "history", true, false);
-      this.button(244, TOP + 142, 226, 58, "Daily totals", UI.A_PAGE, "totals", true, false);
-      if (a.msg) this.text(a.msg, W / 2, H - 28, F.F9B, C.WARN);
+      this.text(f, 14, TOP + 52, F.F9B, m.fault ? C.BAD : C.OK, "left");
+      const t = m.stats.today;
+      this.text(`Today: profit ${money(t.in - t.change)}  ·  ${t.sales} sales`, W - 14, TOP + 52, F.FONT2, C.MUTE, "right");
+      const items = [["Profit", "profit", true], ["Coins", "coins", true], ["Water", "water", true],
+                     ["Load change", "change", true], ["Clear fault", "clear", !!m.fault], ["History", "history", true]];
+      items.forEach(([lab, page, en], i) => {
+        const x = 10 + (i % 3) * 155, y = TOP + 68 + Math.floor(i / 3) * 60;
+        if (page === "clear") this.button(x, y, 150, 54, lab, UI.A_CLEAR, 0, en, false);
+        else this.button(x, y, 150, 54, lab, UI.A_PAGE, page, en, i < 3);
+      });
+      this.button(10, TOP + 188, 150, 40, "Change PIN", UI.A_PAGE, "pin", true, false, F.F9B);
+      if (a.msg) this.text(a.msg, 320, TOP + 208, F.F9B, C.WARN);
+    } else if (a.page === "profit") {
+      const t = m.stats.today, all = m.stats.all;
+      this.adminHeader("Profit");
+      const rows = [["Money in", t.in, all.in, "m"], ["Change paid out", t.change, all.change, "m"],
+                    ["Profit", t.in - t.change, all.in - all.change, "m"], ["Sales", t.sales, all.sales, "n"],
+                    ["Water sold", t.ml, all.ml, "v"], ["Change owed", t.owed, all.owed, "m"]];
+      this.text("Today", 300, TOP + 50, F.F9B, C.MUTE, "right");
+      this.text("All time", 456, TOP + 50, F.F9B, C.MUTE, "right");
+      rows.forEach(([lab, a1, a2, k], i) => {
+        const y = TOP + 74 + i * 25, fmt = v => k === "m" ? money(v) : k === "v" ? volume(v) : String(v);
+        const c = lab === "Profit" ? C.OK : lab === "Change owed" && (a1 || a2) ? C.WARN : C.INK;
+        this.text(lab, 14, y, lab === "Profit" ? F.F9B : F.F9, C.MUTE, "left");
+        this.text(fmt(a1), 300, y, F.F9B, c, "right");
+        this.text(fmt(a2), 456, y, F.F9B, c, "right");
+      });
+      this.button(10, LCD_H - 52, 220, 44, "Reset today's totals", UI.A_PAGE, "reset", true, false, F.F9B);
+      this.text("Profit = money in - change paid out", 466, LCD_H - 30, F.FONT2, C.MUTE, "right");
+    } else if (a.page === "coins") {
+      const t = m.stats.today, all = m.stats.all;
+      this.adminHeader("Coins");
+      this.text("Inserted", 150, TOP + 50, F.F9B, C.MUTE, "right");
+      this.text("today", 150, TOP + 64, F.FONT2, C.MUTE, "right");
+      this.text("all time", 250, TOP + 64, F.FONT2, C.MUTE, "right");
+      this.text("Now in the machine", 456, TOP + 50, F.F9B, C.MUTE, "right");
+      const where = { 1: `P1 hopper  x ${m.inv.p1}`, 5: `P5 hopper  x ${m.inv.p5}`,
+                      10: `coin box  x ${m.inv.box10}`, 20: `coin box  x ${m.inv.box20}` };
+      [1, 5, 10, 20].forEach((p, i) => {
+        const y = TOP + 88 + i * 26;
+        this.text(`P${p}`, 14, y, F.F12B, C.INK, "left");
+        this.text(`${t.coins[p]}`, 150, y, F.F9B, C.INK, "right");
+        this.text(`${all.coins[p]}`, 250, y, F.F9B, C.INK, "right");
+        this.text(where[p], 456, y, F.F9, C.WATER, "right");
+      });
+      const box = m.inv.box10 * 10 + m.inv.box20 * 20, change = m.inv.p1 + m.inv.p5 * 5;
+      this.text(`Coin box PHP ${box}   ·   change float PHP ${change}`, 14, TOP + 202, F.F9B, C.INK, "left");
+      this.text(`Returned to tray (slot closed): today ${t.returned}, all time ${all.returned}`, 14, TOP + 226, F.FONT2, C.MUTE, "left");
+      this.text("Fake coins are rejected by the coinslot itself and not counted.", 14, TOP + 246, F.FONT2, C.MUTE, "left");
+    } else if (a.page === "water") {
+      const t = m.stats.today, all = m.stats.all, pct = m.tankPct();
+      this.adminHeader("Water");
+      this.text("Cold tank", 14, TOP + 56, F.F9B, C.MUTE, "left");
+      this.text(`${Math.round(m.tank)} mL  (${pct}%)`, 456, TOP + 56, F.F12B, pct < 30 ? C.WARN : C.WATER, "right");
+      this.rr(14, TOP + 70, 442, 18, 9, C.DIM);
+      if (pct > 0) this.rr(14, TOP + 70, Math.max(18, 442 * pct / 100), 18, 9, pct < 30 ? C.WARN : C.WATER);
+      const gal = g => m.gallonLow(g) ? ["LOW - replace", C.WARN] : ["OK", C.OK];
+      [["Gallon A", "a"], ["Gallon B", "b"]].forEach(([lab, g], i) => {
+        const [txt, c] = gal(g), y = TOP + 112 + i * 26;
+        this.text(lab, 14, y, F.F9B, C.MUTE, "left");
+        this.text(txt, 456, y, F.F9B, c, "right");
+      });
+      this.text("Refill pump", 14, TOP + 164, F.F9B, C.MUTE, "left");
+      this.text(m.fillPump ? "running" : (m.gallonLow("a") || m.gallonLow("b")) ? "stopped: a gallon is low" : "off",
+                456, TOP + 164, F.F9B, C.INK, "right");
+      this.text("Water sold", 14, TOP + 190, F.F9B, C.MUTE, "left");
+      this.text(`today ${volume(t.ml)}  ·  all time ${volume(all.ml)}`, 456, TOP + 190, F.F9B, C.INK, "right");
+      this.text("Gallon sensors only say OK or low; the tank level is measured.", 14, TOP + 222, F.FONT2, C.MUTE, "left");
+    } else if (a.page === "pin") {
+      this.adminHeader("Change PIN");
+      this.text(`New ${CFG.PIN_LEN}-digit PIN`, 120, 110, F.F9, C.MUTE);
+      this.pinDots(120, 145, a.pin.length);
+      if (a.msg) this.text(a.msg, 120, 190, F.F9B, a.msg.startsWith("PIN") ? C.OK : C.BAD);
+      this.keypad(244, TOP + 50);
     } else if (a.page === "change") {
       this.adminHeader("Load change");
       this.text("Count the coins in each hopper, enter it, then CONFIRM.", 14, TOP + 52, F.FONT2, C.MUTE, "left");
@@ -103,15 +220,25 @@ class Lcd {
       this.iconWarn(W / 2, 120, 30, C.WARN);
       this.text("Today's income, volume and count go back to zero.", W / 2, 178, F.F9, C.INK);
       this.text("The reset is written to the history.", W / 2, 200, F.F9, C.MUTE);
-      this.button(10, H - 64, 222, 56, "Cancel", UI.A_PAGE, "totals", true, false);
+      this.button(10, H - 64, 222, 56, "Cancel", UI.A_PAGE, "profit", true, false);
       this.button(248, H - 64, 222, 56, "Reset", UI.A_RESET, 0, true, true);
     }
   }
 
   adminAction(b) {
     const a = this.admin, m = this.m;
+    m.adminTouched();
+    if (a.page === "pin" && (b.ev === UI.K_DIGIT || b.ev === UI.K_CLR || b.ev === UI.K_OK)) {
+      if (b.ev === UI.K_DIGIT && a.pin.length < CFG.PIN_LEN) { a.pin += b.payload; a.msg = ""; }
+      else if (b.ev === UI.K_CLR) a.pin = "";
+      else if (b.ev === UI.K_OK) {
+        if (m.adminSetPin(a.pin)) { a.page = "menu"; a.msg = "PIN changed"; } else a.msg = `Needs ${CFG.PIN_LEN} digits`;
+        a.pin = "";
+      }
+      return;
+    }
     if (b.ev === UI.A_PAGE) {
-      a.page = b.payload; a.msg = "";
+      a.page = b.payload; a.msg = ""; a.pin = "";
       if (a.page === "change") { a.p1 = m.inv.p1; a.p5 = m.inv.p5; }
     } else if (b.ev === UI.A_STEP) {
       a[b.payload.key] = Math.max(0, Math.min(CFG.HOPPER_CAPACITY, a[b.payload.key] + b.payload.d));
@@ -120,7 +247,7 @@ class Lcd {
     } else if (b.ev === UI.A_CLEAR) {
       a.msg = m.adminClearFault();
     } else if (b.ev === UI.A_RESET) {
-      m.adminResetDaily(); a.page = "totals";
+      m.adminResetDaily(); a.page = "profit";
     } else if (b.ev === UI.A_EXIT) {
       m.exitAdmin();
     }
@@ -255,6 +382,7 @@ class Lcd {
   drawBody() {
     const m = this.m, W = LCD_W, H = LCD_H, c = money(m.credit);
     if (m.state === ST.ADMIN) { this.drawAdmin(); return; }
+    if (this.pinEntry) { this.drawPin(); return; }
     if (this.statsOpen) { this.drawStats(); return; }
     switch (m.state) {
       case ST.ACCEPTING:
@@ -326,6 +454,8 @@ class Lcd {
       this.iconHoldSince = null; this.openAdmin();
     }
     if (m.state !== ST.ADMIN && this.admin.page !== "menu") this.admin.page = "menu";
+    // The PIN pad gives way to a customer: it only stays up on the idle or out-of-service screen.
+    if (this.pinEntry && !idle) this.pinEntry = null;
     this.btn = [];
     this.g.fillStyle = C.BG; this.g.fillRect(0, 0, LCD_W, LCD_H);
     this.drawTop();
@@ -336,11 +466,12 @@ class Lcd {
     const r = this.cv.getBoundingClientRect();
     const x = (e.clientX - r.left) * LCD_W / r.width, y = (e.clientY - r.top) * LCD_H / r.height;
     if (y < TOP && x < 260) this.holdSince = performance.now();   // hold the title for the sales screen
-    if (!this.statsOpen && (this.m.state === ST.STANDBY || this.m.state === ST.FAULT) &&
+    if (!this.statsOpen && !this.pinEntry && (this.m.state === ST.STANDBY || this.m.state === ST.FAULT) &&
         x > 180 && x < 300 && y > 64 && y < 168) this.iconHoldSince = performance.now();   // hold the icon for Admin
     for (const b of this.btn) {
       if (!b.enabled || x < b.x || x >= b.x + b.w || y < b.y || y >= b.y + b.h) continue;
-      if (b.ev <= UI.A_PAGE) this.adminAction(b);
+      if (b.ev <= UI.A_PAGE && this.pinEntry) this.pinAction(b);
+      else if (b.ev <= UI.A_PAGE) this.adminAction(b);
       else if (b.ev === UI.SET) { this.sel = b.payload; this.clampSel(); }
       else if (b.ev === UI.STATS_OPEN) { this.statsOpen = true; this.statsSince = performance.now(); }
       else if (b.ev === UI.STATS_CLOSE) this.statsOpen = false;

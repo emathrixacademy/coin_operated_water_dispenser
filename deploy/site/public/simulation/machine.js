@@ -33,7 +33,13 @@ const CFG = {
   HOPPER_CAPACITY: 500,           // bounds the Admin change edit
   HISTORY_N: 20,                  // Admin history ring
   ADMIN_HOLD_MS: 3000,            // the gesture: hold the screen icon this long
+  PIN_LEN: 4,
+  PIN_TRIES: 3,                   // wrong PINs before Admin locks
+  PIN_LOCK_MS: 300000,            // lockout after too many wrong PINs
+  ADMIN_IDLE_MS: 60000,           // Admin logs itself out after this long untouched
 };
+const DEMO_PIN = "1234";          // simulation only; each machine's PIN is set by its owner
+function blankStats() { return { in: 0, change: 0, sales: 0, ml: 0, owed: 0, returned: 0, coins: { 1: 0, 5: 0, 10: 0, 20: 0 } }; }
 const FAULT_NAMES = ["", "OUT OF WATER", "LOW CHANGE", "COIN STORAGE FULL", "CHANGE JAM"];
 
 const ST = { BOOT: 0, STANDBY: 1, ACCEPTING: 2, SELECTING: 3, AWAITING: 4, DISPENSING: 5, PAUSED: 6,
@@ -74,6 +80,8 @@ class Machine {
     this.pay = null;
     this.sales = { income: 0, volume: 0, count: 0, list: [] };
     this.history = [];
+    this.stats = { today: blankStats(), all: blankStats() };
+    this.pin = DEMO_PIN; this.pinFails = 0; this.pinLockUntil = 0; this.adminSeen = 0;
     this.story = "The machine is ready. Insert a coin to start.";
     this.events = [];          // things the 3D scene animates: {type, ...}
     this.emit({ type: "reset" });
@@ -97,6 +105,7 @@ class Machine {
     if (!this.acceptorOpen()) {
       this.emit({ type: "coin", peso, dest: "tray" });
       this.tray.push(peso);
+      this.stats.today.returned++; this.stats.all.returned++;
       const why = this.state === ST.FAULT ? "The machine is out of service, so the coin slot is switched off"
         : (this.state === ST.STANDBY || this.state === ST.ACCEPTING) && this.now < this.coinBusyUntil
           ? "The slot was still closed while the gates moved for the last coin"
@@ -117,6 +126,7 @@ class Machine {
   coinIdentified(peso, dest) {
     if (this.state === ST.STANDBY) this.go(ST.ACCEPTING);
     this.credit += peso * 100; this.inserted += peso * 100;
+    this.stats.today.coins[peso]++; this.stats.all.coins[peso]++;
     this.gates = { g1: dest === "p5" ? "closed" : "open", g2: dest === "p1" ? "closed" : "open" };
     const where = dest === "p5" ? "Gate 1 closes and sends it to the ₱5 change hopper"
       : dest === "p1" ? "Gate 1 stays open, gate 2 closes and sends it to the ₱1 change hopper"
@@ -164,12 +174,13 @@ class Machine {
   canEnterAdmin() { return this.state === ST.STANDBY || this.state === ST.FAULT; }
   enterAdmin() {
     if (!this.canEnterAdmin()) { this.say("Admin opens only when no customer is using the machine."); return false; }
-    this.go(ST.ADMIN);
-    this.say("Admin (service mode). The coin slot is closed while it is open.");
+    this.go(ST.ADMIN); this.adminSeen = this.now;
+    this.say("Admin (service mode). The coin slot is closed while it is open; it logs out after 60 s untouched.");
     return true;
   }
   exitAdmin() {
     if (this.state !== ST.ADMIN) return;
+    this.log({ kind: "admin", text: "Admin logout" });
     this.say("Admin closed. The machine re-checks water, coin box and change before it takes money.");
     this.go(this.fault ? ST.FAULT : ST.STANDBY);
   }
@@ -201,8 +212,41 @@ class Machine {
     const s = this.sales;
     this.log({ kind: "day", text: `Daily totals reset by hand (were ${s.count} sales, ₱${s.income / 100}, ${s.volume} mL)` });
     this.sales = { income: 0, volume: 0, count: 0, list: [] };
-    this.say("Daily totals reset by the attendant. History keeps the record of it.");
+    this.stats.today = blankStats();
+    this.say("Daily totals reset by the attendant. All-time totals are kept, and the history records the reset.");
   }
+
+  // --- Admin security -------------------------------------------------------------
+  // PIN before Admin opens; a few wrong tries lock it out; it logs itself out when left open.
+  pinLockedMs() { return Math.max(0, this.pinLockUntil - this.now); }
+  tryPin(p) {
+    if (!this.canEnterAdmin()) return { ok: false, msg: "Admin opens only when no customer is using the machine" };
+    if (this.pinLockedMs() > 0) return { ok: false, msg: "Admin is locked" };
+    if (p === this.pin) {
+      this.pinFails = 0;
+      this.log({ kind: "admin", text: "Admin login" });
+      this.enterAdmin();
+      return { ok: true };
+    }
+    this.pinFails++;
+    this.log({ kind: "security", text: `Wrong Admin PIN (${this.pinFails} of ${CFG.PIN_TRIES})` });
+    if (this.pinFails >= CFG.PIN_TRIES) {
+      this.pinFails = 0; this.pinLockUntil = this.now + CFG.PIN_LOCK_MS;
+      this.log({ kind: "security", text: `Admin locked for ${CFG.PIN_LOCK_MS / 60000} min after ${CFG.PIN_TRIES} wrong PINs` });
+      this.say(`${CFG.PIN_TRIES} wrong PINs: Admin is locked for ${CFG.PIN_LOCK_MS / 60000} minutes. The attempts are in the history.`);
+      return { ok: false, msg: "Too many wrong PINs" };
+    }
+    this.say(`Wrong Admin PIN. ${CFG.PIN_TRIES - this.pinFails} tr${CFG.PIN_TRIES - this.pinFails === 1 ? "y" : "ies"} left before Admin locks.`);
+    return { ok: false, msg: `Wrong PIN, ${CFG.PIN_TRIES - this.pinFails} left` };
+  }
+  adminSetPin(p) {
+    if (!/^\d+$/.test(p) || p.length !== CFG.PIN_LEN) return false;
+    this.pin = p;
+    this.log({ kind: "security", text: "Admin PIN changed" });
+    this.say("Admin PIN changed.");
+    return true;
+  }
+  adminTouched() { this.adminSeen = this.now; }
   log(e) {
     this.history.unshift(Object.assign({ ts: Date.now() }, e));
     if (this.history.length > CFG.HISTORY_N) this.history.length = CFG.HISTORY_N;   // 20-entry ring
@@ -255,6 +299,9 @@ class Machine {
     this.sales.count += 1;
     this.sales.list.unshift({ ts: Date.now(), in: this.inserted, ml: this.total, change: paid, owed: this.unpaid });
     this.sales.list.length = Math.min(this.sales.list.length, 10);
+    for (const s of [this.stats.today, this.stats.all]) {
+      s.in += this.inserted; s.change += paid; s.sales += 1; s.ml += this.total; s.owed += this.unpaid;
+    }
     this.log({ kind: "sale", text: `Sale ₱${this.inserted / 100} in, ${this.total} mL, change ₱${paid / 100}` +
                                    (this.unpaid ? `, OWED ₱${this.unpaid / 100}` : "") });
   }
@@ -339,6 +386,12 @@ class Machine {
         break;
       case ST.THANKYOU:
         if (this.elapsed() >= CFG.THANKYOU_MS) this.go(ST.STANDBY);
+        break;
+      case ST.ADMIN:
+        if (this.now - this.adminSeen >= CFG.ADMIN_IDLE_MS) {
+          this.exitAdmin();
+          this.say("Admin was left open for 60 s, so it logged itself out.");
+        }
         break;
       case ST.FAULT:
         if (this.fault === FAULT.OUT_OF_WATER && this.tank >= CFG.TANK_MIN_SERVE_ML) this.fault = FAULT.NONE;
