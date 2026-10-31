@@ -725,16 +725,18 @@ typedef int32_t volume_t;   // millilitres
 // One-point only; do the two-point run above to remove the dead time.
 // Bench 2026-10-30, new smaller hose + solenoid valve: a P5 (500 mL) sale
 // poured 400 mL -> 3371 * 500 / 400 = 4214.
-// Two-point, 2026-10-31: 500 mL sale exact (21070 ms), 800 mL sale poured
-// 750 mL (33712 ms) -> 100 * 12642 / 250 = 5057, dead = 21070 - 500 * 12642
-// / 250 = -4214 (about 83 mL arrives beyond the steady rate). One run each:
-// check a 100 mL and a 1500 mL sale and refine.
-#define DISPENSE_MS_PER_100ML 5057
+// 2026-10-31: a two-point fit (5057 / dead -4214) started every pour at ~12%
+// and then poured 730 mL for 800. The three runs disagree because the rate
+// falls as the cold tank drains (gravity head into the pump): 500 mL in
+// 21070 ms, 750 in 33712 ms, 730 in 36242 ms. Single rate from the mean of
+// all three, no dead time. Calibrate with the tank kept full.
+// Then 800 mL sale poured 820 mL -> 4600 * 800 / 820 = 4490.
+#define DISPENSE_MS_PER_100ML 4490
 
 // Run time that delivers nothing at the cup: hose fill at the start, less the
 // dribble after the pump stops. 0 until the two-point calibration is done.
 // Signed -- negative when the dribble outweighs the hose fill.
-#define DISPENSE_DEAD_MS (-4214)
+#define DISPENSE_DEAD_MS 0
 
 // 1 = no amount picker. CONFIRM (push button, or Continue on the screen) pours
 // the whole credit, P1 = 100 mL, once the bottle IR sees a bottle.
