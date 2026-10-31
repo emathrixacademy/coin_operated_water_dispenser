@@ -40,7 +40,7 @@ static void beam_update(beam_t *b) {
     return;
   }
   if (raw == b->state) return;
-  if ((uint32_t)(now - b->since_ms) < COIN_LEVEL_DEBOUNCE_MS) return;
+  if ((uint32_t)(now - b->since_ms) < (raw ? COIN_LEVEL_FULL_MS : COIN_LEVEL_DEBOUNCE_MS)) return;
 
   b->state = raw;
 #ifdef DEBUG

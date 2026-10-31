@@ -32,6 +32,8 @@
 //                                     time is Unix seconds, 0 = no clock;
 //                                     owed > 0: change not paid (in is 0)
 //     HE                              end of the sales reply
+//     AU <0|1>                        admin PIN refused / accepted
+//     VL p1 <n> / VL p5 <n>           coins in the P1 / P5 hopper
 //                                     (SD..HE are sent only when asked, by
 //                                     EV 6 = HMI_EVENT_NAV_STATISTICS)
 //
@@ -89,7 +91,13 @@ enum hmi_event_t : uint8_t {
   HMI_EVENT_ADMIN_EXIT,
   // On-screen stand-in for the physical CONFIRM button (ACCEPTING ->
   // SELECTING). Not queued with the others -- see hmi_confirm_take().
-  HMI_EVENT_CONFIRM
+  HMI_EVENT_CONFIRM,
+  // Admin (2026-10-29). Every admin event is refused unless the PIN was sent
+  // with ADMIN_UNLOCK in the last ADMIN_UNLOCK_MS, and only while the machine
+  // is idle. ADMIN_SET_P1 / ADMIN_SET_P5 above use the same gate.
+  HMI_EVENT_ADMIN_CLEAR,     // clear every fault
+  HMI_EVENT_ADMIN_TEST,      // payload 1 pour 3 s, 2 refill 5 s, 3 pay one P1, 4 pay one P5
+  HMI_EVENT_ADMIN_UNLOCK     // payload = PIN; answered with "AU 1" or "AU 0"
 };
 
 void hmi_begin();

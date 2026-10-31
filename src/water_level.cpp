@@ -5,6 +5,7 @@
 #include "water_level.h"
 #include "tank_level.h"
 #include "faults.h"
+#include "relay.h"
 
 // Water level, pump control, cooling. SPEC 5.3, 5.4.
 //
@@ -341,7 +342,7 @@ static void pump_write(bool want_on) {
   //    sensor says stop", so it does not need the tank sensor to run.
   if ((gallons_supply_low() || !s_tank_valid) && !manual_fill_active() &&
       !(REFILL_IGNORES_SENSORS && refill_active())) {
-    digitalWrite(PIN_PUMP, RELAY_OFF);
+    relay_write(PIN_PUMP, false);
     if (s_pump_on) {
       s_pump_on = false;
       s_pump_off_since = now;
@@ -354,7 +355,7 @@ static void pump_write(bool want_on) {
   //     would rest PUMP_MIN_OFF_MS and run dry for another PUMP_MAX_RUN_MS,
   //     forever.
   if (s_pump_overrun) {
-    digitalWrite(PIN_PUMP, RELAY_OFF);
+    relay_write(PIN_PUMP, false);
     if (s_pump_on) {
       s_pump_on = false;
       s_pump_off_since = now;
@@ -367,7 +368,7 @@ static void pump_write(bool want_on) {
   //    lying. All three destroy it.
   if (want_on && s_pump_on &&
       (uint32_t)(now - s_pump_on_since) >= PUMP_MAX_RUN_MS) {
-    digitalWrite(PIN_PUMP, RELAY_OFF);
+    relay_write(PIN_PUMP, false);
     s_pump_on = false;
     s_pump_off_since = now;
 
@@ -391,7 +392,7 @@ static void pump_write(bool want_on) {
 
   if (want_on == s_pump_on) return;   // no change, no write
 
-  digitalWrite(PIN_PUMP, want_on ? RELAY_ON : RELAY_OFF);
+  relay_write(PIN_PUMP, want_on);
   s_pump_on = want_on;
 #ifdef DEBUG
   Serial.println(want_on ? F("[fill pump] ON") : F("[fill pump] OFF"));
@@ -447,7 +448,7 @@ static void compressor_write(bool want_on) {
 
   if (want_on == s_cooling) return;
 
-  digitalWrite(PIN_COMPRESSOR, want_on ? RELAY_ON : RELAY_OFF);
+  relay_write(PIN_COMPRESSOR, want_on);
   s_cooling = want_on;
   if (want_on) {
     s_cool_on_since = now;
@@ -519,15 +520,13 @@ static void leds_update() {
 // ---------------------------------------------------------------------------
 
 void water_level_begin() {
-  pinMode(PIN_PUMP, OUTPUT);
-  pinMode(PIN_COMPRESSOR, OUTPUT);
   pinMode(PIN_LED_LOW, OUTPUT);
   pinMode(PIN_LED_MID, OUTPUT);
   pinMode(PIN_LED_HIGH, OUTPUT);
 
   // Both loads off before anything else can ask for them.
-  digitalWrite(PIN_PUMP, RELAY_OFF);
-  digitalWrite(PIN_COMPRESSOR, RELAY_OFF);
+  relay_write(PIN_PUMP, false);
+  relay_write(PIN_COMPRESSOR, false);
 
   gallon_begin(&s_gal_a);
   gallon_begin(&s_gal_b);

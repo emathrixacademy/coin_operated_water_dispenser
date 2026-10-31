@@ -34,7 +34,6 @@ void coin_diverter_exercise(uint8_t cycles);
 // routed. route() then keeps this decision. Gates return to rest after
 // COIN_AIM_TIMEOUT_MS if the coin is never routed. No-op while busy.
 void coin_diverter_aim(coin_t coin);
-
 // True once the servo has reached position and COIN_LOCKOUT_MS has elapsed. The
 // coin is considered physically committed to its chamber at this point, and
 // only then may the inventory be incremented.

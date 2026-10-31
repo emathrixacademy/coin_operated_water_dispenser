@@ -19,6 +19,9 @@ void bottle_update();
 // Debounced state. Never returns the raw pin.
 bool bottle_present();
 
+// Test console only ("bot 1" / "bot 0"): treat the bottle as always present.
+void bottle_force(bool on);
+
 // One-shot edge flags. CONSUMED BY READING -- each returns true once per
 // debounced edge and clears itself.
 //

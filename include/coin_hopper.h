@@ -40,6 +40,11 @@ void coin_hopper_dispense(hopper_id_t hopper, uint16_t count);
 // counting and no inventory change. Idle only. 0 stops it.
 void coin_hopper_manual(hopper_id_t hopper, uint8_t seconds);
 
+// Test console only: change the pulse-mode on/off time live while calibrating
+// (clamped 50-10000 ms, lost on reset).
+void coin_hopper_set_pulse(hopper_id_t hopper, bool on, uint16_t ms);
+uint16_t coin_hopper_pulse_ms(hopper_id_t hopper, bool on);
+
 payout_result_t coin_hopper_status();
 
 // Coins the outlet sensor actually counted for the payout in progress or just

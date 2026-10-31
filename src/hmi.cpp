@@ -9,10 +9,10 @@
 #include "dispense.h"
 #include "persist.h"
 #include "rtc.h"
+#include "coin_hopper.h"
 #ifdef SERIAL_CONSOLE
 #include "coin_diverter.h"
-#include "coin_hopper.h"
-#include "persist.h"
+#include "coin_acceptor.h"
 #include "coin_level.h"
 #include "bottle.h"
 #endif
@@ -51,7 +51,10 @@ static char s_tx[HMI_TX_BUFFER];
 // Write one formatted line. Page, text and fault commands must arrive, so they
 // are written even if the TX buffer is full -- at HMI_BAUD that is a stall of a
 // few ms at worst, never the ~67 ms it was at 9600.
+static uint16_t s_tx_lines = 0;   // diagnostics: lines handed to the UART
+
 static void send_line() {
+  s_tx_lines++;
   s_tx[sizeof(s_tx) - 1] = '\0';
   HMI_SERIAL.write((const uint8_t *)s_tx, strlen(s_tx));
   HMI_SERIAL.write('\n');
@@ -96,6 +99,62 @@ static uint8_t s_rx_len = 0;
 static bool s_rx_overflow = false;   // discard until the next newline
 
 static bool s_confirm = false;
+
+// --- Admin -----------------------------------------------------------------
+//
+// The PIN is checked HERE, on the Mega, not on the screen: the phone page is
+// reachable over WiFi, and a screen-side check would stop nobody who sends
+// "EV ..." lines by hand. Unlocked for ADMIN_UNLOCK_MS after a correct PIN;
+// every admin action re-arms it. Actions run only while the machine is idle,
+// never in the middle of someone's purchase.
+static uint32_t s_admin_since = 0;
+static bool s_admin_open = false;
+static int8_t s_admin_reply = -1;   // AU to send: -1 none, 0 refused, 1 accepted
+static state_t s_sync_state = STATE_BOOT;
+
+static bool admin_unlocked() {
+  if (s_admin_open && (uint32_t)(millis() - s_admin_since) >= ADMIN_UNLOCK_MS) s_admin_open = false;
+  return s_admin_open;
+}
+
+static bool machine_idle() {
+  return s_sync_state == STATE_STANDBY || s_sync_state == STATE_FAULT || s_sync_state == STATE_BOOT;
+}
+
+static void admin_event(long ev, long payload) {
+  if (ev == (long)HMI_EVENT_ADMIN_UNLOCK) {
+    s_admin_open = (payload == (long)ADMIN_PIN);
+    s_admin_since = millis();
+    s_admin_reply = s_admin_open ? 1 : 0;
+    return;
+  }
+  if (!admin_unlocked() || !machine_idle()) return;
+  s_admin_since = millis();   // activity keeps the session open
+
+  if (ev == (long)HMI_EVENT_ADMIN_SET_P1 || ev == (long)HMI_EVENT_ADMIN_SET_P5) {
+    if (payload < 0) payload = 0;
+    if (payload > 2000) payload = 2000;
+    persist_inventory_set(ev == (long)HMI_EVENT_ADMIN_SET_P1 ? DEST_P1_HOPPER : DEST_P5_HOPPER,
+                          (uint16_t)payload);
+    faults_clear(FAULT_LOW_CHANGE);   // re-checked at the next STANDBY
+  } else if (ev == (long)HMI_EVENT_ADMIN_CLEAR) {
+    faults_clear_all();
+  } else if (ev == (long)HMI_EVENT_ADMIN_TEST) {
+    switch (payload) {
+      case 1: dispense_manual(3); break;
+      case 2: water_manual_fill(5); break;
+      case 3: coin_hopper_clear(); coin_hopper_dispense(HOPPER_P1, 1); break;
+      case 4: coin_hopper_clear(); coin_hopper_dispense(HOPPER_P5, 1); break;
+      default: break;
+    }
+  }
+}
+
+static bool is_admin_event(long ev) {
+  return ev == (long)HMI_EVENT_ADMIN_SET_P1 || ev == (long)HMI_EVENT_ADMIN_SET_P5 ||
+         ev == (long)HMI_EVENT_ADMIN_CLEAR || ev == (long)HMI_EVENT_ADMIN_TEST ||
+         ev == (long)HMI_EVENT_ADMIN_UNLOCK;
+}
 
 // Sales screen reply, one line per pass so it never blocks:
 //   SD <income centavos> <volume mL> <transactions>   today's totals
@@ -161,7 +220,12 @@ static void rx_line(char *line) {
   char *end = NULL;
   const long ev = strtol(line + 3, &end, 10);
   if (end == line + 3) return;                         // no number
-  if (ev <= (long)HMI_EVENT_NONE || ev > (long)HMI_EVENT_CONFIRM) return;
+  if (ev <= (long)HMI_EVENT_NONE || ev > (long)HMI_EVENT_ADMIN_UNLOCK) return;
+
+  if (is_admin_event(ev)) {
+    admin_event(ev, (*end == ' ') ? strtol(end + 1, NULL, 10) : 0);
+    return;
+  }
 
   if (ev == (long)HMI_EVENT_CONFIRM) {
     s_confirm = true;
@@ -252,6 +316,12 @@ static void console_status() {
   Serial.print(F(" P1full="));            Serial.print(coin_level_hopper_full(HOPPER_P1) ? 1 : 0);
   Serial.print(F(" P5full="));            Serial.print(coin_level_hopper_full(HOPPER_P5) ? 1 : 0);
   Serial.print(F(" boxfull="));           Serial.println(coin_level_box_full() ? 1 : 0);
+  Serial.print(F("[status] coin_width_us=")); Serial.print(coin_acceptor_last_width_us());
+  Serial.print(F(" coin_noise_rejected="));   Serial.print(coin_acceptor_rejected_pulses());
+  Serial.print(F(" longest_us="));           Serial.print(coin_acceptor_take_longest_us());
+  Serial.print(F(" D2="));                   Serial.println(digitalRead(PIN_COIN_PULSE));
+  Serial.print(F("[status] lcd_lines_sent=")); Serial.print(s_tx_lines);
+  Serial.print(F(" lcd_tx_free="));          Serial.println(HMI_SERIAL.availableForWrite());
   // tank_mm is what calibration reads: fill the tank to each level and copy
   // the number into the TANK_SONAR_*_MM constants.
   Serial.print(F("[status] tank_mm="));   Serial.print(water_tank_distance_mm());
@@ -304,8 +374,32 @@ static void console_exec(char *cmd) {
     coin_hopper_clear();
     coin_hopper_manual(cmd[3] == '1' ? HOPPER_P1 : HOPPER_P5, n < 0 ? 0 : (n > 10 ? 10 : (uint8_t)n));
   }
+  // "on1 <ms>" / "off1 <ms>" / "on5 <ms>" / "off5 <ms>": hopper pulse timing,
+  // live, for calibration. "pt" prints the current values.
+  else if (!strcmp(cmd, "on1") || !strcmp(cmd, "off1") || !strcmp(cmd, "on5") || !strcmp(cmd, "off5") ||
+           !strcmp(cmd, "pt")) {
+    if (cmd[0] == 'o' && n > 0) {
+      const bool on = (cmd[1] == 'n');
+      coin_hopper_set_pulse(cmd[on ? 2 : 3] == '5' ? HOPPER_P5 : HOPPER_P1, on, (uint16_t)n);
+    }
+    char b[64];
+    snprintf(b, sizeof(b), "[console] P1 on %u off %u ms   P5 on %u off %u ms",
+             coin_hopper_pulse_ms(HOPPER_P1, true), coin_hopper_pulse_ms(HOPPER_P1, false),
+             coin_hopper_pulse_ms(HOPPER_P5, true), coin_hopper_pulse_ms(HOPPER_P5, false));
+    Serial.println(b);
+  }
   else if (!strcmp(cmd, "hop1")) { coin_hopper_manual(HOPPER_P1, n < 0 ? 0 : (n > 10 ? 10 : (uint8_t)n)); }
   else if (!strcmp(cmd, "hop5")) { coin_hopper_manual(HOPPER_P5, n < 0 ? 0 : (n > 10 ? 10 : (uint8_t)n)); }
+  else if (!strcmp(cmd, "bot")) { bottle_force(n > 0); }
+  // "pins": raw level of D22-D53, to find which pin a sensor is really on.
+  else if (!strcmp(cmd, "pins")) {
+    char b[48];
+    uint8_t k = 0;
+    for (uint8_t pin = 22; pin <= 53 && k < sizeof(b) - 1; pin++) b[k++] = digitalRead(pin) ? '1' : '0';
+    b[k] = 0;
+    Serial.print(F("[pins] D22..D53 "));
+    Serial.println(b);
+  }
   else if (!strcmp(cmd, "trig")) { water_tank_trigger_mode(n < 0 ? 0 : (uint8_t)n); }
   else if (!strcmp(cmd, "skip")) {
     s_bypass = (n != 0);
@@ -362,7 +456,7 @@ static page_t page_for(state_t s) {
 
 enum sync_field_t : uint8_t {
   SF_STATE = 0, SF_CREDIT, SF_INSERTED, SF_MAXML, SF_TARGET, SF_POURED, SF_TOTAL,
-  SF_UNPAID, SF_COUNT
+  SF_UNPAID, SF_P1, SF_P5, SF_B10, SF_B20, SF_FILL, SF_COUNT
 };
 
 static money_t s_unpaid = 0;
@@ -371,7 +465,8 @@ void hmi_set_unpaid(money_t centavos) {
   s_unpaid = centavos;
 }
 static const char *const SF_NAME[SF_COUNT] = {
-  "state", "credit", "inserted", "maxml", "target", "poured", "total", "unpaid"
+  "state", "credit", "inserted", "maxml", "target", "poured", "total", "unpaid", "p1", "p5",
+  "b10", "b20", "fill"
 };
 
 static int32_t s_sf_sent[SF_COUNT];
@@ -392,6 +487,7 @@ static bool try_send_line() {
 
 void hmi_sync(state_t s) {
   const uint32_t now = millis();
+  s_sync_state = s;   // admin actions check it -- idle only
 
   if ((uint32_t)(now - s_sync_full_ms) >= HMI_STATUS_RESEND_MS) {
     s_sync_full_ms = now;
@@ -425,7 +521,12 @@ void hmi_sync(state_t s) {
     (int32_t)dispense_target(),
     (int32_t)dispense_delivered(),
     (int32_t)billing_total_dispensed(),
-    (int32_t)s_unpaid
+    (int32_t)s_unpaid,
+    (int32_t)(persist_inventory() ? persist_inventory()->p1_count : 0),
+    (int32_t)(persist_inventory() ? persist_inventory()->p5_count : 0),
+    (int32_t)(persist_inventory() ? persist_inventory()->box_p10 : 0),
+    (int32_t)(persist_inventory() ? persist_inventory()->box_p20 : 0),
+    (int32_t)(water_pump_running() ? 1 : 0)
   };
 
   for (uint8_t i = 0; i < SF_COUNT; i++) {
@@ -461,6 +562,10 @@ void hmi_update() {
   rx_update();
   status_update();
   stats_update();
+  if (s_admin_reply >= 0) {
+    snprintf(s_tx, sizeof(s_tx), "AU %d", s_admin_reply);
+    if (try_send_line()) s_admin_reply = -1;
+  }
   // TODO(M6): rate-limited refresh of the pour screen.
 }
 

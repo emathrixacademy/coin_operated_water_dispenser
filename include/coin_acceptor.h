@@ -40,7 +40,6 @@ coin_t coin_acceptor_take_coin();
 // Lets the gates be aimed the moment a coin is identified, before the state
 // machine gets to it.
 coin_t coin_acceptor_peek();
-
 // --- Inhibit ------------------------------------------------------------
 //
 // There are TWO INDEPENDENT inhibit sources and the physical line is asserted
@@ -79,5 +78,12 @@ uint8_t coin_acceptor_overmax_streak();
 // A number that climbs while the pump or a hopper runs means noise on D2;
 // check the star ground before suspecting the acceptor.
 uint16_t coin_acceptor_discarded_count();
+
+// Pulse-width filter diagnostics: width of the last LOW pulse seen on the coin
+// line, and how many were thrown away as too short or too long (noise).
+uint32_t coin_acceptor_last_width_us();
+uint16_t coin_acceptor_rejected_pulses();
+// Longest LOW on the coin line since the last call, us; resets it.
+uint32_t coin_acceptor_take_longest_us();
 
 #endif  // COIN_ACCEPTOR_H

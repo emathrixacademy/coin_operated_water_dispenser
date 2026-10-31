@@ -15,7 +15,9 @@ enum : int32_t {
 
 // hmi_event_t values the screen sends
 enum : int {
-  EV_SELECT_VOLUME = 1, EV_DISPENSE_AGAIN = 2, EV_FINISH = 3, EV_BACK = 4, EV_CONFIRM = 15
+  EV_SELECT_VOLUME = 1, EV_DISPENSE_AGAIN = 2, EV_FINISH = 3, EV_BACK = 4,
+  EV_ADMIN_SET_P1 = 10, EV_ADMIN_SET_P5 = 11, EV_CONFIRM = 15,
+  EV_ADMIN_CLEAR = 16, EV_ADMIN_TEST = 17, EV_ADMIN_UNLOCK = 18
 };
 
 struct machine_t {
@@ -27,6 +29,13 @@ struct machine_t {
   int32_t poured;
   int32_t total;
   int32_t unpaid;     // centavos of change the last payout could not give
+  int32_t p1;         // coins in the P1 hopper (Mega's count)
+  int32_t p5;         // coins in the P5 hopper
+  int32_t b10;        // P10 coins in the coin box
+  int32_t b20;        // P20 coins in the coin box
+  int32_t fill;       // 1 = refill pump running
+  int32_t au;         // last admin PIN reply: 1 accepted, 0 refused
+  int32_t au_seq;     // bumps on every AU line, so the same answer twice is seen
   int32_t fault;      // fault_t, 0 = none
   int32_t tank;       // 0-100
   int32_t tank_ok;
@@ -68,3 +77,14 @@ bool model_apply(const char *line);
 
 // Send a touch to the Mega: "EV <ev>" or "EV <ev> <payload>".
 void mega_send_event(int ev, long payload);
+
+// Admin PIN, shared by the LCD and the phone page so one lockout covers both.
+// Kept in this board's NVS (main.cpp); checked here, never in the browser.
+#define ADM_MAX_TRIES 3
+int admin_try(uint16_t pin);          // 1 right, 0 wrong, -1 locked out
+bool admin_locked();
+uint32_t admin_lock_left_s();
+uint8_t admin_fails();
+void admin_set_pin(uint16_t pin);
+// Unlock the Mega's own admin gate, then send the action.
+void admin_mega(int ev, long payload);

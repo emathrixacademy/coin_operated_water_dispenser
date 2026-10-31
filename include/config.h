@@ -58,10 +58,11 @@ typedef int32_t volume_t;   // millilitres
 // Raising this raises the worst-case change owed, which the hoppers must be
 // able to cover before any coin is accepted. Do not raise it without redoing
 // the hopper float arithmetic.
-// Team decision 2026-10-27: the most one customer can buy is 1.5 L (P15).
-// Was 20. A coin that crosses it is still credited (F8) and the excess comes
-// back as change, so the hoppers must be able to pay up to P15 - P1 + P20.
-#define MAX_TRANSACTION_PESOS 15
+// Team decision 2026-10-31: back to 2 L (P20); was P15 from 2026-10-27. A coin
+// that crosses it is still credited (F8) and the excess comes back as change,
+// so the hoppers must be able to pay up to P20 - P1 + P20. The display's
+// MAX_BUY_ML and the phone page's MAX_ML must match.
+#define MAX_TRANSACTION_PESOS 20
 #define MAX_TRANSACTION_CENTAVOS (MAX_TRANSACTION_PESOS * CENTAVOS_PER_PESO)
 #define MAX_TRANSACTION_ML (MAX_TRANSACTION_PESOS * ML_PER_PESO)
 
@@ -102,8 +103,11 @@ typedef int32_t volume_t;   // millilitres
 // volatile counter and return; all interpretation happens in update().
 // Adding a third interrupt is a design change, not an implementation detail.
 
-#define PIN_COIN_PULSE 2   // INT0. Missed pulse = wrong denomination = money error
-#define PIN_FLOW_PULSE 3   // INT1. Missed pulse = under-counted volume
+// Swapped 2026-10-30: D2 on the bench unit no longer goes LOW even shorted to
+// GND (only ~20 us spikes reach the ISR), so the coinslot moved to D3. The
+// flow sensor is not fitted (dispense is timed), so it takes the dead pin.
+#define PIN_COIN_PULSE 3   // INT1. Missed pulse = wrong denomination = money error
+#define PIN_FLOW_PULSE 2   // INT0. Missed pulse = under-counted volume
 
 // THIRD INTERRUPT, approved by the team 2026-10-26: the tank ultrasonic we
 // have is the PWM variant, and its pulse can be as short as ~0.2 ms near a
@@ -160,6 +164,9 @@ typedef int32_t volume_t;   // millilitres
 #define COIN_BOX_SENSOR_FITTED 0
 #endif
 #define PIN_CONFIRM_BTN     40  // LOW = pressed. Advances ACCEPTING -> SELECTING
+// 1: the cabinet has the push button on pin 40 (team, 2026-10-30). Set 0 for
+// a unit with nothing wired there: a floating pin 40 reads as presses.
+#define CONFIRM_BTN_FITTED  1
 // IR at the top of each change hopper. LOW = full. A full hopper's coins are
 // routed to the coin box instead -- see coin_level.h and coin_route.h.
 #define PIN_HOPPER_P1_FULL  41
@@ -188,8 +195,10 @@ typedef int32_t volume_t;   // millilitres
 // from a Mega pin directly.
 
 #define PIN_COIN_INHIBIT  30  // HIGH = acceptor inhibited
-#define PIN_VALVE         31  // Relay, active LOW
-#define PIN_PUMP          32  // DC SSR, active LOW
+// Swapped 2026-10-29 to match the bench wiring: relay IN1 (pin 31) drives the
+// gallon-to-tank pump, IN2 (pin 32) the tank-to-bottle pump.
+#define PIN_VALVE         32  // Dispense pump relay, active LOW
+#define PIN_PUMP          31  // Fill pump relay, active LOW
 #define PIN_HOPPER_P1_RUN 33  // Relay, active LOW
 // The hopper relays are a 2-channel module: IN1 = P1 (pin 33), IN2 = P5 (pin
 // 34). On 2026-10-29 the P5 relay did not switch because IN2 was not wired to
@@ -355,10 +364,35 @@ typedef int32_t volume_t;   // millilitres
 //
 // Too short and a 20-pulse P20 is read as two coins -- a P20 credited as P10 and
 // P10, or worse, as two separate coins that each trigger a diverter move.
-// Too long and the machine feels sluggish between coins. 200 ms is comfortably
-// wider than the acceptor's inter-pulse gap and far narrower than the fastest a
-// human can insert two coins.
-#define COIN_PULSE_GAP_MS 200
+// Too long and the machine feels sluggish between coins.
+// Raised 200 -> 350 ms on 2026-10-29: this Allan coinslot pulses every ~169 ms,
+// so 200 ms left only ~30 ms of margin and a P5 was read as a 2- or 3-pulse
+// "unknown" coin (credited P1, sent to the coin box) twice in one bench
+// session. 350 ms is twice the period and still far below two human inserts.
+// 700, was 350: with the resistor gone from the coin line the Allan's pulse
+// spacing measured 326 ms (169 ms before), so 350 split a P5 into "unknown"
+// plus single P1s (bench 2026-10-30). Keep it about twice the spacing; much
+// longer only delays the credit.
+#define COIN_PULSE_GAP_MS 700
+
+// Accepted width of one coinslot pulse (LOW time). The Allan coinslot sends
+// pulses of tens of milliseconds; motor and relay spikes are microseconds,
+// and before this filter they were being counted as P1 coins (2026-10-29: P12
+// of credit appeared with no coin inserted). 5 ms is well under any real
+// pulse and far above a spike. If real coins stop registering, read
+// "coin_width_us" from the test console's "st" and lower the minimum.
+//
+// 1 ms, was 5 ms (bench 2026-10-30, "[pulse]" log): in the cabinet each real
+// pulse arrives as 2-3 LOW fragments of 1-3 ms within ~25 ms, ~130 ms apart.
+// Merged (below) a pulse spans 5-25 ms, but a lone fragment must still count.
+// The noise spikes this filter exists for are tens of microseconds.
+#define COIN_PULSE_MIN_US 1000UL
+#define COIN_PULSE_MAX_US 200000UL
+// A HIGH shorter than this inside a pulse is chatter, not the end of it (see
+// coin_isr()). 30 ms covers the fragment spread seen on the bench and stays
+// well under the ~100 ms HIGH between real pulses; much higher and two pulses
+// merge into one (a P5 reads as less).
+#define COIN_PULSE_MERGE_US 30000UL
 
 // ADAPTIVE GAP. 200 ms is the safe figure before anything is known about the
 // coinslot, but it is pure dead time before the gates can move -- and the coin
@@ -370,7 +404,11 @@ typedef int32_t volume_t;   // millilitres
 // can split into two coins (a P20 read as P10 + P10); raise it and the gates
 // move later.
 #define COIN_PULSE_GAP_FACTOR 3
-#define COIN_PULSE_GAP_MIN_MS 50
+// 50 let a noise burst teach a tiny period (bench 2026-10-30, a resistor on
+// the coin line): the gap fell below the Allan's ~169 ms pulse spacing, every
+// P5 resolved as a P1 on its first pulse, and the diverter lockout drained the
+// other four. Must stay above the slowest real pulse spacing.
+#define COIN_PULSE_GAP_MIN_MS 300
 
 // A gate aimed for an identified coin that is then NOT routed (it was
 // discarded by a state change) goes back to rest after this, so the next coin
@@ -416,8 +454,21 @@ typedef int32_t volume_t;   // millilitres
 // (it made one turn in under 2 s on the bench); OFF long enough for it to see
 // the line drop and re-arm. Too short ON skips coins; too short OFF and the
 // hopper may not take the next start.
-#define HOPPER_PULSE_ON_MS  1200
-#define HOPPER_PULSE_OFF_MS 400
+// Per hopper: on the bench the P1 hopper paid 3 coins for 3 pulses at
+// 1200/400, while the P5 hopper paid only 2 for 5 -- it cycles slower, so it
+// gets a longer pulse and a longer rest.
+// P1 re-measured 2026-10-29: at 3000/3000, 10 relay pulses gave 5 turns and
+// 5 coins -- the P1 hopper turns once per TWO pulses. So it is driven with
+// two pulses per coin (team's call). The P5 hopper turns on every pulse.
+#define HOPPER_PULSE_ON_MS     3000   // P1
+#define HOPPER_PULSE_OFF_MS    3000   // P1
+#define HOPPER_P1_PULSES_PER_COIN 2
+#define HOPPER_P5_PULSES_PER_COIN 1
+// 2000/800 paid 6 coins for 10 pulses; lengthened again.
+#define HOPPER_P5_PULSE_ON_MS  3000
+// 3000/1500 paid 8-9 of 10: the hopper misses a pulse when the rest is short.
+// Same rest as P1, which pays 10 of 10.
+#define HOPPER_P5_PULSE_OFF_MS 3000
 
 // 1 = no working outlet sensor: each completed pulse counts as one coin paid
 //     (bench 2026-10-29 -- three pulses gave exactly three P1, while the
@@ -600,7 +651,10 @@ typedef int32_t volume_t;   // millilitres
 #define BOTTLE_DEBOUNCE_MS 80
 
 // Confirm button debounce -- SPEC 1.2. An ordinary momentary pushbutton.
-#define CONFIRM_DEBOUNCE_MS 50
+// 150, was 50: the button's long run past the relays picked up noise that
+// held for 50 ms and sent the machine to the picker mid-insert (bench
+// 2026-10-30). A real press is held far longer than 150 ms.
+#define CONFIRM_DEBOUNCE_MS 150
 
 // ---------------------------------------------------------------------------
 // Flow
@@ -667,12 +721,20 @@ typedef int32_t volume_t;   // millilitres
 //      DISPENSE_DEAD_MS      = t1 - V1 * (t2 - t1) / (V2 - V1)
 // Example: 5 s -> 60 mL, 20 s -> 300 mL gives 6250 ms per 100 mL and a dead
 // time of 1250 ms.
-#define DISPENSE_MS_PER_100ML 7000
+// Bench 2026-10-29: "pour 15" gave 445 mL -> 15000 * 100 / 445 = 3371.
+// One-point only; do the two-point run above to remove the dead time.
+// Bench 2026-10-30, new smaller hose + solenoid valve: a P5 (500 mL) sale
+// poured 400 mL -> 3371 * 500 / 400 = 4214.
+// Two-point, 2026-10-31: 500 mL sale exact (21070 ms), 800 mL sale poured
+// 750 mL (33712 ms) -> 100 * 12642 / 250 = 5057, dead = 21070 - 500 * 12642
+// / 250 = -4214 (about 83 mL arrives beyond the steady rate). One run each:
+// check a 100 mL and a 1500 mL sale and refine.
+#define DISPENSE_MS_PER_100ML 5057
 
 // Run time that delivers nothing at the cup: hose fill at the start, less the
 // dribble after the pump stops. 0 until the two-point calibration is done.
 // Signed -- negative when the dribble outweighs the hose fill.
-#define DISPENSE_DEAD_MS 0
+#define DISPENSE_DEAD_MS (-4214)
 
 // 1 = no amount picker. CONFIRM (push button, or Continue on the screen) pours
 // the whole credit, P1 = 100 mL, once the bottle IR sees a bottle.
@@ -794,6 +856,13 @@ typedef int32_t volume_t;   // millilitres
 // starves the change float). Much longer and a coin can still be sent to a
 // hopper that has just filled.
 #define COIN_LEVEL_DEBOUNCE_MS 500
+
+// Going FULL needs the beam blocked this long. Bench 2026-10-30: the P5 beam
+// read full for under a second just as a P5 dropped, so the coin went to the
+// box and the refund came out in P1s. A real full hopper stays blocked; a
+// passing hand or a coin settling does not. Much shorter and that comes back;
+// longer only delays the switch to the box once a hopper truly fills.
+#define COIN_LEVEL_FULL_MS 5000
 
 // Minimum time the pump stays off after stopping, before it may start again.
 // Back-to-back starts on a diaphragm pump shorten its life; this enforces a
@@ -950,6 +1019,15 @@ typedef int32_t volume_t;   // millilitres
 // Sales screen: how many of the most recent purchases it lists. The EEPROM
 // ring holds HISTORY_ENTRIES events in all, purchases and others mixed.
 #define HMI_STATS_HISTORY 10
+
+// Admin PIN, checked on the Mega (hmi.cpp) -- the screen only forwards what was
+// typed. 1234 is a PLACEHOLDER until the team picks one; change it before the
+// machine is shown to anyone, and keep the real value out of public copies.
+#define ADMIN_PIN 1234
+// How long a correct PIN keeps admin open; every admin action restarts it.
+// Long enough to load coins and run a test; short enough that a screen left
+// in admin closes itself.
+#define ADMIN_UNLOCK_MS 120000UL
 
 // Screen refresh during a pour. Fast enough that the progress bar looks live,
 // slow enough that the serial line is not saturated while flow pulses are

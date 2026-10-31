@@ -68,20 +68,22 @@ static void gates_rest() {
   gate_write(s_gate2, PIN_GATE2_SERVO, GATE2_ANGLE_OPEN);
 }
 
-// Every box destination is the same straight run -- the denomination split is
-// in the books, not in the mechanism.
+// As built (team, 2026-10-30): at rest the chute runs to the P5 hopper, so a
+// P5 moves nothing; a P1 swings gate 1 only; the box (a full hopper, P10,
+// P20, unknown) swings both. The denomination split in the box is in the
+// books, not in the mechanism.
 static void gates_for(coin_dest_t dest) {
   switch (dest) {
     case DEST_P5_HOPPER:
+      gates_rest();
+      break;
+    case DEST_P1_HOPPER:
       gate_write(s_gate1, PIN_GATE1_SERVO, GATE1_ANGLE_CLOSED);
       gate_write(s_gate2, PIN_GATE2_SERVO, GATE2_ANGLE_OPEN);
       break;
-    case DEST_P1_HOPPER:
-      gate_write(s_gate1, PIN_GATE1_SERVO, GATE1_ANGLE_OPEN);
-      gate_write(s_gate2, PIN_GATE2_SERVO, GATE2_ANGLE_CLOSED);
-      break;
     default:
-      gates_rest();
+      gate_write(s_gate1, PIN_GATE1_SERVO, GATE1_ANGLE_CLOSED);
+      gate_write(s_gate2, PIN_GATE2_SERVO, GATE2_ANGLE_CLOSED);
       break;
   }
 }
@@ -262,9 +264,9 @@ void coin_diverter_route(coin_t coin) {
              : coin == COIN_P10 ? F("P10") : coin == COIN_P20 ? F("P20")
                                            : F("unknown"));
   Serial.print(F(" -> "));
-  Serial.print(s_dest == DEST_P5_HOPPER ? F("P5 hopper (gate1 CLOSED)")
-             : s_dest == DEST_P1_HOPPER ? F("P1 hopper (gate2 CLOSED)")
-                                        : F("coin box (both OPEN)"));
+  Serial.print(s_dest == DEST_P5_HOPPER ? F("P5 hopper (gates at rest)")
+             : s_dest == DEST_P1_HOPPER ? F("P1 hopper (gate1 moved)")
+                                        : F("coin box (both moved)"));
   Serial.print(F("  P1full="));
   Serial.print(coin_level_hopper_full(HOPPER_P1) ? 1 : 0);
   Serial.print(F(" P5full="));

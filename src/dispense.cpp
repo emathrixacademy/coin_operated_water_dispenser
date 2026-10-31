@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include "dispense.h"
 #include "flow.h"
+#include "relay.h"
 
 // Dispense -- valve control, cutoff, partial-stop handling. SPEC 4.3, 5.5.
 //
@@ -45,7 +46,7 @@ static void log_pour(const __FlashStringHelper *what) {
 // detector's idea of whether the valve is open cannot drift from the pin.
 // =========================================================================
 static void valve_write(bool open) {
-  digitalWrite(PIN_VALVE, open ? RELAY_ON : RELAY_OFF);
+  relay_write(PIN_VALVE, open);
   s_valve_open = open;
   flow_set_valve_open(open);
 }
@@ -89,7 +90,6 @@ void dispense_manual(uint32_t seconds) {
 }
 
 void dispense_begin() {
-  pinMode(PIN_VALVE, OUTPUT);
   valve_write(false);
   s_status = DISPENSE_IDLE;
   s_target = 0;
@@ -131,7 +131,7 @@ void dispense_update() {
         // toward what the user RECEIVED, so they are never charged for water
         // measured after their bottle was already full -- and never handed
         // uncounted water either.
-        digitalWrite(PIN_VALVE, RELAY_OFF);
+        relay_write(PIN_VALVE, false);
         s_valve_open = false;
         // Tell flow now, not after the settle window: in timed mode the clock
         // must stop with the pump, or the settle time is counted as water.

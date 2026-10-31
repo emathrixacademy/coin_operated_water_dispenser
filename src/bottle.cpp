@@ -16,7 +16,16 @@ static uint32_t s_candidate_since = 0;
 static bool s_just_placed = false;
 static bool s_just_removed = false;
 
+// Test console only: pretend a bottle is there, for bench runs while the
+// sensor is not working. Never set in a build that sells.
+static bool s_forced = false;
+
+void bottle_force(bool on) {
+  s_forced = on;
+}
+
 static bool read_raw() {
+  if (s_forced) return true;
   return digitalRead(PIN_BOTTLE_PROX) == LOW;   // LOW = bottle present
 }
 

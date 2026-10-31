@@ -18,6 +18,7 @@
 #include "change_plan.h"
 #include <string.h>
 #include "rtc.h"
+#include "relay.h"
 
 // Single non-blocking state machine.
 // Project EMX-2026-WATERVENDO-01, eMathrix Technologies.
@@ -124,6 +125,7 @@ static bool s_confirm_pressed = false;   // one-shot, consumed by reading
 static void confirm_update() {
   // The on-screen CONFIRM (or the test console's "c") counts as a press.
   if (hmi_confirm_take()) s_confirm_pressed = true;
+  if (!CONFIRM_BTN_FITTED) return;
   const bool raw = (digitalRead(PIN_CONFIRM_BTN) == LOW);
   const uint32_t now = millis();
 
@@ -150,6 +152,7 @@ static void confirm_update() {
 static bool s_buzz_on = false;
 static uint32_t s_buzz_since = 0;
 static uint8_t s_bottle_warns = 0;   // AWAITING_BOTTLE warnings sounded so far
+static bool s_bottle_by_button = false;   // this pour was started by CONFIRM, not the IR
 
 static void buzzer_beep() {
   digitalWrite(PIN_BUZZER, HIGH);
@@ -303,6 +306,7 @@ static const transition_t LEGAL[] PROGMEM = {
   { STATE_STANDBY,         STATE_FAULT },           // incl. Case 20 path (d)
 
   { STATE_ACCEPTING,       STATE_SELECTING },
+  { STATE_ACCEPTING,       STATE_PAYING_CHANGE },   // refund before choosing
 
   { STATE_SELECTING,       STATE_AWAITING_BOTTLE },
   { STATE_SELECTING,       STATE_PAYING_CHANGE },   // finish without pour
@@ -532,6 +536,8 @@ static void on_enter(state_t s) {
       // The warning ladder counts from this entry, so a second selection in
       // the same transaction gets its own two warnings.
       s_bottle_warns = 0;
+      // A press left over from the previous screen must not start the pour.
+      (void)confirm_take();
       break;
 
     case STATE_DISPENSING:
@@ -639,6 +645,35 @@ static void state_update(state_t s) {
       // it is logged like every other.
       if (faults_is_locked()) {
         transition_to(STATE_FAULT, TRIG_BOOT_PERSISTENT_FAULT);
+      } else if (persist_has_open_txn()) {
+        // Power cut or reset mid-transaction (team/client request 2026-10-30):
+        // the customer's credit comes back and they resume at COMPLETE --
+        // dispense more, or finish and take their change.
+        const transaction_t *t = persist_open_txn();
+        billing_load(t);
+        // A pour cut off part way: bill what was delivered, rounded down, and
+        // return the rest of its price to credit.
+        if (t->target_ml > 0) billing_settle_partial((volume_t)t->banked_ml + t->segment_ml);
+        // A payout leg cut off part way: how many coins left is unknowable, so
+        // the whole leg comes off inventory and is paid again from credit --
+        // the machine guesses against itself (decisions.md D-4).
+        if (t->phase == TXN_PHASE_PAYING && t->leg_count > 0) {
+          persist_inventory_add(t->leg_hopper == HOPPER_P5 ? DEST_P5_HOPPER : DEST_P1_HOPPER,
+                                -(int16_t)t->leg_count);
+        }
+        s_target_ml = 0;
+        transaction_t txn;
+        billing_store(&txn);
+        txn.phase = TXN_PHASE_CREDIT;
+        txn.leg_count = 0;
+        billing_load(&txn);
+        persist_txn_update(&txn);
+        if (billing_credit() > 0) {
+          transition_to(STATE_COMPLETE, TRIG_BOOT_OPEN_TXN);
+        } else {
+          commit_transaction();
+          transition_to(STATE_STANDBY, TRIG_BOOT_CLEAN);
+        }
       } else {
         transition_to(STATE_STANDBY, TRIG_BOOT_CLEAN);
       }
@@ -718,11 +753,19 @@ static void state_update(state_t s) {
         break;
       }
 
-      if (billing_at_ceiling()) {
-        // The acceptor is inhibited by the transition itself: SELECTING is not
-        // an accepting state. The machine stops taking money it has capped.
-        transition_to(STATE_SELECTING, TRIG_CREDIT_AT_CEILING);
-        break;
+      // At the ceiling: stop taking money, but wait for CONTINUE (team request
+      // 2026-10-30). Jumping to the picker on its own left the customer on a
+      // screen they had not asked for.
+      if (billing_at_ceiling() && !coin_acceptor_is_inhibited() &&
+          coin_acceptor_idle() && !coin_diverter_is_busy()) {
+        coin_acceptor_inhibit();
+      }
+      // No refund before buying (client, 2026-10-31): the machine sells water,
+      // it does not change coins. Any FINISH/BACK is taken and dropped here so
+      // it cannot surface later as a refund.
+      if (hmi_event_available()) {
+        int32_t payload = 0;
+        (void)hmi_take_event(&payload);
       }
       // Leaving ACCEPTING inhibits the acceptor and discards anything in
       // flight, so a coin still arriving when confirm is pressed would be kept
@@ -778,10 +821,11 @@ static void state_update(state_t s) {
         break;
       }
 
-      // The back arrow from SELECT VOLUME means "I'm done, give me my money".
-      // Same destination as the explicit finish button.
-      if (e == HMI_EVENT_FINISH || e == HMI_EVENT_BACK) {
-        transition_to(STATE_PAYING_CHANGE, TRIG_FINISH_NO_POUR);
+      // Finish here only once water has been bought this transaction (back
+      // from "Dispense more"). Before the first pour there is no refund
+      // (client, 2026-10-31): the machine sells water, it does not change coins.
+      if ((e == HMI_EVENT_FINISH || e == HMI_EVENT_BACK) && billing_total_dispensed() > 0) {
+        transition_to(STATE_PAYING_CHANGE, TRIG_FINISH);
       }
       break;
     }
@@ -789,6 +833,16 @@ static void state_update(state_t s) {
     // -------------------------------------------------------------------
     case STATE_AWAITING_BOTTLE: {
       if (bottle_present()) {
+        s_bottle_by_button = false;
+        transition_to(STATE_DISPENSING, TRIG_BOTTLE_DETECTED);
+        break;
+      }
+      // The CONFIRM push button also starts the pour (team request
+      // 2026-10-30): the cabinet's bottle IR misses bottles, and a customer
+      // who has paid must still get water. The customer has placed the bottle
+      // and said so; this pour then ignores the IR (see DISPENSING).
+      if (confirm_take()) {
+        s_bottle_by_button = true;
         transition_to(STATE_DISPENSING, TRIG_BOTTLE_DETECTED);
         break;
       }
@@ -823,7 +877,17 @@ static void state_update(state_t s) {
         // they never received.
         billing_cancel_selection();
         s_target_ml = 0;
-        transition_to(STATE_PAYING_CHANGE, TRIG_BOTTLE_WAIT_TIMEOUT);
+        // Before any water has been bought, no refund (client, 2026-10-31):
+        // back to the picker with the credit intact. Otherwise a select-and-
+        // walk-away would turn the machine into a coin changer.
+        if (billing_total_dispensed() == 0) {
+          transaction_t txn;
+          billing_store(&txn);
+          persist_txn_update(&txn);
+          transition_to(STATE_SELECTING, TRIG_BOTTLE_WAIT_TIMEOUT);
+        } else {
+          transition_to(STATE_PAYING_CHANGE, TRIG_BOTTLE_WAIT_TIMEOUT);
+        }
       }
       break;
     }
@@ -841,7 +905,7 @@ static void state_update(state_t s) {
       }
       // Debounced state as well as the edge: a removal edge consumed earlier
       // must not leave the valve open over an empty tray.
-      if (bottle_just_removed() || !bottle_present()) {
+      if (!s_bottle_by_button && (bottle_just_removed() || !bottle_present())) {
         transition_to(STATE_PAUSED, TRIG_BOTTLE_REMOVED);
         break;
       }
@@ -1071,6 +1135,11 @@ static void boot_step(const __FlashStringHelper *what) {
 #endif
 
 void setup() {
+  // Relays OFF before anything else (see relay.h for what OFF means).
+  static const uint8_t RELAYS[] = { PIN_PUMP, PIN_VALVE, PIN_HOPPER_P1_RUN,
+                                    PIN_HOPPER_P5_RUN, PIN_COMPRESSOR };
+  for (uint8_t i = 0; i < sizeof(RELAYS); i++) relay_write(RELAYS[i], false);
+
 #ifdef DEBUG
   Serial.begin(DEBUG_BAUD);
 #ifdef SERIAL_CONSOLE
@@ -1185,6 +1254,9 @@ void loop() {
   // Aim the gates the instant a coin is identified. The state machine may not
   // route it until after an EEPROM write (~100 ms on the first coin), and the
   // coin is falling the whole time.
+  // Not while the train is still counting: a servo swung on the first pulse
+  // put enough noise and sag on the lines that the rest of a P5's pulses were
+  // lost (read as P1) and the display rebooted (bench 2026-10-30).
   if (coin_acceptor_available()) coin_diverter_aim(coin_acceptor_peek());
   coin_diverter_update();
   coin_hopper_update();

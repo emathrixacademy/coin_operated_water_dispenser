@@ -2,6 +2,7 @@
 #include <string.h>
 #include "coin_hopper.h"
 #include "change_plan.h"
+#include "relay.h"
 #include "persist.h"
 #include "rtc.h"
 
@@ -25,6 +26,7 @@ static uint32_t s_attempt_ms = 0;
 static uint32_t s_settle_ms = 0;
 static bool s_pulse_on = false;     // HOPPER_PULSE_MODE: run line state
 static uint32_t s_pulse_ms = 0;     // when it last changed
+static uint8_t s_pulses = 0;        // pulses since the last coin counted
 static payout_result_t s_result = PAYOUT_IDLE;
 
 // Outlet sensor debounce, per hopper.
@@ -44,12 +46,12 @@ static coin_dest_t dest_of(hopper_id_t h) {
 }
 
 static void motor(bool on) {
-  digitalWrite(run_pin(), on ? RELAY_ON : RELAY_OFF);
+  relay_write(run_pin(), on);
 }
 
 static void motors_all_off() {
-  digitalWrite(PIN_HOPPER_P1_RUN, RELAY_OFF);
-  digitalWrite(PIN_HOPPER_P5_RUN, RELAY_OFF);
+  relay_write(PIN_HOPPER_P1_RUN, false);
+  relay_write(PIN_HOPPER_P5_RUN, false);
 }
 
 // Poll the outlet sensor. Coins leave at 5-10/sec, slow enough to poll, which
@@ -121,6 +123,7 @@ static void start_attempt() {
   motor(true);
   s_pulse_on = true;
   s_pulse_ms = millis();
+  s_pulses = 0;
   s_phase = HOP_RUNNING;
 }
 
@@ -131,13 +134,31 @@ static uint32_t s_manual_since = 0;
 static uint32_t s_manual_ms = 0;
 static uint8_t s_manual_pin = 0;
 
+// Pulse timing, [0] = P1, [1] = P5. Starts at the config.h values; the test
+// console can change it live while calibrating, so each trial needs no
+// reflash. Not saved: copy the values that work back into config.h.
+static uint16_t s_pulse_on_ms[2]  = { HOPPER_PULSE_ON_MS,  HOPPER_P5_PULSE_ON_MS };
+static uint16_t s_pulse_off_ms[2] = { HOPPER_PULSE_OFF_MS, HOPPER_P5_PULSE_OFF_MS };
+
+void coin_hopper_set_pulse(hopper_id_t hopper, bool on, uint16_t ms) {
+  const uint8_t k = (hopper == HOPPER_P5) ? 1 : 0;
+  if (ms < 50) ms = 50;
+  if (ms > 10000) ms = 10000;
+  if (on) s_pulse_on_ms[k] = ms; else s_pulse_off_ms[k] = ms;
+}
+
+uint16_t coin_hopper_pulse_ms(hopper_id_t hopper, bool on) {
+  const uint8_t k = (hopper == HOPPER_P5) ? 1 : 0;
+  return on ? s_pulse_on_ms[k] : s_pulse_off_ms[k];
+}
+
 void coin_hopper_manual(hopper_id_t hopper, uint8_t seconds) {
   if (s_phase != HOP_IDLE) return;
   motors_all_off();
   if (seconds == 0) { s_manual_ms = 0; return; }
   if (seconds > 10) seconds = 10;
   s_manual_pin = (hopper == HOPPER_P1) ? PIN_HOPPER_P1_RUN : PIN_HOPPER_P5_RUN;
-  digitalWrite(s_manual_pin, RELAY_ON);
+  relay_write(s_manual_pin, true);
   s_manual_since = millis();
   s_manual_ms = seconds * 1000UL;
 }
@@ -145,8 +166,6 @@ void coin_hopper_manual(hopper_id_t hopper, uint8_t seconds) {
 void coin_hopper_begin() {
   pinMode(PIN_HOPPER_P1_COUNT, INPUT_PULLUP);
   pinMode(PIN_HOPPER_P5_COUNT, INPUT_PULLUP);
-  pinMode(PIN_HOPPER_P1_RUN, OUTPUT);
-  pinMode(PIN_HOPPER_P5_RUN, OUTPUT);
   motors_all_off();
   s_phase = HOP_IDLE;
   s_result = PAYOUT_IDLE;
@@ -154,7 +173,7 @@ void coin_hopper_begin() {
 
 void coin_hopper_update() {
   if (s_manual_ms && (uint32_t)(millis() - s_manual_since) >= s_manual_ms) {
-    digitalWrite(s_manual_pin, RELAY_OFF);
+    relay_write(s_manual_pin, false);
     s_manual_ms = 0;
   }
   switch (s_phase) {
@@ -181,7 +200,10 @@ void coin_hopper_update() {
       if (s_counted != before) s_attempt_ms = millis();
       {
         const uint32_t in_phase = millis() - s_pulse_ms;
-        if (s_pulse_on && in_phase >= HOPPER_PULSE_ON_MS) {
+        const uint8_t k = (s_hopper == HOPPER_P5) ? 1 : 0;
+        const uint32_t on_ms  = s_pulse_on_ms[k];
+        const uint32_t off_ms = s_pulse_off_ms[k];
+        if (s_pulse_on && in_phase >= on_ms) {
           motor(false);
           s_pulse_on = false;
           s_pulse_ms = millis();
@@ -190,15 +212,18 @@ void coin_hopper_update() {
           // See HOPPER_COUNT_BY_PULSE for what that gives up. A counted coin is
           // progress, so the attempt timer re-arms here too -- otherwise a
           // payout longer than HOPPER_TIMEOUT_MS would stop for a needless retry.
-          s_counted++;
+          // The P1 hopper turns once per two pulses; see config.h.
           s_attempt_ms = millis();
+          if (++s_pulses < (k ? HOPPER_P5_PULSES_PER_COIN : HOPPER_P1_PULSES_PER_COIN)) return;
+          s_pulses = 0;
+          s_counted++;
           if (s_counted >= s_commanded) {
             s_settle_ms = millis();
             s_phase = HOP_SETTLING;
             return;
           }
 #endif
-        } else if (!s_pulse_on && in_phase >= HOPPER_PULSE_OFF_MS) {
+        } else if (!s_pulse_on && in_phase >= off_ms) {
           motor(true);
           s_pulse_on = true;
           s_pulse_ms = millis();
@@ -208,7 +233,16 @@ void coin_hopper_update() {
       (void)before;
 #endif
 
-      if ((uint32_t)(millis() - s_attempt_ms) >= HOPPER_TIMEOUT_MS) {
+#if HOPPER_PULSE_MODE
+      // A coin is counted once per pulse cycle, so the timeout must outlast one
+      // full cycle or a slow (calibrated) cycle reads as a jam.
+      const uint8_t kt = (s_hopper == HOPPER_P5) ? 1 : 0;
+      uint32_t timeout_ms = (uint32_t)s_pulse_on_ms[kt] + s_pulse_off_ms[kt] + 1000;
+      if (timeout_ms < HOPPER_TIMEOUT_MS) timeout_ms = HOPPER_TIMEOUT_MS;
+#else
+      const uint32_t timeout_ms = HOPPER_TIMEOUT_MS;
+#endif
+      if ((uint32_t)(millis() - s_attempt_ms) >= timeout_ms) {
         // Short on this attempt. Stop the motor and let the throat clear
         // before judging -- see HOP_SETTLING.
         motor(false);

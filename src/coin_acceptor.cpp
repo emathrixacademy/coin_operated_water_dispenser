@@ -29,12 +29,100 @@ static bool s_available = false;
 static uint8_t s_overmax_streak = 0;
 static uint16_t s_discarded = 0;
 
-static void coin_isr() {
+// Pulse-width filter (bench 2026-10-29: credit was climbing with no coin
+// inserted -- noise on the coin line counted as P1 pulses). The coinslot's
+// real pulses are tens of milliseconds long; a spike from a motor or relay is
+// microseconds. So the ISR times each LOW pulse and counts only those between
+// COIN_PULSE_MIN_US and COIN_PULSE_MAX_US. Still just timestamps and a counter.
+static volatile uint32_t s_fall_us = 0;
+static volatile bool s_low = false;
+static volatile uint32_t s_last_width_us = 0;   // diagnostics
+static volatile uint16_t s_rejected = 0;        // diagnostics
+// Longest LOW seen since the last status read, accepted or not: shows what
+// the coinslot really sends when every pulse is being rejected.
+static volatile uint32_t s_longest_us = 0;      // diagnostics
+
+// Bench 2026-10-30: in the cabinet the line chatters HIGH for microseconds in
+// the middle of a real pulse. Timing only the last LOW stretch cut each pulse
+// into fragments shorter than COIN_PULSE_MIN_US, so a P5 counted 3 pulses or
+// 1. A HIGH shorter than COIN_PULSE_MERGE_US is now chatter inside the same
+// pulse; the pulse ends only once the line has stayed HIGH that long.
+static volatile uint32_t s_rise_us = 0;
+static volatile bool s_rise_pending = false;   // HIGH, not yet long enough to end the pulse
+
+#ifdef DEBUG
+// Bench: every LOW over 1 ms, accepted or not, printed from update(). Shows
+// the coinslot's real waveform when coins are misread.
+#define PULSE_LOG_N 16
+static volatile uint32_t s_plog_w[PULSE_LOG_N];
+static volatile uint32_t s_plog_at[PULSE_LOG_N];
+static volatile uint8_t s_plog_head = 0, s_plog_tail = 0;
+#endif
+
+// Interrupts off (called from the ISR, or from update() with them disabled).
+static void commit_pulse(uint32_t w) {
+#ifdef DEBUG
+  if (w >= 1000UL && w < 2000000UL) {
+    const uint8_t n = (uint8_t)((s_plog_head + 1) % PULSE_LOG_N);
+    if (n != s_plog_tail) {
+      s_plog_w[s_plog_head] = w;
+      s_plog_at[s_plog_head] = millis();
+      s_plog_head = n;
+    }
+  }
+#endif
+  s_last_width_us = w;
+  if (w > s_longest_us) s_longest_us = w;
+  if (w < COIN_PULSE_MIN_US || w > COIN_PULSE_MAX_US) {
+    if (s_rejected < 0xFFFF) s_rejected++;
+    return;
+  }
   if (s_pulses == 0) s_first_pulse_ms = millis();
   s_pulses++;
   // millis() does not advance inside an ISR, but reading it is safe and gives
   // the time the burst was last seen, which is all the gap timer needs.
   s_last_pulse_ms = millis();
+}
+
+static void coin_isr() {
+  const uint32_t now_us = micros();
+  if (digitalRead(PIN_COIN_PULSE) == LOW) {
+    if (s_rise_pending && (uint32_t)(now_us - s_rise_us) < COIN_PULSE_MERGE_US) {
+      s_rise_pending = false;   // chatter: the same pulse goes on
+      s_low = true;
+      return;
+    }
+    if (s_rise_pending) commit_pulse(s_rise_us - s_fall_us);
+    s_rise_pending = false;
+    s_fall_us = now_us;
+    s_low = true;
+    return;
+  }
+  if (!s_low) return;   // a rise with no fall before it is half a glitch
+  s_low = false;
+  s_rise_us = now_us;
+  s_rise_pending = true;
+}
+
+// Ends a pulse whose line has been HIGH for COIN_PULSE_MERGE_US.
+static void settle_pulse() {
+  noInterrupts();
+  if (s_rise_pending && (uint32_t)(micros() - s_rise_us) >= COIN_PULSE_MERGE_US) {
+    s_rise_pending = false;
+    commit_pulse(s_rise_us - s_fall_us);
+  }
+  interrupts();
+}
+
+uint32_t coin_acceptor_last_width_us() { return s_last_width_us; }
+uint16_t coin_acceptor_rejected_pulses() { return s_rejected; }
+
+uint32_t coin_acceptor_take_longest_us() {
+  noInterrupts();
+  const uint32_t w = s_longest_us;
+  s_longest_us = 0;
+  interrupts();
+  return w;
 }
 
 // Single choke point for the inhibit line. Every path that changes an inhibit
@@ -83,7 +171,7 @@ void coin_acceptor_begin() {
   s_window_inhibit = false;
   apply_inhibit();
 
-  attachInterrupt(digitalPinToInterrupt(PIN_COIN_PULSE), coin_isr, FALLING);
+  attachInterrupt(digitalPinToInterrupt(PIN_COIN_PULSE), coin_isr, CHANGE);
 }
 
 void coin_acceptor_update() {
@@ -100,6 +188,21 @@ void coin_acceptor_update() {
   // the window closed and would then resolve into a phantom coin, or worse,
   // merge with the next real coin's train and credit the wrong denomination.
   // ---------------------------------------------------------------------
+  settle_pulse();
+#ifdef DEBUG
+  while (s_plog_tail != s_plog_head) {
+    noInterrupts();
+    const uint32_t w = s_plog_w[s_plog_tail], at = s_plog_at[s_plog_tail];
+    s_plog_tail = (uint8_t)((s_plog_tail + 1) % PULSE_LOG_N);
+    interrupts();
+    Serial.print(F("[pulse] t="));
+    Serial.print(at);
+    Serial.print(F("ms low="));
+    Serial.print(w / 1000UL);
+    Serial.print(F("ms"));
+    Serial.println((w >= COIN_PULSE_MIN_US && w <= COIN_PULSE_MAX_US) ? F(" ok") : F(" REJECTED"));
+  }
+#endif
   if (s_window_inhibit || s_fault_inhibit) {
     drain_pulses();
     return;
