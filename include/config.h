@@ -731,12 +731,15 @@ typedef int32_t volume_t;   // millilitres
 // 21070 ms, 750 in 33712 ms, 730 in 36242 ms. Single rate from the mean of
 // all three, no dead time. Calibrate with the tank kept full.
 // Then 800 mL sale poured 820 mL -> 4600 * 800 / 820 = 4490.
-#define DISPENSE_MS_PER_100ML 4490
+// Two-point at 4490: 300 mL sale poured 315 (13470 ms), 800 poured 800
+// (35920 ms) -> 100 * 22450 / 485 = 4629, dead = 13470 - 315 * 22450 / 485
+// = -1111 (~24 mL beyond the steady rate per pour).
+#define DISPENSE_MS_PER_100ML 4629
 
 // Run time that delivers nothing at the cup: hose fill at the start, less the
 // dribble after the pump stops. 0 until the two-point calibration is done.
 // Signed -- negative when the dribble outweighs the hose fill.
-#define DISPENSE_DEAD_MS 0
+#define DISPENSE_DEAD_MS (-1111)
 
 // 1 = no amount picker. CONFIRM (push button, or Continue on the screen) pours
 // the whole credit, P1 = 100 mL, once the bottle IR sees a bottle.

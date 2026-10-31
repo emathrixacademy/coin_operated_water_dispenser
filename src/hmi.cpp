@@ -364,6 +364,16 @@ static void console_exec(char *cmd) {
   else if (!strcmp(cmd, "st")) { console_status(); return; }
   else if (!strcmp(cmd, "fill")) { water_manual_fill(n < 0 ? 0 : (uint32_t)n); }
   else if (!strcmp(cmd, "pour")) { dispense_manual(n < 0 ? 0 : (uint32_t)n); }
+  // "ml <n>": pour n mL exactly as a sale would (same calibration, same
+  // cutoff), no coins, no bottle. Idle only. For calibrating every size.
+  else if (!strcmp(cmd, "ml")) {
+    if (machine_idle() && n >= 100 && n <= (long)MAX_TRANSACTION_ML) {
+      dispense_clear();
+      dispense_start((volume_t)n);
+    } else {
+      Serial.println(F("[console] ml: idle only, 100..max mL"));
+    }
+  }
   // "pay1 <n>" / "pay5 <n>": a real payout of n coins through the normal
   // counted path (inventory goes down by what the outlet sensor counts).
   // A console payout is never reaped by the state machine, so a finished one is
