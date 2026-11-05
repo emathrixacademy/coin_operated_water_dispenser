@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wiring · Water Vendo</title>
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<nav class="top"><div class="in">
+  <a class="brand" href="./">Water Vendo</a>
+  <a class="tab" href="./">Overview</a>
+  <a class="tab on" href="wiring.html">Wiring</a>
+  <a class="tab" href="exploded.html">Exploded view</a>
+  <a class="tab" href="materials.html">Materials</a>
+  <a class="tab" href="flowchart.html">Flowchart</a>
+  <a class="tab" href="simulation/">Simulation</a>
+</div></nav>
+<main>
+  <h1>Wiring</h1>
+  <p class="by">Arduino Mega 2560 pin map, from <code>include/config.h</code> of the bench firmware (31 Oct 2026)</p>
+
+  <div class="notice"><b>Check on the bench before rewiring.</b> The firmware of 31 Oct changed three things that the
+    as-built drawing of 29 Oct does not show yet: the coin slot pulse moved from <b>D2 to D3</b> (and the flow input from
+    D3 to D2), the <b>dispense and fill pump relays swapped</b> (dispense pump D32, fill pump D31), and the green
+    <b>CONFIRM button on D40</b> is now fitted. Rows marked <span class="chg">changed 31 Oct</span> are these. Confirm which
+    way the unit is wired before flashing, so a coin is never read on the wrong pin.</div>
+
+  <h2>Inputs</h2>
+  <div class="tablewrap"><table>
+    <tr><th>Pin</th><th>Signal</th><th>Part</th><th>Notes</th></tr>
+    <tr><td><b>D3</b></td><td>Coin pulses (INT1)</td><td>Allan multi-coin slot</td><td>1 / 5 / 10 / 20 pulses = ₱1 / ₱5 / ₱10 / ₱20. The coin is known once the pulses stop for 700 ms. <span class="chg">changed 31 Oct</span></td></tr>
+    <tr><td><b>D2</b></td><td>Flow pulses (INT0)</td><td>Flow sensor (not fitted)</td><td>Pours are timed instead: 4.6 s per 100 mL, measured on the bench. <span class="chg">changed 31 Oct</span></td></tr>
+    <tr><td><b>D18</b></td><td>Tank level echo (INT3)</td><td>Waterproof ultrasonic, PWM output</td><td>Over the cold tank. White wire.</td></tr>
+    <tr><td><b>D19</b></td><td>Tank level trigger</td><td>Same ultrasonic</td><td>Yellow wire.</td></tr>
+    <tr><td><b>D22</b></td><td>Bottle present (LOW)</td><td>IR proximity sensor in the bay</td><td>The CONFIRM button can start a pour when this misses a bottle.</td></tr>
+    <tr><td><b>D26</b></td><td>Gallon A low</td><td>Capacitive level sensor</td><td>At the reserve line. Either gallon low stops the refill pump.</td></tr>
+    <tr><td><b>D43</b></td><td>Gallon B low</td><td>Capacitive level sensor</td><td></td></tr>
+    <tr><td><b>D27</b></td><td>₱1 hopper outlet</td><td>Hopper coin counter</td><td>Payout is counted by pulses on this unit (the outlet sensor did not see coins).</td></tr>
+    <tr><td><b>D28</b></td><td>₱5 hopper outlet</td><td>Hopper coin counter</td><td>As above.</td></tr>
+    <tr><td><b>D41</b></td><td>₱1 hopper full</td><td>IR obstacle sensor</td><td>Beam blocked for 5 s = full; the coin then goes to the coin box.</td></tr>
+    <tr><td><b>D42</b></td><td>₱5 hopper full</td><td>IR obstacle sensor</td><td></td></tr>
+    <tr><td><b>D29</b></td><td>Coin box full (LOW)</td><td>IR break-beam at the fill line</td><td>Locks the machine: COIN STORAGE FULL.</td></tr>
+    <tr><td><b>D40</b></td><td>CONFIRM button (LOW)</td><td>Green push button under the screen</td><td>Continue after paying; starts the pour if the IR misses the bottle. <span class="chg">fitted 31 Oct</span></td></tr>
+    <tr><td><b>D23</b></td><td>Water temperature</td><td>DS18B20 probe, 4.7 kΩ pull-up</td><td>Optional.</td></tr>
+    <tr><td><b>D20 / D21</b></td><td>I²C SDA / SCL</td><td>DS3231 clock module</td><td>Dates the daily totals. Optional.</td></tr>
+  </table></div>
+
+  <h2>Outputs</h2>
+  <div class="tablewrap"><table>
+    <tr><th>Pin</th><th>Drives</th><th>Through</th><th>Notes</th></tr>
+    <tr><td><b>D32</b></td><td>Dispense pump</td><td>Relay, active LOW</td><td>Cold tank to the nozzle. <span class="chg">changed 31 Oct</span></td></tr>
+    <tr><td><b>D31</b></td><td>Fill pump</td><td>Relay, active LOW</td><td>Gallons to the cold tank. Never runs with a gallon low. <span class="chg">changed 31 Oct</span></td></tr>
+    <tr><td><b>D33</b></td><td>₱1 hopper motor</td><td>Relay, active LOW</td><td>3 s on, 3 s rest; two pulses per coin.</td></tr>
+    <tr><td><b>D34</b></td><td>₱5 hopper motor</td><td>Relay, active LOW</td><td>3 s on, 3 s rest; one pulse per coin.</td></tr>
+    <tr><td><b>D36</b></td><td>Compressor</td><td>AC solid-state relay</td><td>Cooling for the cold tank.</td></tr>
+    <tr><td><b>D30</b></td><td>Coin slot inhibit</td><td>Coin slot control line</td><td>HIGH = slot refuses coins (while gates move, when out of service).</td></tr>
+    <tr><td><b>D9</b></td><td>Gate 1 servo</td><td>MG996R</td><td>Closed sends the coin to the ₱5 hopper.</td></tr>
+    <tr><td><b>D10</b></td><td>Gate 2 servo</td><td>MG996R</td><td>Closed sends the coin to the ₱1 hopper. Both open: coin box.</td></tr>
+    <tr><td><b>D35</b></td><td>Buzzer</td><td>Active HIGH</td><td>Bottle reminders at 15 s and 18 s.</td></tr>
+    <tr><td><b>D37–D39</b></td><td>Tank level LEDs</td><td>LED + resistor</td><td>Low / mid / high.</td></tr>
+  </table></div>
+  <p class="help">All relays are switched off first thing at power-up, before anything else runs.</p>
+
+  <h2>Display link</h2>
+  <div class="tablewrap"><table>
+    <tr><th>Mega</th><th>ESP32 display</th><th>Notes</th></tr>
+    <tr><td><b>D16</b> (TX2)</td><td>RX</td><td>Through a 1 kΩ / 2 kΩ divider: the ESP32 is 3.3 V.</td></tr>
+    <tr><td><b>D17</b> (RX2)</td><td>TX</td><td>Direct.</td></tr>
+    <tr><td>GND</td><td>GND</td><td>Common ground. 115200 baud, text lines.</td></tr>
+  </table></div>
+  <p class="help">The ESP32-3248S035C draws every screen; the Mega only sends short lines. The same board serves the phone
+    page over its own WiFi hotspot (bench test feature, reaches a few metres).</p>
+
+  <h2>Power</h2>
+  <p>From the cabinet photos: a 12 V supply on the right-hand wall feeds a fused distribution block; a 12 V terminal strip
+    and a 5 V terminal strip carry power to the pumps, hoppers, coin slot, sensors and the three 2-channel relay modules.
+    The Mega sits on the left wall beside the coin slot. Details, fuse sizes and grounding are in the wiring notes.</p>
+
+  <h2>Drawings</h2>
+  <div class="grid">
+    <a class="doc" href="docs/wiring-asbuilt.html"><b>As-built wiring schematic</b><span>Interactive (29 Oct 2026, before the 31 Oct changes)</span></a>
+    <a class="doc" href="docs/Water-Vendo-Wiring.pdf"><b>Wiring schematic, printable</b><span>PDF, 12 pages</span></a>
+    <a class="doc" href="docs/wiring.md"><b>Wiring notes</b><span>Power, grounds, filtering, and why each pin is where it is</span></a>
+    <a class="doc" href="docs/Emathrix_FabDrawing_CoinRouting_RevB.pdf"><b>Coin routing fabrication drawing</b><span>Rev B, PDF</span></a>
+  </div>
+
+  <footer>© 2026 eMathrix Technologies. Pin map taken from the firmware; confirm on the unit before wiring.</footer>
+</main>
+</body>
+</html>

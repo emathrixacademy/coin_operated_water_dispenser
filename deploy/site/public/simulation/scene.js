@@ -1,6 +1,8 @@
 "use strict";
 // 3D cabinet and the glue between the machine model, the screen and the controls.
-// Concept geometry from the bench photos and the README (178 x 69 x 61 cm). Metres, y up, front = +z.
+// Geometry from the cabinet photos of Nov 2026 and the README (178 x 69 x 61 cm): blue frame, white
+// panels, braked casters; screen, green CONFIRM button and coinslot in the right-hand front column,
+// dispensing bay on the left. Metres, y up, front = +z. Proportions are approximate.
 
 const machine = new Machine();
 const lcd = new Lcd(document.getElementById("lcd"), machine);
@@ -22,7 +24,7 @@ scene.add(new THREE.HemisphereLight(0xffffff, 0x8a959e, 0.85));
 const sun = new THREE.DirectionalLight(0xffffff, 0.75); sun.position.set(2, 3, 2.5); scene.add(sun);
 const fillLight = new THREE.DirectionalLight(0xffffff, 0.35); fillLight.position.set(-2, 1.5, -1); scene.add(fillLight);
 const floor = new THREE.Mesh(new THREE.CircleGeometry(2.2, 64), new THREE.MeshStandardMaterial({ color: 0xd9e0e5, roughness: 1 }));
-floor.rotation.x = -Math.PI / 2; scene.add(floor);
+floor.rotation.x = -Math.PI / 2; floor.position.y = -0.105; scene.add(floor);   // the cabinet stands on casters
 
 const VIEWS = {
   whole: { pos: [1.75, 1.55, 2.35], target: [0, 0.9, 0] },
@@ -66,16 +68,26 @@ function label(text, x, y, z) {
 
 // --- dimensions -------------------------------------------------------------------
 const W = 0.69, D = 0.61, HB = 0.72, HT = 1.74, FZ = D / 2;   // base top, body top, front face z
-const STEEL = 0x76838d;
+const STEEL = 0xeef2f5;          // the white side and door panels
+const BLUE = 0x2f97dc;           // frame, roof and base, as painted
 
 // Frame: corner posts and rails, always visible.
-const frameMat = mat(0x5d6870, { metalness: 0.4, roughness: 0.5 });
+const frameMat = mat(BLUE, { metalness: 0.2, roughness: 0.45 });
 for (const sx of [-1, 1]) for (const sz of [-1, 1]) box(0.025, HT, 0.025, frameMat, sx * (W / 2 - 0.0125), HT / 2, sz * (D / 2 - 0.0125));
 for (const y of [0.03, HB, HT - 0.0125]) {
   for (const sz of [-1, 1]) box(W, 0.025, 0.025, frameMat, 0, y, sz * (D / 2 - 0.0125));
   for (const sx of [-1, 1]) box(0.025, 0.025, D, frameMat, sx * (W / 2 - 0.0125), y, 0);
 }
-box(W + 0.06, 0.04, D + 0.06, mat(0x8b979f, { metalness: 0.3 }), 0, HT + 0.02, 0);   // roof slab overhang
+box(W + 0.06, 0.04, D + 0.06, mat(BLUE, { metalness: 0.2 }), 0, HT + 0.02, 0);        // roof slab overhang
+// braked swivel casters under the base
+const casterMat = mat(0xc9ced2, { metalness: 0.85, roughness: 0.3 }), tyreMat = mat(0x1d2124, { roughness: 0.9 });
+for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+  const x = sx * (W / 2 - 0.06), z = sz * (D / 2 - 0.06);
+  box(0.08, 0.006, 0.08, casterMat, x, -0.003, z);
+  box(0.05, 0.05, 0.035, casterMat, x, -0.03, z + 0.01);
+  const wheel = cyl(0.04, 0.04, 0.026, tyreMat, x, -0.065, z + 0.015); wheel.rotation.z = Math.PI / 2;
+  box(0.01, 0.03, 0.05, casterMat, x + 0.03, -0.035, z + 0.045);          // brake pedal
+}
 box(W - 0.05, 0.012, D - 0.05, mat(0x6b7780), 0, HB + 0.006, 0);                      // shelf between base and body
 box(W - 0.05, 0.012, D - 0.05, mat(0x9aa4ab), 0, 0.045, 0);                           // base floor
 
@@ -94,16 +106,27 @@ function panelWithHoles(w, h, holes) {
 // front of the upper body: holes for the LCD window, the dispensing bay and the change slot
 const bodyH = HT - HB, bodyCY = (HT + HB) / 2;
 const front = panelWithHoles(W, bodyH, [
-  [-0.12, 1.42 - bodyCY, 0.11, 0.076],
+  [0.20, 1.42 - bodyCY, 0.11, 0.076],
   [-0.12, 0.98 - bodyCY, 0.26, 0.36],
   [0.20, 0.79 - bodyCY, 0.14, 0.045],
 ]);
 front.position.set(0, bodyCY, FZ); panels.add(front);
-const baseDoor = panelWithHoles(W - 0.04, HB - 0.06, []); baseDoor.position.set(0, HB / 2 + 0.01, FZ); panels.add(baseDoor);
+// The base is a blue sheet box; it fades with the other panels.
+const baseMat = new THREE.MeshStandardMaterial({ color: BLUE, roughness: 0.5, metalness: 0.2, transparent: true, opacity: 0.35,
+                                                 side: THREE.DoubleSide, depthWrite: false });
+const baseDoor = panelWithHoles(W - 0.04, HB - 0.06, []); baseDoor.material = baseMat; baseDoor.position.set(0, HB / 2 + 0.01, FZ); panels.add(baseDoor);
+// blue trim: the post between the bay side and the screen column, and the door frames on the right side
+box(0.03, bodyH, 0.008, frameMat, 0.065, bodyCY, FZ + 0.004, panels);
+box(0.008, 0.02, D - 0.04, frameMat, W / 2 + 0.004, 1.12, 0, panels);
+for (const [y0, y1, z0, z1] of [[1.13, 1.70, -0.27, 0.24], [0.76, 1.10, -0.10, 0.12]]) {   // upper and lower service doors
+  const t = 0.012, cy = (y0 + y1) / 2, cz = (z0 + z1) / 2, dm = mat(0x9aa7b1);
+  box(0.006, y1 - y0, t, dm, W / 2 + 0.006, cy, z0, panels); box(0.006, y1 - y0, t, dm, W / 2 + 0.006, cy, z1, panels);
+  box(0.006, t, z1 - z0, dm, W / 2 + 0.006, y0, cz, panels); box(0.006, t, z1 - z0, dm, W / 2 + 0.006, y1, cz, panels);
+}
 for (const sx of [-1, 1]) { const p = panelWithHoles(D, HT - 0.03, []); p.rotation.y = Math.PI / 2; p.position.set(sx * W / 2, HT / 2 + 0.01, 0); panels.add(p); }
 { const p = panelWithHoles(W, HT - 0.03, []); p.position.set(0, HT / 2 + 0.01, -FZ); panels.add(p); }
 // door hardware and louvres (on the panels group, hidden with them)
-for (const [x, y, z] of [[0.24, 0.42, FZ + 0.01], [W / 2 + 0.01, 1.05, 0.18]]) {
+for (const [x, y, z] of [[-0.24, 1.10, FZ + 0.01], [W / 2 + 0.01, 0.93, 0.09]]) {
   const l = cyl(0.014, 0.014, 0.02, mat(0xc9ced2, { metalness: 0.9, roughness: 0.25 }), x, y, z, panels); l.rotation.x = Math.PI / 2;
   if (x > W / 2) l.rotation.set(0, 0, Math.PI / 2);
 }
@@ -111,10 +134,16 @@ for (let i = 0; i < 7; i++) box(0.004, 0.006, 0.11, mat(0x3a4249), W / 2 + 0.003
 
 // Front fittings: LCD bezel, coinslot face, bay, change tray.
 const lcdTex = new THREE.CanvasTexture(document.getElementById("lcd")); lcdTex.encoding = THREE.sRGBEncoding;
-box(0.13, 0.095, 0.012, mat(0x1b2227), -0.12, 1.42, FZ - 0.004);
+box(0.13, 0.095, 0.012, mat(0x1b2227), 0.20, 1.42, FZ - 0.004);
 const lcdFace = new THREE.Mesh(new THREE.PlaneGeometry(0.0735, 0.049), new THREE.MeshBasicMaterial({ map: lcdTex, toneMapped: false }));
-lcdFace.position.set(-0.12, 1.42, FZ + 0.003); scene.add(lcdFace);
-label("3.5\" touchscreen (ESP32 LCD)", -0.12, 1.47, FZ);
+lcdFace.position.set(0.20, 1.42, FZ + 0.003); scene.add(lcdFace);
+label("3.5\" touchscreen (ESP32 LCD)", 0.20, 1.47, FZ);
+// the green CONFIRM push button (pin 40) under the screen
+cyl(0.017, 0.017, 0.008, mat(0xc9ced2, { metalness: 0.8 }), 0.20, 1.30, FZ + 0.004).rotation.x = Math.PI / 2;
+const confirmCap = cyl(0.011, 0.011, 0.012, new THREE.MeshStandardMaterial({ color: 0x23b14d, emissive: 0x0b4d1f, roughness: 0.3 }),
+                       0.20, 1.30, FZ + 0.01);
+confirmCap.rotation.x = Math.PI / 2;
+label("CONFIRM button (green)", 0.20, 1.335, FZ);
 
 const chrome = mat(0xd5d9dc, { metalness: 0.9, roughness: 0.22 });
 box(0.075, 0.15, 0.012, chrome, 0.20, 1.12, FZ + 0.006);
@@ -128,7 +157,8 @@ box(0.26, 0.36, 0.006, bayMat, -0.12, 0.98, FZ - 0.22);
 for (const sx of [-1, 1]) box(0.006, 0.36, 0.22, bayMat, -0.12 + sx * 0.13, 0.98, FZ - 0.11);
 box(0.26, 0.006, 0.22, bayMat, -0.12, 1.16, FZ - 0.11);
 const grate = box(0.25, 0.012, 0.21, mat(0xb7bec3, { metalness: 0.6 }), -0.12, 0.806, FZ - 0.11);
-const nozzle = cyl(0.007, 0.01, 0.03, chrome, -0.12, 1.14, FZ - 0.09);
+cyl(0.012, 0.012, 0.04, mat(0xd9a521), -0.12, 1.14, FZ - 0.09);          // yellow nozzle fitting
+const nozzle = cyl(0.005, 0.005, 0.07, chrome, -0.12, 1.09, FZ - 0.09);
 const irSensor = box(0.03, 0.014, 0.012, mat(0x1d4f9c), -0.24, 0.86, FZ - 0.09);
 irSensor.rotation.y = Math.PI / 2;
 const irLed = cyl(0.003, 0.003, 0.004, new THREE.MeshStandardMaterial({ color: 0x330000, emissive: 0x000000 }), -0.232, 0.866, FZ - 0.09);
@@ -213,7 +243,7 @@ const pcb = (w, h, c, x, y, z) => { const b = box(0.004, h, w, mat(c), x, y, z);
 pcb(0.10, 0.053, 0x0f6e74, W / 2 - 0.03, 1.32, -0.05);
 label("Arduino Mega 2560", W / 2 - 0.03, 1.37, -0.05);
 pcb(0.075, 0.055, 0x1d4f9c, W / 2 - 0.03, 1.22, -0.05);
-label("4-channel relay", W / 2 - 0.03, 1.27, -0.05);
+label("Relay modules (3 × 2-channel)", W / 2 - 0.03, 1.27, -0.05);
 box(0.06, 0.11, 0.2, mat(0x8d969c, { metalness: 0.6 }), W / 2 - 0.06, 1.5, -0.17);
 label("12 V supply + buck converters", W / 2 - 0.06, 1.58, -0.17);
 const buzzer = cyl(0.012, 0.012, 0.01, new THREE.MeshStandardMaterial({ color: 0x111111, emissive: 0x000000 }), W / 2 - 0.03, 1.12, -0.05);
@@ -263,6 +293,7 @@ let speed = 5, paused = false, showLabels = true, panelMode = 0;   // 0 see-thro
 const $ = id => document.getElementById(id);
 document.querySelectorAll("[data-coin]").forEach(b => b.addEventListener("click", () => machine.insertCoin(+b.dataset.coin)));
 $("bBottle").addEventListener("click", () => machine.placeBottle(!machine.bottle));
+$("bConfirm").addEventListener("click", () => machine.pressConfirm());
 $("bTray").addEventListener("click", () => {
   const coins = machine.takeTray();
   const sum = coins.reduce((a, c) => a + c, 0);
@@ -292,6 +323,7 @@ $("bPanels").addEventListener("click", () => {
   panelMode = (panelMode + 1) % 3;
   panels.visible = panelMode !== 2;
   panelMat.opacity = panelMode === 1 ? 1 : 0.22; panelMat.depthWrite = panelMode === 1; panelMat.needsUpdate = true;
+  baseMat.opacity = panelMode === 1 ? 1 : 0.35; baseMat.depthWrite = panelMode === 1; baseMat.needsUpdate = true;
   $("bPanels").classList.toggle("lit", panelMode !== 2);
   $("lPanels").textContent = ["See-through", "Solid", "Hidden"][panelMode];
 });
@@ -336,6 +368,8 @@ function handleEvents() {
       beepUntil = performance.now() + 900;
     } else if (e.type === "jamUsed") {
       $("cJam").checked = machine.jamNext;
+    } else if (e.type === "confirmBtn") {
+      confirmCap.position.z = FZ + 0.004; setTimeout(() => { confirmCap.position.z = FZ + 0.01; }, 180);
     } else if (e.type === "reset") {
       trayCoins.clear();
     }
@@ -371,11 +405,12 @@ function updateScene(now, dtReal) {
   bottle.visible = m.bottle;
   if (m.state === ST.STANDBY) bottleMl = 0;
   if (m.state === ST.DISPENSING) bottleMl = Math.max(bottleMl, m.total + m.segment);
-  const fill = Math.min(1, bottleMl / 1500) * (BOT.h - 0.01);
+  const fill = Math.min(1, bottleMl / CFG.MAX_ML) * (BOT.h - 0.01);
   bottleWater.scale.y = Math.max(0.0005, fill); bottleWater.position.y = 0.004 + fill / 2;
-  stream.visible = m.state === ST.DISPENSING && m.bottle;
+  // A pour started with the CONFIRM button runs even with no bottle seen: the water then hits the grate.
+  stream.visible = m.state === ST.DISPENSING;
   if (stream.visible) {
-    const top = 1.125, bottom = bottle.position.y + 0.006 + fill;
+    const top = 1.055, bottom = m.bottle ? bottle.position.y + 0.006 + fill : 0.812;
     stream.scale.y = top - bottom; stream.position.y = (top + bottom) / 2;
   }
   // flying coins

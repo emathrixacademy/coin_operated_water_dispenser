@@ -1,7 +1,8 @@
 "use strict";
-// Transaction records and the owner's phone: simulation tools for testing, not machine features.
-// The machine has no network link (WiFi, Bluetooth and remote monitoring are out of scope), so
-// the phone stands in for "someone watching the test", reading the same records as the side card.
+// Transaction records (a simulation tool for testing) and the phone link.
+// The phone shows the ESP32's own phone page (phone/index.html, copied unchanged from
+// esp32_bridge/src/page.h). On the machine it is served over the ESP32's WiFi hotspot; here
+// the link below feeds it the same text lines the Mega sends, and takes its touches back.
 
 (() => {
   const m = machine;
@@ -57,92 +58,93 @@
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   });
 
-  // ---- the phone ----------------------------------------------------------------------
-  // Logs in with the machine's Admin PIN. Its own lockout (3 wrong, 5 min) so it cannot be
-  // used to guess the PIN faster than the machine's own keypad allows.
-  const ph = { on: false, logged: false, digits: "", msg: "", fails: 0, lockUntil: 0, tab: "live" };
-  const phone = $("phone");
-  $("bPhone").addEventListener("click", () => {
-    ph.on = !ph.on; phone.style.display = ph.on ? "flex" : "none";
-    $("bPhone").classList.toggle("lit", ph.on); $("lPhone").textContent = ph.on ? "Phone on" : "Phone";
-    key = "";
+  // ---- the phone link ------------------------------------------------------------------
+  // Speaks the ESP32 bridge's line protocol (esp32_bridge/src/main.cpp): VL / FT / LV / PG
+  // out, "EV <event> [payload]" in, and the bridge's own Admin login ("AD <pin>" -> "AA ...").
+  // The PIN is the machine's Admin PIN; three wrong tries lock the phone login for 5 minutes.
+  const PEV = { SELECT: 1, AGAIN: 2, FINISH: 3, BACK: 4, STATS: 6, SET_P1: 10, SET_P5: 11, CONFIRM: 15, CLEAR: 16 };
+  const sockets = new Set();
+  const sess = new Map();   // socket -> { admin, fails, lockUntil, p1 }
+  const sendTo = (ws, line) => ws.deliver(line);
+  const values = () => ({
+    state: m.state, credit: m.credit, inserted: m.inserted, maxml: m.maxml(), target: m.target,
+    poured: Math.floor(m.segment), total: m.total, unpaid: m.unpaid, p1: m.inv.p1, p5: m.inv.p5,
+    b10: m.inv.box10, b20: m.inv.box20, fill: m.fillPump ? 1 : 0,
   });
-
-  function lockScreen() {
-    const left = Math.max(0, ph.lockUntil - Date.now());
-    const dots = Array.from({ length: CFG.PIN_LEN }, (_, i) => `<i class="${i < ph.digits.length ? "f" : ""}"></i>`).join("");
-    const keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "C", "0", "OK"];
-    return `<div class="ph-lock">
-      <div class="ph-logo">💧</div><div class="ph-title">Water Vendo</div><div class="ph-sub">Owner login</div>
-      ${left ? `<div class="ph-msg bad">Locked after ${CFG.PIN_TRIES} wrong PINs.<br>Try again in ${simTime(left)}</div>`
-             : `<div class="ph-dots">${dots}</div><div class="ph-msg">${esc(ph.msg || "Enter the Admin PIN")}</div>
-                <div class="ph-keys">${keys.map(k => `<button data-k="${k}">${k}</button>`).join("")}</div>`}
-      <div class="ph-foot">Demo PIN 1234 (the machine's Admin PIN)</div></div>`;
+  const levelLine = () => `LV ${m.tankPct()} 1 ${m.gallonLow("a") ? 1 : 0} ${m.gallonLow("b") ? 1 : 0}`;
+  function sendStats(ws) {
+    const s = m.sales, d = new Date();
+    sendTo(ws, `SD ${s.income} ${s.volume} ${s.count}`);
+    sendTo(ws, `DT ${d.getFullYear()} ${d.getMonth() + 1} ${d.getDate()}`);
+    // The page reads the timestamp as UTC, as the RTC's local time is sent on the machine.
+    s.list.slice(0, 10).forEach((r, i) => {
+      const ts = Math.floor((r.ts - new Date(r.ts).getTimezoneOffset() * 60000) / 1000);
+      sendTo(ws, `HS ${i} ${ts} ${r.in} ${r.ml} ${r.change} ${r.owed}`);
+    });
+    sendTo(ws, "HE");
   }
-
-  function tryLogin() {
-    if (ph.digits === m.pin) { ph.logged = true; ph.fails = 0; ph.msg = ""; ph.tab = "live"; }
-    else {
-      ph.fails++;
-      if (ph.fails >= CFG.PIN_TRIES) { ph.fails = 0; ph.lockUntil = Date.now() + CFG.PIN_LOCK_MS; ph.msg = ""; }
-      else ph.msg = `Wrong PIN, ${CFG.PIN_TRIES - ph.fails} tr${CFG.PIN_TRIES - ph.fails === 1 ? "y" : "ies"} left`;
-    }
-    ph.digits = "";
+  let last = {};
+  function push(all) {
+    const v = values(), lines = [];
+    for (const k in v) if (all || last[k] !== v[k]) lines.push(`VL ${k} ${v[k]}`);
+    if (all || last.fault !== m.fault) lines.push(`FT ${m.fault}`);
+    lines.push(levelLine());   // also the page's "still connected" heartbeat
+    last = Object.assign({ fault: m.fault }, v);
+    lines.push("PG");
+    for (const ws of sockets) for (const l of lines) sendTo(ws, l);
   }
-
-  function liveHTML() {
-    const c = m.cur, box = m.inv.box10 * 10 + m.inv.box20 * 20;
-    return `<div class="ph-card"><div class="ph-k">Customer screen now</div><canvas id="phLcd" width="240" height="160"></canvas></div>
-      <div class="ph-card"><div class="ph-k">Machine</div>
-        <div class="ph-big">${STATE_NAME[m.state]}${m.fault ? `<span class="bad"> · ${FAULT_TEXT[m.fault]}</span>` : ""}</div>
-        <div>Credit ${peso(m.credit)} · slot ${m.acceptorOpen() ? "open" : "closed"}</div></div>
-      <div class="ph-card"><div class="ph-k">Current customer</div>
-        ${c ? `<div>Coins ${esc(coinsText(c.coins))} = ₱${sum(c.coins)}</div><div>Bought ${c.ordered} mL · poured ${Math.floor(c.poured + (m.state === ST.DISPENSING || m.state === ST.PAUSED ? m.segment : 0))} mL</div>
-              ${c.changeDue ? `<div>Change ${peso(c.changeDue)}: ${esc(paidText(c.paid))} out</div>` : ""}`
-            : `<div class="dim">Nobody at the machine</div>`}</div>
-      <div class="ph-card"><div class="ph-k">Stock</div>
-        <div>₱1 hopper ${m.inv.p1} · ₱5 hopper ${m.inv.p5} · box ₱${box}</div>
-        <div>Tank ${Math.round(m.tank)} mL (${m.tankPct()}%) · gallons A ${m.gallonLow("a") ? "LOW" : "OK"}, B ${m.gallonLow("b") ? "LOW" : "OK"}</div></div>
-      <div class="ph-card"><div class="ph-k">What is happening</div><div class="dim">${esc(m.story)}</div></div>`;
-  }
-
-  function recordsPhoneHTML() {
-    if (!m.records.length) return `<div class="ph-card dim">No transactions yet.</div>`;
-    return m.records.slice(0, 50).map(r => `<div class="ph-card">
-      <div class="ph-row"><b>#${r.no}</b><span class="dim">${simTime(r.simMs)} · ${wallTime(r.wall)}</span></div>
-      <div>${esc(coinsText(r.coins))}${r.coins.length ? ` = ₱${sum(r.coins)}` : ""}${r.rejected.length ? ` <span class="dim">(returned ${esc(coinsText(r.rejected))})</span>` : ""}</div>
-      ${r.coins.length ? `<div>${r.charged} mL bought · ${Math.floor(r.poured)} mL poured</div>
-      <div>Change ${r.changeDue ? `${peso(r.changeDue)} (${esc(paidText(r.paid))})` : "none"}</div>` : ""}
-      <div class="${resultCls(r.result)}">${esc(r.result)}</div></div>`).join("");
-  }
-
-  function totalsPhoneHTML() {
-    return `<div class="ph-card">${totalsLines().map(([k, v]) => `<div class="ph-tl"><span class="ph-k">${k}</span><span>${esc(v)}</span></div>`).join("")}</div>`;
-  }
-
-  function phoneHTML() {
-    if (!ph.logged) return lockScreen();
-    const tabs = [["live", "Live"], ["records", "Records"], ["totals", "Totals"]];
-    return `<div class="ph-head"><b>Water Vendo</b><button data-out>Log out</button></div>
-      <div class="ph-tabs">${tabs.map(([k, t]) => `<button data-tab="${k}" class="${ph.tab === k ? "on" : ""}">${t}</button>`).join("")}</div>
-      <div class="ph-body">${ph.tab === "live" ? liveHTML() : ph.tab === "records" ? recordsPhoneHTML() : totalsPhoneHTML()}</div>`;
-  }
-
-  $("phScreen").addEventListener("click", e => {
-    const b = e.target.closest("button"); if (!b) return;
-    if (b.dataset.k) {
-      const k = b.dataset.k;
-      if (k === "C") ph.digits = "";
-      else if (k === "OK") { if (ph.digits.length === CFG.PIN_LEN) tryLogin(); else ph.msg = `Enter ${CFG.PIN_LEN} digits`; }
-      else if (ph.digits.length < CFG.PIN_LEN) ph.digits += k;
-    } else if (b.dataset.tab) ph.tab = b.dataset.tab;
-    else if ("out" in b.dataset) { ph.logged = false; ph.digits = ""; ph.msg = "Logged out"; }
-    key = "";
+  window.vendoPhoneLink = {
+    attach(ws) { sockets.add(ws); sess.set(ws, { admin: false, fails: 0, lockUntil: 0, p1: null }); last = {}; push(true); },
+    detach(ws) { sockets.delete(ws); sess.delete(ws); },
+    receive(ws, text) {
+      const a = text.trim().split(/\s+/), s = sess.get(ws); if (!s) return;
+      if (a[0] === "EV") {
+        const ev = +a[1], p = a[2] === undefined ? -1 : +a[2];
+        if (ev === PEV.STATS) { sendStats(ws); return; }
+        if (ev === PEV.SET_P1 || ev === PEV.SET_P5 || ev === PEV.CLEAR) {
+          if (!s.admin) return;   // the bridge drops admin events from a phone that has not logged in
+          if (ev === PEV.SET_P1) s.p1 = p;
+          else if (ev === PEV.SET_P5) { m.adminSetChange(s.p1 === null ? m.inv.p1 : s.p1, p); s.p1 = null; }
+          else m.say("Phone: " + m.adminClearFault());
+          push(false); return;
+        }
+        if (ev === PEV.CONFIRM && m.state === ST.ACCEPTING) m.touch(EV.CONFIRM);
+        else m.touch(ev, p);
+        push(false);
+      } else if (a[0] === "AD") {
+        const now = Date.now();
+        if (now < s.lockUntil) { sendTo(ws, `AA L ${Math.ceil((s.lockUntil - now) / 1000)}`); return; }
+        if (a[1] === m.pin) {
+          s.admin = true; s.fails = 0;
+          m.log({ kind: "admin", text: "Admin login (phone)" });
+          sendTo(ws, "AA 1");
+        } else if (++s.fails >= CFG.PIN_TRIES) {
+          s.fails = 0; s.lockUntil = now + CFG.PIN_LOCK_MS;
+          m.log({ kind: "security", text: `Phone Admin locked for ${CFG.PIN_LOCK_MS / 60000} min after ${CFG.PIN_TRIES} wrong PINs` });
+          sendTo(ws, `AA L ${CFG.PIN_LOCK_MS / 1000}`);
+        } else {
+          m.log({ kind: "security", text: `Wrong Admin PIN on the phone (${s.fails} of ${CFG.PIN_TRIES})` });
+          sendTo(ws, `AA 0 ${s.fails}`);
+        }
+      } else if (a[0] === "AP") {
+        if (!s.admin) { sendTo(ws, "AA N"); return; }
+        if (m.adminSetPin(a[1] || "")) sendTo(ws, "AA P");
+      } else if (a[0] === "AX") {
+        if (s.admin) m.log({ kind: "admin", text: "Admin logout (phone)" });
+        s.admin = false;
+      }
+    },
+  };
+  $("bPhone").addEventListener("click", () => {
+    const on = $("phone").style.display !== "flex";
+    $("phone").style.display = on ? "flex" : "none";
+    $("bPhone").classList.toggle("lit", on); $("lPhone").textContent = on ? "Phone on" : "Phone";
+    if (on && !$("phFrame").src) $("phFrame").src = "phone/index.html";
   });
 
   // ---- refresh ------------------------------------------------------------------------
-  let key = "", cardKey = "", recRef = null;
-  function refresh() {
+  let cardKey = "", recRef = null, lastPush = 0;
+  function refresh(now) {
     if (recRef !== m.records) { recRef = m.records; cardKey = ""; }
     const ck = `${m.recVersion}|${m.records.length}|${Math.round(m.tank / 50)}|${m.inv.p1}|${m.inv.p5}|${m.inv.box10}|${m.inv.box20}`;
     if (ck !== cardKey) {
@@ -150,20 +152,9 @@
       $("recTable").innerHTML = tableHTML(m.records);
       $("recTotals").textContent = totalsLines().map(([k, v]) => (k + " ".repeat(15)).slice(0, 15) + v).join("\n");
     }
-    if (ph.on) {
-      const lock = Math.ceil(Math.max(0, ph.lockUntil - Date.now()) / 1000);
-      const pk = !ph.logged ? `L|${ph.digits}|${ph.msg}|${lock}`
-        : ph.tab === "live" ? `V|${m.state}|${m.fault}|${m.credit}|${m.story}|${ck}|${m.cur ? m.cur.ordered + "," + m.cur.coins.length + "," + Math.floor(m.cur.poured + m.segment) + "," + m.cur.paid[1] + "," + m.cur.paid[5] + "," + m.cur.changeDue : ""}|${m.acceptorOpen()}`
-        : `${ph.tab}|${ck}`;
-      if (pk !== key) {
-        const body = $("phScreen").querySelector(".ph-body"), scroll = body ? body.scrollTop : 0;
-        key = pk; $("phScreen").innerHTML = phoneHTML();
-        const nb = $("phScreen").querySelector(".ph-body"); if (nb) nb.scrollTop = scroll;
-      }
-      const mirror = $("phLcd");
-      if (mirror) mirror.getContext("2d").drawImage($("lcd"), 0, 0, 240, 160);
-      $("phClock").textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    }
+    // The Mega sends its lines a few times a second; so does the link.
+    if (sockets.size && now - lastPush > 250) { lastPush = now; push(false); }
+    $("phClock").textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     requestAnimationFrame(refresh);
   }
   requestAnimationFrame(refresh);

@@ -46,6 +46,9 @@
   .coin.p5 { background: radial-gradient(circle at 40% 35%, #f7e6a8, #c2a14a); width: 54px; height: 54px; }
   .coin.p10 { background: radial-gradient(circle at 50% 50%, #e9eaec 0 46%, #d9b95a 48%, #b8962f 100%); }
   .coin.p20 { background: radial-gradient(circle at 50% 50%, #f2d98a 0 46%, #c8cbd0 48%, #9ea3a9 100%); width: 62px; height: 62px; }
+  .confirm-btn { width: 46px; height: 46px; border-radius: 50%; cursor: pointer; border: 4px solid #c9ced2;
+                 background: radial-gradient(circle at 40% 35%, #8ef0a0, #1f9a3c); box-shadow: 0 3px 0 #7d878e; margin-left: 6px; }
+  .confirm-btn:active { transform: translateY(2px); box-shadow: none; }
   .readout { font: 12.5px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; background: #f3f6f8; border-radius: 6px;
              padding: 8px 10px; white-space: pre-wrap; }
 
@@ -83,32 +86,13 @@
   table.rec .rej, table.rec .sub2 { color: var(--muted); font-size: 11px; }
   .ok { color: #1f7a35; } .warn { color: #9a6500; } .bad { color: #b3261e; }
 
-  /* --- the owner's phone (a simulation viewer, not a machine feature) --- */
-  #phone { position: fixed; left: 16px; top: 78px; z-index: 7; width: 300px; height: min(600px, calc(100vh - 210px));
+  /* --- the phone: the ESP32's own phone page, in a frame --- */
+  #phone { position: fixed; left: 16px; top: 78px; z-index: 7; width: 300px; height: min(620px, calc(100vh - 200px));
            min-height: 380px; background: #111; border-radius: 34px; padding: 12px; box-shadow: 0 12px 34px rgba(0,0,0,.35);
            display: none; flex-direction: column; }
   #phBar { color: #fff; font-size: 11px; display: flex; justify-content: space-between; padding: 2px 14px 6px; }
-  #phScreen { flex: 1; background: #f2f5f8; border-radius: 24px; overflow: hidden; display: flex; flex-direction: column; font-size: 12.5px; }
+  #phFrame { flex: 1; width: 100%; border: 0; border-radius: 22px; background: #0c1824; }
   #phTag { color: #ffd34d; font-size: 10px; text-align: center; padding-top: 7px; line-height: 1.3; }
-  .ph-lock { flex: 1; display: flex; flex-direction: column; align-items: center; padding: 22px 16px 12px; background: linear-gradient(#0c1824, #1f3b52); color: #fff; }
-  .ph-logo { font-size: 34px; } .ph-title { font-size: 18px; font-weight: 750; } .ph-sub { color: #9fb6c8; margin-bottom: 14px; }
-  .ph-dots { display: flex; gap: 12px; margin: 6px 0; } .ph-dots i { width: 13px; height: 13px; border-radius: 50%; border: 2px solid #9fb6c8; }
-  .ph-dots i.f { background: #fff; border-color: #fff; }
-  .ph-msg { min-height: 34px; text-align: center; color: #cfe0ec; font-size: 12px; } .ph-lock .ph-msg.bad { color: #ff9b91; margin-top: 30px; }
-  .ph-keys { display: grid; grid-template-columns: repeat(3, 62px); gap: 10px; }
-  .ph-keys button { height: 50px; border-radius: 25px; border: none; background: rgba(255,255,255,.14); color: #fff; font: 600 18px system-ui; cursor: pointer; }
-  .ph-keys button:active { background: rgba(255,255,255,.35); }
-  .ph-foot { margin-top: auto; color: #7f97aa; font-size: 10.5px; }
-  .ph-head { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px 6px; background: #fff; }
-  .ph-head button, .ph-tabs button { font: inherit; border: 1px solid #c9d3da; background: #fff; border-radius: 14px; padding: 3px 10px; cursor: pointer; }
-  .ph-tabs { display: flex; gap: 6px; padding: 4px 12px 8px; background: #fff; border-bottom: 1px solid var(--line); }
-  .ph-tabs button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
-  .ph-body { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 7px; }
-  .ph-card { background: #fff; border: 1px solid #e0e6eb; border-radius: 12px; padding: 8px 10px; }
-  .ph-card canvas { width: 100%; border-radius: 6px; display: block; margin-top: 4px; }
-  .ph-k { color: var(--muted); font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; }
-  .ph-big { font-weight: 750; font-size: 14px; } .ph-row { display: flex; justify-content: space-between; }
-  .ph-tl { display: flex; flex-direction: column; padding: 3px 0; border-bottom: 1px solid #eef1f4; } .ph-tl:last-child { border: none; }
   .dim { color: var(--muted); }
 
   /* --- practice: coach, lesson list, highlights, coin picker --- */
@@ -177,7 +161,7 @@
   <div class="pb"><button id="bPractice" class="push green" title="Guided lessons: learn to use the machine step by step"><span>🎓</span></button><span>Practice</span></div>
   <div class="pb"><button id="bSound" class="push blue lit" title="Machine sounds on or off"><span>🔊</span></button><span id="lSound">Sound on</span></div>
   <div class="sep"></div>
-  <div class="pb"><button id="bPhone" class="push blue" title="Show the owner's phone: log in with the Admin PIN to watch sales, records and stock"><span>📱</span></button><span id="lPhone">Phone</span></div>
+  <div class="pb"><button id="bPhone" class="push blue" title="The machine's phone page: join its WiFi hotspot, then use it like the screen or log in to Admin"><span>📱</span></button><span id="lPhone">Phone</span></div>
   <div class="sep"></div>
   <div class="pb"><button id="bPhoto" class="push grey" title="Download a picture of the 3D view (JPG)"><span>JPG</span></button><span>Picture</span></div>
   <div class="pb"><button id="bRec" class="push red" title="Record the 3D view as a video; press again to stop and download it"><span id="iRec">●</span></button><span id="lRec">Record</span></div>
@@ -201,9 +185,9 @@
 </div>
 
 <div id="phone">
-  <div id="phBar"><span id="phClock"></span><span>owner's phone</span></div>
-  <div id="phScreen"></div>
-  <div id="phTag">SIMULATION VIEWER ONLY · the real machine has no phone link<br>(WiFi and remote monitoring are not in this project)</div>
+  <div id="phBar"><span id="phClock"></span><span>WiFi: WATERVENDO-TEST</span></div>
+  <iframe id="phFrame" title="The machine's phone page"></iframe>
+  <div id="phTag">The machine's own phone page (192.168.4.1), bench test feature.<br>Works a few metres from the machine while open. Not a notification.</div>
 </div>
 
 <aside id="side">
@@ -232,7 +216,7 @@
     <h2>Customer touchscreen (as on the machine)</h2>
     <div id="lcdWrap"><canvas id="lcd" width="480" height="320"></canvas><div id="lcdTag">3.5" LCD · 480 × 320 · SIMULATION</div></div>
     <div class="note">Tap the screen as you would on the machine. It is drawn with the same layout, colours and words as the
-      machine's display firmware. Hold the WATER VENDO title for 2 seconds, or tap Sales, to see today's sales.</div>
+      machine's display firmware (bench version of 31 Oct 2026). Today's sales are inside Admin, behind the PIN.</div>
   </div>
 
   <div class="card">
@@ -242,13 +226,16 @@
       <button class="coin p5" data-coin="5" title="Insert a ₱5 coin">₱5</button>
       <button class="coin p10" data-coin="10" title="Insert a ₱10 coin">₱10</button>
       <button class="coin p20" data-coin="20" title="Insert a ₱20 coin">₱20</button>
+      <button id="bConfirm" class="confirm-btn" title="The green CONFIRM push button under the screen"></button>
       <div style="margin-left:auto;display:flex;flex-direction:column;gap:6px">
         <button id="bBottle" class="simbtn">Place bottle</button>
         <button id="bTray" class="simbtn">Take coins from the tray</button>
       </div>
     </div>
-    <div class="note">₱1 buys 100 mL, up to ₱15 (1.5 L) per customer. After each coin the slot is closed for 1.3 s
-      while the coin gates move; a coin dropped in then comes straight back to the tray, as on the machine.</div>
+    <div class="note">₱1 buys 100 mL, up to ₱20 (2 L) per customer. After each coin the slot is closed for 1.3 s
+      while the coin gates move; a coin dropped in then comes straight back to the tray, as on the machine. There is no
+      refund before buying: the machine sells water, it does not change coins. The <b>green button</b> is the CONFIRM
+      button under the screen: it works as Continue, and starts a pour if the bottle sensor misses the bottle.</div>
   </div>
 
   <div class="card">
@@ -271,9 +258,8 @@
     </div>
     <div class="note">Every customer gets a row as the sale happens: the coins put in, the water charged and the water the
       pump actually ran for, the change due and the coins counted out, and how it ended. Profit is money in minus change
-      paid, and always equals the water charged at ₱1 per 100 mL (plus any change still owed after a jam). Use the
-      <b>📱 Phone</b> button at the bottom of the 3D view to watch the same records as the owner, after logging in with
-      the Admin PIN.</div>
+      paid, and always equals the water charged at ₱1 per 100 mL (plus any change still owed after a jam). This table is
+      a simulation tool for checking sales; on the machine the same figures are in Admin (Profit, Coins, History).</div>
   </div>
 
   <div class="card">
@@ -281,17 +267,20 @@
     <div class="row">
       <span class="k">Admin</span>
       <button id="bAdmin" class="simbtn on">Open Admin on the screen</button>
-      <span style="color:var(--muted);font-size:12px">or hold the big icon on the screen for 3 s</span>
+      <span style="color:var(--muted);font-size:12px">or tap Admin on the start screen, or hold the water drop for 3 s</span>
     </div>
     <div class="note" style="margin-top:4px">Admin asks for a 4-digit PIN (<b>demo PIN 1234</b>; each machine's owner
       sets their own under Change PIN). Three wrong PINs lock Admin for 5 minutes, and every login, wrong PIN and lockout
-      is written to the history. Admin logs itself out after 60 s untouched, and opens only when no customer is mid-sale.</div>
+      is written to the history. Admin logs itself out when left untouched, and opens only when no customer is mid-sale.</div>
     <div class="note">Inside: <b>Profit</b> (today and all time: money in, change paid out, profit, sales, water sold,
       change owed), <b>Coins</b> (₱1 / ₱5 / ₱10 / ₱20 inserted, what is in each hopper and the coin box, coins returned),
       <b>Water</b> (cold tank level, gallon A and B, refill pump), <b>Load change</b>, <b>Clear fault</b>, <b>History</b>,
       <b>Change PIN</b>.</div>
-    <div class="note"><b>Built from the specification (section 8) and this request; the machine firmware does not have
-      these screens or the PIN yet.</b></div>
+    <div class="note"><b>📱 Phone:</b> the machine's ESP32 also runs a WiFi hotspot (<b>WATERVENDO-TEST</b>). A phone that
+      joins it and opens 192.168.4.1 gets the same screen and the same Admin, with the same PIN. The phone in this
+      simulation shows that page, unchanged. It is a bench test feature: it works a few metres from the machine while the
+      page is open, and it does not send notifications. Whether it stays in the delivered machine is for the client to
+      decide.</div>
     <div class="row">
       <span class="k">Gallon A</span>
       <button class="simbtn" data-gal="a" data-ml="18900">Full</button>
@@ -309,7 +298,7 @@
       <span class="k">Next payout</span>
       <label class="chk"><input id="cJam" type="checkbox"> a hopper jams</label>
     </div>
-    <div class="note">The machine checks, before it takes a coin, that it can pay change for the worst case (₱34: ₱14 then
+    <div class="note">The machine checks, before it takes a coin, that it can pay change for the worst case (₱39: ₱19 then
       a ₱20). If it cannot, it shows "Not enough change in the machine" and refuses money until change is loaded in Admin.</div>
   </div>
 
@@ -326,8 +315,9 @@
     </div>
     <div class="note">Drag to turn the view, scroll to zoom, right-drag to move. Play, pause, reset, the speed, the labels
       and the outer panels are the round buttons at the bottom of the 3D view.</div>
-    <div class="note">The machine's rules (prices, the ₱15 ceiling, coin routing, change, bottle timers, lockouts) follow
-      the firmware. Pour and refill rates are placeholders until they are measured on the unit; times are simulated.</div>
+    <div class="note">The machine's rules (prices, the ₱20 ceiling, coin routing, change, bottle timers, lockouts) follow
+      the bench firmware of 31 Oct 2026. The pour time (4.6 s per 100 mL) and the hopper timing were measured on the
+      bench; the refill rate is illustrative.</div>
   </div>
   <div class="note" style="text-align:center">3D display by three.js (MIT licence). © eMathrix Technologies.</div>
 </aside>

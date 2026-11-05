@@ -1,17 +1,18 @@
 "use strict";
-// The machine's behaviour, following the firmware (src/main.cpp, billing.cpp, change_plan.cpp,
-// include/config.h). Money is integer centavos and volume integer mL, as on the Mega.
+// The machine's behaviour, following the bench firmware of 2026-10-31 (branch
+// fix/review-bugs-layout5: src/main.cpp, billing.cpp, change_plan.cpp, include/config.h). Money is integer centavos and volume integer mL, as on the Mega.
 // The scene and the screen only read this state and send it the same events the
 // touchscreen and sensors send the Mega.
 
 const CFG = {
   ML_PER_PESO: 100,
-  MAX_CENTAVOS: 1500,             // P15 ceiling (team decision 2026-10-27)
-  MAX_ML: 1500,
-  WORST_CASE_CHANGE: 1500 - 100 + 2000,   // P14 then a P20: the LOW CHANGE gate
+  MAX_CENTAVOS: 2000,             // P20 ceiling (bench firmware 2026-10-31; was P15)
+  MAX_ML: 2000,
+  WORST_CASE_CHANGE: 2000 - 100 + 2000,   // P19 then a P20: the LOW CHANGE gate (P39)
   GATE_ROUTE_MS: 900,
   GATE_RETURN_MS: 400,
   PULSE_MS: 50,                   // one coinslot pulse, for the identify delay only
+  PULSE_TRAIN_GAP_MS: 700,        // the coin is known only once its pulses stop this long
   BOTTLE_WARN1_MS: 15000,
   BOTTLE_WARN2_MS: 18000,
   BOTTLE_CANCEL_MS: 20000,
@@ -19,18 +20,19 @@ const CFG = {
   SETTLE_MS: 500,
   COMPLETE_TIMEOUT_MS: 60000,
   THANKYOU_MS: 8000,
-  HOP_ON_MS: 1200,
-  HOP_OFF_MS: 400,
-  HOP_TIMEOUT_MS: 5000,
+  HOP_ON_MS: 3000,                // both hoppers: 3 s on, 3 s rest (bench calibration)
+  HOP_OFF_MS: 3000,
+  HOP_PULSES: { p1: 2, p5: 1 },   // the P1 hopper turns once per two pulses
+  HOP_TIMEOUT_MS: 7000,           // one full cycle + 1 s, so a slow cycle is not a jam
   HOP_RETRY_MAX: 3,
-  DISPENSE_MS_PER_100ML: 7000,    // placeholder in config.h, to be measured
+  DISPENSE_MS_PER_100ML: 4629,    // fitted from 300 mL and 800 mL bench pours
   FILL_ML_PER_S: 30,              // illustrative
   TANK_ML: 6000,
   TANK_REFILL_ML: 5700,           // REFILL / FULL band
-  TANK_MIN_SERVE_ML: 1800,        // a full P15 pour plus margin
+  TANK_MIN_SERVE_ML: 2300,        // a full P20 pour plus margin
   GALLON_ML: 18900,
   GALLON_LOW_ML: 2500,            // capacitive sensor at the reserve line
-  HOPPER_CAPACITY: 500,           // bounds the Admin change edit
+  HOPPER_CAPACITY: 2000,          // bounds the Admin change edit (as the phone page)
   HISTORY_N: 20,                  // Admin history ring
   ADMIN_HOLD_MS: 3000,            // the gesture: hold the screen icon this long
   PIN_LEN: 4,
@@ -75,7 +77,7 @@ class Machine {
     this.gates = { g1: "open", g2: "open" };
     this.tank = CFG.TANK_ML; this.galA = 15000; this.galB = 13000;
     this.refillOwed = 0; this.fillPump = false; this.dispensePump = false;
-    this.bottle = false; this.warns = 0;
+    this.bottle = false; this.warns = 0; this.confirmPressed = false; this.byButton = false;
     this.boxFull = false; this.jamNext = false;
     this.pay = null;
     this.sales = { income: 0, volume: 0, count: 0, list: [] };
@@ -114,13 +116,13 @@ class Machine {
       const why = this.state === ST.FAULT ? "The machine is out of service, so the coin slot is switched off"
         : (this.state === ST.STANDBY || this.state === ST.ACCEPTING) && this.now < this.coinBusyUntil
           ? "The slot was still closed while the gates moved for the last coin"
-          : this.inserted >= CFG.MAX_CENTAVOS ? "The ₱15 ceiling is reached, so the slot is switched off"
+          : this.inserted >= CFG.MAX_CENTAVOS ? "The ₱20 ceiling is reached, so the slot is switched off"
           : "The coin slot only takes coins before an amount is chosen";
       this.say(`${why}. The ₱${peso} coin went straight to the tray.`);
       return;
     }
     // The coinslot only says what the coin was once its pulse train ends.
-    const idMs = 150 + COIN_PULSES[peso] * CFG.PULSE_MS * 2;
+    const idMs = COIN_PULSES[peso] * CFG.PULSE_MS * 2 + CFG.PULSE_TRAIN_GAP_MS;
     const dest = peso === 5 ? "p5" : peso === 1 ? "p1" : "box";
     this.coinBusyUntil = this.now + idMs + CFG.GATE_ROUTE_MS + CFG.GATE_RETURN_MS;
     this.inFlight++;
@@ -152,6 +154,15 @@ class Machine {
     if (!on && this.state === ST.THANKYOU && !this.unpaid) this.go(ST.STANDBY);
   }
 
+  // The green CONFIRM push button on the front panel (pin 40): Continue while paying,
+  // and it starts a pour when the bottle sensor misses the bottle.
+  pressConfirm() {
+    this.emit({ type: "confirmBtn" });
+    if (this.state === ST.ACCEPTING) { this.pendingConfirm = true; return; }
+    if (this.state === ST.AWAITING) { this.confirmPressed = true; return; }
+    this.say("The green CONFIRM button does nothing on this screen.");
+  }
+
   takeTray() { const coins = this.tray; this.tray = []; this.emit({ type: "trayEmpty" }); return coins; }
 
   touch(ev, payload) {
@@ -163,7 +174,9 @@ class Machine {
         this.credit -= payload; this.target = payload; this.segment = 0;   // price = mL in centavos
         if (this.cur) { this.cur.ordered += payload; this.recVersion++; }
         this.go(ST.AWAITING);
-      } else if (ev === EV.FINISH || ev === EV.BACK) {
+      } else if ((ev === EV.FINISH || ev === EV.BACK) && this.total > 0) {
+        // Finish only once water has been bought (client, 2026-10-31): no refund
+        // before buying -- the machine sells water, it does not change coins.
         this.go(ST.PAYING);
       }
     } else if (s === ST.AWAITING && ev === EV.BACK) {
@@ -202,8 +215,8 @@ class Machine {
     this.log({ kind: "change", text: `Change set: ₱1 ${was.p1} → ${this.inv.p1}, ₱5 ${was.p5} → ${this.inv.p5}` });
     // LOW CHANGE is condition-driven: it clears the moment the count covers the worst case.
     if (this.fault === FAULT.LOW_CHANGE && changePlan(CFG.WORST_CASE_CHANGE, this.inv.p1, this.inv.p5)) this.fault = FAULT.NONE;
-    this.say(`Change count confirmed and saved: ${this.inv.p1} × ₱1, ${this.inv.p5} × ₱5.` +
-             (this.fault === FAULT.LOW_CHANGE ? " Still not enough for the worst case (₱34), so LOW CHANGE stays." : ""));
+    this.say(`Change count saved: ${this.inv.p1} × ₱1, ${this.inv.p5} × ₱5.` +
+             (this.fault === FAULT.LOW_CHANGE ? " Still not enough for the worst case (₱39), so LOW CHANGE stays." : ""));
   }
   // Clear a fault: refused while its physical cause is still detectable.
   adminClearFault() {
@@ -308,19 +321,18 @@ class Machine {
   // --- the state machine ------------------------------------------------------
   onEnter(s) {
     this.dispensePump = (s === ST.DISPENSING);
+    if (s !== ST.DISPENSING && s !== ST.SETTLING) this.byButton = false;
     if (s === ST.STANDBY) {
       this.credit = 0; this.inserted = 0; this.target = 0; this.total = 0; this.unpaid = 0;
       this.changePaid = 0; this.pendingConfirm = false;
       if (this.fault === FAULT.NONE) this.say("Ready. Insert coins to start.");
     } else if (s === ST.SELECTING) {
-      this.say(this.inserted >= CFG.MAX_CENTAVOS
-        ? `₱15 reached, so the slot closes and the amount picker opens by itself. Credit ₱${this.credit / 100}.`
-        : `Choose an amount and tap DISPENSE. Up to ${this.maxml()} mL for ₱${this.credit / 100}.`);
+      this.say(`Choose an amount and tap DISPENSE. Up to ${this.maxml()} mL for ₱${this.credit / 100}.`);
     } else if (s === ST.AWAITING) {
-      this.warns = 0;
+      this.warns = 0; this.confirmPressed = false;   // a press left over must not start the pour
       this.say(`₱${this.target / 100} is taken off the credit now, before any water pours. Place a bottle under the nozzle: ${this.target} mL will be dispensed.`);
     } else if (s === ST.DISPENSING) {
-      this.say(`Bottle detected. The dispense pump runs; it stops when ${this.target} mL is poured (timed: 7 s per 100 mL).`);
+      this.say(`Bottle detected. The dispense pump runs; it stops when ${this.target} mL is poured (timed: 4.6 s per 100 mL).`);
     } else if (s === ST.PAUSED) {
       this.say("Bottle removed mid-pour. The pump stops at once. Put it back within 10 seconds to continue.");
     } else if (s === ST.PAYING) {
@@ -371,32 +383,46 @@ class Machine {
         else if (!changePlan(CFG.WORST_CASE_CHANGE, this.inv.p1, this.inv.p5)) f = FAULT.LOW_CHANGE;
         if (f && this.inFlight === 0) {
           this.fault = f;
-          this.say(f === FAULT.OUT_OF_WATER ? "The cold tank is below a full ₱15 pour. Out of service until the pump refills it."
+          this.say(f === FAULT.OUT_OF_WATER ? "The cold tank is below a full ₱20 pour. Out of service until the pump refills it."
             : f === FAULT.STORAGE_FULL ? "The coin box is full. Out of service: the machine refuses money before the first coin."
-            : "The hoppers cannot cover the worst-case change (₱34). Out of service until change is loaded.");
+            : "The hoppers cannot cover the worst-case change (₱39). Out of service until change is loaded.");
           this.go(ST.FAULT);
         }
         break;
       }
       case ST.ACCEPTING:
-        if (this.inserted >= CFG.MAX_CENTAVOS && this.inFlight === 0) { this.go(ST.SELECTING); break; }
         if (this.pendingConfirm && this.inFlight === 0 && this.now >= this.coinBusyUntil) {
           this.pendingConfirm = false; this.go(ST.SELECTING);
         }
         break;
       case ST.AWAITING:
-        if (this.bottle) { this.go(ST.DISPENSING); break; }
+        if (this.bottle) { this.byButton = false; this.go(ST.DISPENSING); break; }
+        if (this.confirmPressed) {
+          // The green CONFIRM button also starts the pour (bench 2026-10-30): the IR misses
+          // some bottles, and a customer who has paid must still get water.
+          this.confirmPressed = false; this.byButton = true;
+          this.go(ST.DISPENSING);
+          this.say("CONFIRM pressed: the pour starts without the bottle sensor, and taking the bottle out will not pause it.");
+          break;
+        }
         if (this.warns === 0 && this.elapsed() >= CFG.BOTTLE_WARN1_MS) { this.warns = 1; this.emit({ type: "beep" }); this.say("15 s and no bottle: the buzzer sounds."); }
         else if (this.warns === 1 && this.elapsed() >= CFG.BOTTLE_WARN2_MS) { this.warns = 2; this.emit({ type: "beep" }); this.say("18 s: the buzzer sounds again. At 20 s the sale is cancelled and refunded."); }
         if (this.elapsed() >= CFG.BOTTLE_CANCEL_MS) {
-          if (this.cur) { this.cur.noBottle = true; this.recVersion++; }
+          if (this.cur) this.cur.ordered -= this.target;
           this.credit += this.target; this.target = 0;
-          this.say("20 s and no bottle: cancelled. Everything paid is refunded in full.");
-          this.go(ST.PAYING);
+          if (this.total === 0) {
+            // No refund before buying: back to the picker with the credit intact.
+            this.say("20 s and no bottle: the amount is cancelled but the credit is kept. Choose again, then place a bottle.");
+            this.go(ST.SELECTING);
+          } else {
+            if (this.cur) { this.cur.noBottle = true; this.recVersion++; }
+            this.say("20 s and no bottle: cancelled. The rest of the credit is paid back as change.");
+            this.go(ST.PAYING);
+          }
         }
         break;
       case ST.DISPENSING:
-        if (!this.bottle) { this.go(ST.PAUSED); break; }
+        if (!this.bottle && !this.byButton) { this.go(ST.PAUSED); break; }
         this.segment = Math.min(this.target, this.segment + dt * 100 / CFG.DISPENSE_MS_PER_100ML);
         if (this.segment >= this.target) { this.dispensePump = false; this.go(ST.SETTLING); }
         break;
@@ -496,7 +522,10 @@ class Machine {
     if (p.phase === "on") {
       this.hopperMotor = hopper;
       if (p.t >= CFG.HOP_ON_MS) {
-        // One pulse = one coin out and counted.
+        // P5: one pulse = one coin. P1: the hopper turns once per two pulses.
+        p.pulses = (p.pulses || 0) + 1;
+        if (p.pulses < CFG.HOP_PULSES[hopper]) { p.phase = "off"; p.t = 0; p.again = true; this.hopperMotor = null; return; }
+        p.pulses = 0; p.again = false;
         const peso = hopper === "p5" ? 5 : 1;
         this.inv[hopper]--; p.left--; this.changePaid += peso * 100;
         this.tray.push(peso);
@@ -505,7 +534,7 @@ class Machine {
         p.phase = "off"; p.t = 0; this.hopperMotor = null;
       }
     } else if (p.phase === "off" && p.t >= CFG.HOP_OFF_MS) {
-      if (p.left > 0) { p.phase = "on"; p.t = 0; } else { p.phase = "idle"; p.leg++; }
+      if (p.left > 0 || p.again) { p.phase = "on"; p.t = 0; } else { p.phase = "idle"; p.leg++; }
     }
   }
 

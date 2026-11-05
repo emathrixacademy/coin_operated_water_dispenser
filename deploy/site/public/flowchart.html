@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flowchart · Water Vendo</title>
+<link rel="stylesheet" href="site.css">
+<style>
+  #chart { width: 100%; height: auto; display: block; }
+  #chart .box { fill: var(--card); stroke: var(--brand); stroke-width: 2; }
+  #chart .term { fill: var(--brand); stroke: none; }
+  #chart .term + text, #chart text.on-brand { fill: var(--brand-ink); font-weight: 700; }
+  #chart .dec { fill: var(--soft); stroke: var(--brand); stroke-width: 2; }
+  #chart .side { fill: var(--warn-bg); stroke: var(--warn-line); stroke-width: 2; }
+  #chart text { fill: var(--ink); font: 14px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  #chart text.lab { fill: var(--muted); font-size: 12.5px; font-weight: 700; }
+  #chart path.e { fill: none; stroke: var(--muted); stroke-width: 1.8; }
+  #chart #ah path { fill: var(--muted); }
+  .legend { display: flex; gap: 18px; flex-wrap: wrap; font-size: .9rem; color: var(--muted); margin: 8px 0 14px; }
+  .legend i { display: inline-block; width: 14px; height: 14px; border-radius: 3px; vertical-align: -2px; margin-right: 6px; border: 2px solid var(--brand); }
+  .legend i.d { transform: rotate(45deg) scale(.8); background: var(--soft); }
+  .legend i.s { background: var(--warn-bg); border-color: var(--warn-line); }
+</style>
+</head>
+<body>
+<nav class="top"><div class="in">
+  <a class="brand" href="./">Water Vendo</a>
+  <a class="tab" href="./">Overview</a>
+  <a class="tab" href="wiring.html">Wiring</a>
+  <a class="tab" href="exploded.html">Exploded view</a>
+  <a class="tab" href="materials.html">Materials</a>
+  <a class="tab on" href="flowchart.html">Flowchart</a>
+  <a class="tab" href="simulation/">Simulation</a>
+</div></nav>
+<main>
+  <h1>Flowchart</h1>
+  <p class="by">One sale, from the first coin to the change, as the bench firmware (31 Oct 2026) runs it</p>
+  <div class="legend"><span><i></i>Step</span><span><i class="d"></i>Check</span><span><i class="s"></i>What happens otherwise</span></div>
+  <svg id="chart" viewBox="0 0 860 1320" role="img" aria-label="Flowchart of a sale on the water vending machine"></svg>
+
+  <h2>The rules behind it</h2>
+  <div class="tablewrap"><table>
+    <tr><th>Rule</th><th>Why</th></tr>
+    <tr><td>Coins decide the water; the water never decides the price.</td><td>The price is taken from the credit before the pump starts, so a sensor's error can never change what a customer pays or the change they get.</td></tr>
+    <tr><td>₱1 = 100 mL, up to ₱20 (2 L) per customer.</td><td>The ceiling bounds the change the hoppers must be able to pay.</td></tr>
+    <tr><td>Before taking a coin, the machine checks it could pay ₱39 of change (₱19, then a ₱20 coin).</td><td>It never takes money it cannot honour. If it cannot, it shows "Not enough change in the machine".</td></tr>
+    <tr><td>No refund before buying.</td><td>The machine sells water; it does not change coins (client decision, 31 Oct 2026).</td></tr>
+    <tr><td>A pour stopped early is charged in whole 100 mL steps, rounded down (305 mL counts as 300 mL).</td><td>The rest of the price goes back to the credit in whole pesos, so the change can always be paid in coins.</td></tr>
+    <tr><td>Change is counted out coin by coin.</td><td>A payout is only finished when every coin has been counted. If not, after three retries the machine records what it owes and locks.</td></tr>
+  </table></div>
+  <footer>© 2026 eMathrix Technologies. The 3D <a href="simulation/">simulation</a> runs this same flow.</footer>
+</main>
+<script>
+(() => {
+  const svg = document.getElementById("chart"), NS = "http://www.w3.org/2000/svg";
+  const el = (tag, attrs, parent = svg) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); parent.appendChild(e); return e; };
+  const defs = el("defs", {});
+  const mk = el("marker", { id: "ah", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 8, markerHeight: 8, orient: "auto-start-reverse" }, defs);
+  el("path", { d: "M0,0 L10,5 L0,10 z" }, mk);
+
+  const MID = 360, SIDE = 690, LEFT = 85;
+  // id: [kind, x, y, width, lines]
+  const N = {
+    start:  ["term", MID, 40, 300, ["Standby: “Insert coins to start”"]],
+    ok:     ["dec",  MID, 140, 260, ["Water, change and", "coin box all OK?"]],
+    oos:    ["side", SIDE, 140, 270, ["Out of service", "Coin slot off: a coin goes", "straight back to the tray"]],
+    coins:  ["box",  MID, 255, 330, ["Insert ₱1, ₱5, ₱10 or ₱20", "Credit shows; the slot rests 1.3 s per coin", "Up to ₱20"]],
+    cont:   ["box",  MID, 355, 300, ["Tap CONTINUE", "or press the green button"]],
+    pick:   ["box",  MID, 450, 330, ["Choose 100 mL – 2 L, tap DISPENSE", "The price comes off the credit now"]],
+    bottle: ["dec",  MID, 570, 260, ["Bottle seen, or green", "button, within 20 s?"]],
+    wait:   ["side", SIDE, 570, 270, ["Buzzer at 15 s and 18 s", "At 20 s the amount is cancelled,", "the credit kept (no refund)"]],
+    pour:   ["box",  MID, 685, 280, ["Pour: 4.6 s per 100 mL"]],
+    out:    ["dec",  MID, 790, 260, ["Bottle taken out", "during the pour?"]],
+    pause:  ["side", SIDE, 790, 270, ["Pump stops; 10 s to put it back", "Not back: charge whole 100 mL", "steps poured, the rest to credit"]],
+    left:   ["dec",  MID, 905, 260, ["Credit left?"]],
+    more:   ["box",  LEFT, 905, 150, ["Dispense more", "or Finish"]],
+    pay:    ["box",  MID, 1020, 300, ["Pay change: ₱5 coins first,", "then ₱1, each one counted"]],
+    counted:["dec",  MID, 1130, 260, ["Every coin", "counted out?"]],
+    jam:    ["side", SIDE, 1130, 270, ["3 retries, then CHANGE JAM:", "the amount owed is recorded", "and the machine locks"]],
+    thanks: ["term", MID, 1250, 300, ["Thank you (8 s), back to Standby"]],
+  };
+  const H = { term: 44, box: 0, dec: 92, side: 0 };
+  const geo = {};
+  for (const [id, [kind, x, y, w, lines]] of Object.entries(N)) {
+    const h = kind === "dec" ? H.dec : kind === "term" ? H.term : 26 + lines.length * 19;
+    geo[id] = { x, y, w, h, kind };
+    if (kind === "dec") el("polygon", { class: "dec", points: `${x},${y - h / 2} ${x + w / 2},${y} ${x},${y + h / 2} ${x - w / 2},${y}` });
+    else el("rect", { class: kind === "term" ? "term" : kind === "side" ? "side" : "box", x: x - w / 2, y: y - h / 2, width: w, height: h, rx: kind === "term" ? h / 2 : 10 });
+    lines.forEach((t, i) => {
+      const tx = el("text", { x, y: y + (i - (lines.length - 1) / 2) * 19 + 5, "text-anchor": "middle" });
+      if (kind === "term") tx.setAttribute("class", "on-brand");
+      tx.textContent = t;
+    });
+  }
+  const top = id => [geo[id].x, geo[id].y - geo[id].h / 2], bot = id => [geo[id].x, geo[id].y + geo[id].h / 2];
+  const rgt = id => [geo[id].x + geo[id].w / 2, geo[id].y], lft = id => [geo[id].x - geo[id].w / 2, geo[id].y];
+  function edge(pts, label, lx, ly) {
+    el("path", { class: "e", d: "M" + pts.map(p => p.join(",")).join(" L"), "marker-end": "url(#ah)" });
+    if (label) { const t = el("text", { class: "lab", x: lx, y: ly }); t.textContent = label; }
+  }
+  // the main line
+  const down = (a, b, label) => { const [x, y1] = bot(a), [, y2] = top(b); edge([[x, y1], [x, y2]], label, x + 8, y1 + 16); };
+  down("start", "ok"); down("ok", "coins", "Yes"); down("coins", "cont"); down("cont", "pick"); down("pick", "bottle");
+  down("bottle", "pour", "Yes"); down("pour", "out"); down("out", "left", "No"); down("left", "pay", "No");
+  down("pay", "counted"); down("counted", "thanks", "Yes");
+  // the side branches
+  const side = (a, b, label) => { const [x1, y] = rgt(a), [x2] = lft(b); edge([[x1, y], [x2, y]], label, x1 + 10, y - 8); };
+  side("ok", "oos", "No"); side("bottle", "wait", "No"); side("out", "pause", "Yes"); side("counted", "jam", "No");
+  // loops back
+  { const [x, y] = top("oos"), [, ys] = top("start"); edge([[x, y], [x, ys + 22], [rgt("start")[0], ys + 22]], "when fixed", x + 8, y - 30); }
+  { const [x, y] = top("wait"), [x2, y2] = rgt("pick"); edge([[x, y], [x, y2], [x2, y2]], "choose again", x + 8, y - 40); }
+  { const [x, y] = top("pause"), [x2, y2] = rgt("pour"); edge([[x, y], [x, y2], [x2, y2]], "put back in time", x + 8, y - 44); }
+  { const [x1, y] = lft("left"), [x2] = rgt("more"); edge([[x1, y], [x2, y]], "Yes", x1 - 40, y - 8); }
+  { const [x, y] = top("more"), [x2, y2] = lft("pick"); edge([[x, y], [x, y2], [x2, y2]], "Dispense more", x + 8, y - 60); }
+  { const [x, y] = bot("more"), [x2, y2] = lft("pay"); edge([[x, y], [x, y2], [x2, y2]], "Finish", x + 8, y + 40); }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Materials · Water Vendo</title>
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<nav class="top"><div class="in">
+  <a class="brand" href="./">Water Vendo</a>
+  <a class="tab" href="./">Overview</a>
+  <a class="tab" href="wiring.html">Wiring</a>
+  <a class="tab" href="exploded.html">Exploded view</a>
+  <a class="tab on" href="materials.html">Materials</a>
+  <a class="tab" href="flowchart.html">Flowchart</a>
+  <a class="tab" href="simulation/">Simulation</a>
+</div></nav>
+<main>
+  <h1>Materials</h1>
+  <p class="by">What the bench unit is built from, taken from the firmware pin map and the cabinet photos (Nov 2026)</p>
+
+  <div class="notice">This is the list of parts as built, for reference and maintenance. Quantities are for one machine.
+    Parts marked <i>optional</i> are supported by the firmware but not needed to sell water.</div>
+
+  <h2>Control and display</h2>
+  <div class="tablewrap"><table>
+    <tr><th>Part</th><th>Qty</th><th>Role</th></tr>
+    <tr><td>Arduino Mega 2560</td><td>1</td><td>Main controller: coins, change, pumps, sensors, money records (EEPROM)</td></tr>
+    <tr><td>ESP32-3248S035C, 3.5" 480 × 320 touch display</td><td>1</td><td>Customer screen and Admin; also serves the phone page on its own WiFi hotspot</td></tr>
+    <tr><td>Green momentary push button (CONFIRM)</td><td>1</td><td>Continue, and start a pour if the bottle sensor misses</td></tr>
+    <tr><td>Buzzer</td><td>1</td><td>Bottle reminders</td></tr>
+    <tr><td>DS3231 clock module + CR2032</td><td>1</td><td>Dates the daily totals (optional)</td></tr>
+    <tr><td>Resistors 1 kΩ + 2 kΩ</td><td>1 set</td><td>3.3 V divider on the line to the ESP32</td></tr>
+  </table></div>
+
+  <h2>Coin handling</h2>
+  <div class="tablewrap"><table>
+    <tr><th>Part</th><th>Qty</th><th>Role</th></tr>
+    <tr><td>Allan multi-coin slot (₱1, ₱5, ₱10, ₱20)</td><td>1</td><td>Checks each coin and sends 1 / 5 / 10 / 20 pulses; rejects fakes to the return chute</td></tr>
+    <tr><td>MG996R servo + gate flap</td><td>2</td><td>Gate 1 sends coins to the ₱5 hopper, gate 2 to the ₱1 hopper; both open = coin box</td></tr>
+    <tr><td>Coin hopper with motor</td><td>2</td><td>₱1 and ₱5 change, paid one counted coin at a time</td></tr>
+    <tr><td>IR obstacle sensor</td><td>2</td><td>Hopper full: extra coins go to the coin box</td></tr>
+    <tr><td>IR break-beam pair</td><td>1</td><td>Coin box full</td></tr>
+    <tr><td>Locked coin box</td><td>1</td><td>₱10 and ₱20 coins (and hopper overflow)</td></tr>
+    <tr><td>Coin chute and change tray</td><td>1 set</td><td>Fabricated steel, per the Rev B coin routing drawing</td></tr>
+  </table></div>
+
+  <h2>Water</h2>
+  <div class="tablewrap"><table>
+    <tr><th>Part</th><th>Qty</th><th>Role</th></tr>
+    <tr><td>Cold tank with compressor cooling</td><td>1</td><td>About 6 L of chilled water, harvested from a bottom-load dispenser</td></tr>
+    <tr><td>5-gallon water bottles</td><td>2</td><td>Supply, side by side in the lower bay, drawn through one Y fitting</td></tr>
+    <tr><td>Fill pump (12 V)</td><td>1</td><td>Gallons to the cold tank</td></tr>
+    <tr><td>Dispense pump (12 V)</td><td>1</td><td>Cold tank to the nozzle, timed per 100 mL</td></tr>
+    <tr><td>Waterproof ultrasonic level sensor (PWM)</td><td>1</td><td>Cold tank level: refill and OUT OF WATER</td></tr>
+    <tr><td>Capacitive liquid level sensor</td><td>2</td><td>One per gallon, at the reserve line</td></tr>
+    <tr><td>IR proximity sensor</td><td>1</td><td>Bottle in the bay</td></tr>
+    <tr><td>Food-grade tubing, Y fitting, nozzle</td><td>1 set</td><td>Water path</td></tr>
+    <tr><td>DS18B20 waterproof probe</td><td>1</td><td>Water temperature (optional)</td></tr>
+  </table></div>
+
+  <h2>Power and switching</h2>
+  <div class="tablewrap"><table>
+    <tr><th>Part</th><th>Qty</th><th>Role</th></tr>
+    <tr><td>12 V switching power supply</td><td>1</td><td>Pumps, hoppers, coin slot</td></tr>
+    <tr><td>Blade fuse distribution block</td><td>1</td><td>One fuse per load</td></tr>
+    <tr><td>Terminal strips, 5 V and 12 V</td><td>2</td><td>Power distribution</td></tr>
+    <tr><td>2-channel 5 V relay module</td><td>3</td><td>Pumps and hopper motors</td></tr>
+    <tr><td>AC solid-state relay</td><td>1</td><td>Compressor</td></tr>
+    <tr><td>12 V to 5 V buck converter</td><td>1</td><td>5 V for the Mega, display, sensors and servos</td></tr>
+  </table></div>
+
+  <h2>Cabinet</h2>
+  <div class="tablewrap"><table>
+    <tr><th>Part</th><th>Qty</th><th>Role</th></tr>
+    <tr><td>Steel frame and sheet panels, 178 × 69 × 61 cm</td><td>1</td><td>Powder-coated blue frame, white panels</td></tr>
+    <tr><td>Front panel cut-outs</td><td>1 set</td><td>Screen window, CONFIRM button, coin slot, dispensing bay, change tray</td></tr>
+    <tr><td>Service doors with locks</td><td>2</td><td>Upper and lower side doors</td></tr>
+    <tr><td>Swivel castor with brake</td><td>4</td><td>Moving and parking the machine</td></tr>
+  </table></div>
+
+  <p class="help">Pins for every electrical part are on the <a href="wiring.html">Wiring</a> page.</p>
+  <footer>© 2026 eMathrix Technologies.</footer>
+</main>
+</body>
+</html>

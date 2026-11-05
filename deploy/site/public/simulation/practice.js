@@ -65,7 +65,8 @@
     hit("tray", 0.16, 0.07, 0.1, 0.20, 0.78, FZ - 0.03),
     hit("galA", 0.28, 0.52, 0.28, GAL.a.x, 0.3, 0.02),
     hit("galB", 0.28, 0.52, 0.28, GAL.b.x, 0.3, 0.02),
-    hit("box", 0.15, 0.12, 0.16, 0.20, 0.79, -0.19)];
+    hit("box", 0.15, 0.12, 0.16, 0.20, 0.79, -0.19),
+    hit("confirm", 0.045, 0.045, 0.03, 0.20, 1.30, FZ + 0.01)];
   const TIPS = {
     lcd: "Touchscreen: tap it like the real one",
     slot: "Coin slot: click to drop a coin",
@@ -74,6 +75,7 @@
     galA: "Gallon A: click to replace it with a full gallon (attendant)",
     galB: "Gallon B: click to replace it with a full gallon (attendant)",
     box: "Locked coin box: click to empty it (attendant)",
+    confirm: "Green CONFIRM button: Continue, or start the pour if the sensor misses the bottle",
   };
   const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
   function pick(e) {
@@ -108,6 +110,7 @@
     else if (name === "tray") q("bTray").click();
     else if (name === "galA" || name === "galB") m.setGallon(name === "galA" ? "a" : "b", CFG.GALLON_ML);
     else if (name === "box") q("bEmptyBox").click();
+    else if (name === "confirm") m.pressConfirm();
   }
   let hoverReq = null;
   view.addEventListener("pointermove", e => {
@@ -160,7 +163,7 @@
       ? "A coin came back to the tray: it went in while the slot was still closed for the last coin. Drop it again, a little slower." : "",
   });
   const cont = { say: "Tap CONTINUE on the screen.",
-    why: "You can keep adding coins until you tap Continue. At ₱15 the machine moves on by itself.",
+    why: "You can keep adding coins until you tap Continue (or press the green button). At ₱20 the slot closes and the screen waits for you.",
     three: "lcd", dom: ["#lcdWrap"], lcd: lcdBtn(EV.CONFIRM), done: () => inSale() && !S(ST.ACCEPTING) };
   const choose = ml => ({ say: `Tap ${vol(ml)} on the screen.`,
     why: `Each 100 mL costs ₱1, so ${vol(ml)} is ₱${ml / 100}. Sizes you have not paid for are greyed out.`,
@@ -188,10 +191,15 @@
     three: "tray", dom: ["#bTray"], done: () => !m.tray.length && !S(ST.PAYING) };
   const gotIt = (say, why) => ({ say, why, next: "Got it" });
 
-  const holdDrop = { say: "Hold your finger on the big icon in the middle of the screen for 3 seconds.",
-    why: "This hidden gesture opens the Admin PIN pad, so customers never see a button for it. " +
-         "(On this page, Open Admin in the Service card does the same.)",
-    three: "lcd", dom: ["#lcdWrap"], lcdRect: [180, 64, 120, 104], done: () => !!lcd.pinEntry || S(ST.ADMIN) };
+  // The start screen has an Admin button; the out-of-service screen has none, so there the
+  // attendant holds the centre icon for 3 seconds (as the bench display does).
+  const holdDrop = {
+    say: () => S(ST.FAULT) ? "Hold your finger on the icon in the middle of the screen for 3 seconds."
+                           : "Tap Admin, bottom right of the start screen.",
+    why: () => S(ST.FAULT) ? "The out-of-service screen has no Admin button, so customers never see one. Holding the icon opens the Admin PIN pad."
+                           : "Today's sales and the coin counts are inside Admin, behind the PIN, not on the customer's screen. (Holding the water drop for 3 seconds opens it too.)",
+    three: "lcd", dom: ["#lcdWrap"], lcd: lcdBtn(UI.A_OPEN), lcdRect: () => S(ST.FAULT) ? [180, 64, 120, 104] : null,
+    done: () => !!lcd.pinEntry || S(ST.ADMIN) };
   const pin = { say: () => `Enter the PIN ${m.pin.split("").join(" ")} and tap OK.`,
     why: "Three wrong PINs lock Admin for 5 minutes, and every try is written to the history.",
     three: "lcd", dom: ["#lcdWrap"],
@@ -204,7 +212,7 @@
     lcd: b => lcd.admin.page === "menu" ? b.ev === UI.A_PAGE && b.payload === name : b.ev === UI.A_PAGE && b.payload === "menu",
     done: () => S(ST.ADMIN) && lcd.admin.page === name });
   const exitAdmin = { say: () => lcd.admin.page === "menu" ? "Tap Exit to leave Admin." : "Tap Back, then Exit.",
-    why: "Admin also logs itself out after 60 seconds untouched, so it is never left open.",
+    why: "Admin also logs itself out when left untouched, so it is never left open.",
     three: "lcd", dom: ["#lcdWrap"],
     lcd: b => lcd.admin.page === "menu" ? b.ev === UI.A_EXIT : b.ev === UI.A_PAGE && b.payload === "menu",
     done: () => !S(ST.ADMIN) };
@@ -216,7 +224,7 @@
     m.touch(EV.CONFIRM); fast(300); m.touch(EV.SELECT, ml); m.placeBottle(true);
     fast(ml / 100 * CFG.DISPENSE_MS_PER_100ML + 2000); m.placeBottle(false);
     if (S(ST.COMPLETE)) m.touch(EV.FINISH);
-    fast(40000); m.takeTray();
+    fast(120000); m.takeTray();   // the hoppers take 6 s per P5 and 12 s per P1
   }
 
   const LESSONS = [
@@ -247,14 +255,20 @@
         { say: "Tap Finish to get the rest back as change.", three: "lcd", dom: ["#lcdWrap"], lcd: lcdBtn(EV.FINISH),
           done: () => !S(ST.COMPLETE) }, takeTray],
       end: "Put back in time, it carries on. If not, you pay only for full 100 mL steps poured (305 mL counts as 300 mL) and the rest comes back as change." },
-    { id: "c5", who: "Customer", title: "Forgot the bottle", blurb: "The buzzer, then a full refund at 20 s", view: "use",
+    { id: "c5", who: "Customer", title: "Forgot the bottle, and the green button", blurb: "The buzzer, the 20 s cancel, and CONFIRM", view: "use",
       steps: () => [coins(2, "two ₱1 coins, one at a time", 1), cont, choose(200), dispense,
         { say: "Now do NOT put a bottle in. Wait and listen.", why: "After 15 seconds the buzzer reminds you.", wait: true,
-          done: () => m.warns >= 1 || m.state >= ST.PAYING },
-        { say: "It buzzes again at 18 seconds. Keep waiting.", wait: true, done: () => m.warns >= 2 || m.state >= ST.PAYING },
-        { say: "At 20 seconds the sale is cancelled.", why: "Every peso you paid comes back to the tray.", wait: true,
-          done: () => inS(ST.THANKYOU, ST.STANDBY) }, takeTray],
-      end: "No bottle, no charge. The full ₱2 came back." },
+          done: () => m.warns >= 1 || !S(ST.AWAITING) },
+        { say: "It buzzes again at 18 seconds. Keep waiting.", wait: true, done: () => m.warns >= 2 || !S(ST.AWAITING) },
+        { say: "At 20 seconds the amount is cancelled, but your ₱2 stays on the screen.",
+          why: "There is no refund before buying: the machine sells water, it does not change coins. You go back to choosing.",
+          wait: true, done: () => S(ST.SELECTING) },
+        choose(200), dispense,
+        { say: "Say the sensor does not see your bottle. Press the green CONFIRM button under the screen.",
+          why: "The green button starts the pour without the bottle sensor. Click it on the machine, or the green round button in the Customer card.",
+          three: "confirm", dom: ["#bConfirm"], done: () => m.state >= ST.DISPENSING && inSale() },
+        waitFill(() => m.state >= ST.PAYING && inSale() || S(ST.STANDBY), "Wait while it pours.")],
+      end: "If the sensor misses your bottle, the green button starts the pour. Keep the bottle under the nozzle: a pour started this way does not stop if the bottle is moved." },
     { id: "c6", who: "Customer", title: "Out of service screen", blurb: "Why the machine sometimes will not take coins", view: "use",
       setup: () => { m.tank = 1000; m.galA = 2000; m.galB = 2000; fast(200); },
       steps: () => [gotIt("Read the screen: Out of service, Out of water.",
@@ -270,23 +284,23 @@
         page("coins", "Coins", "How many of each coin came in, what is in each change hopper now, and what is in the locked coin box."),
         page("water", "Water", "Cold tank level, both gallons, and whether the refill pump is running."),
         page("history", "History", "Every sale, login, wrong PIN and fault, newest first."), exitAdmin],
-      end: "Admin locks for 5 minutes after 3 wrong PINs, and logs itself out after 60 seconds untouched." },
+      end: "Admin locks for 5 minutes after 3 wrong PINs, and logs itself out when left untouched. The same Admin is on the machine's phone page." },
     { id: "a2", who: "Attendant", title: "Load change", blurb: "Fix NOT ENOUGH CHANGE", view: "use",
       setup: () => { m.inv.p1 = 2; m.inv.p5 = 3; fast(200); },
       steps: () => [gotIt("The screen says: Not enough change in the machine.",
-          "Before it takes any money, the machine checks that it could pay the worst-case change (₱34). On the real machine, open the cabinet and pour ₱1 coins into the ₱1 hopper first."),
+          "Before it takes any money, the machine checks that it could pay the worst-case change (₱39). On the real machine, open the cabinet and pour ₱1 coins into the ₱1 hopper first."),
         holdDrop, pin, page("change", "Load change", "Here you record how many coins are now in each hopper."),
         { say: "Set the ₱1 count to 60: tap +10 until it shows 60.", three: "lcd", dom: ["#lcdWrap"],
           why: "Enter what you really put in. The machine plans every payout from these counts.",
           lcd: b => b.ev === UI.A_STEP && b.payload.key === "p1" && b.payload.d === 10,
           done: () => S(ST.ADMIN) && (lcd.admin.page === "change" && lcd.admin.p1 >= 60 || m.inv.p1 >= 60) },
-        { say: "Tap CONFIRM to save the count.", three: "lcd", dom: ["#lcdWrap"], lcd: lcdBtn(UI.A_CONFIRM),
+        { say: "Tap SAVE to save the count.", three: "lcd", dom: ["#lcdWrap"], lcd: lcdBtn(UI.A_CONFIRM),
           done: () => m.fault !== FAULT.LOW_CHANGE }, exitAdmin],
       end: "Back in service. The fault cleared itself as soon as the count covered the worst case." },
     { id: "a3", who: "Attendant", title: "Clear a change jam", blurb: "A customer is owed change", view: "use",
       setup: () => {
         m.jamNext = true; m.insertCoin(10); fast(3000); m.touch(EV.CONFIRM); fast(300); m.touch(EV.SELECT, 300);
-        m.placeBottle(true); fast(25000); m.placeBottle(false); if (S(ST.COMPLETE)) m.touch(EV.FINISH); fast(40000); m.takeTray();
+        m.placeBottle(true); fast(25000); m.placeBottle(false); if (S(ST.COMPLETE)) m.touch(EV.FINISH); fast(60000); m.takeTray();
         q("cJam").checked = false;
       },
       steps: () => [gotIt("The screen says: Change dispenser jammed.",
@@ -392,7 +406,8 @@
   const arrow = new THREE.Mesh(new THREE.ConeGeometry(0.016, 0.045, 18),
     new THREE.MeshBasicMaterial({ color: 0xffb300, depthTest: false, transparent: true }));
   arrow.rotation.x = Math.PI; arrow.renderOrder = 999; arrow.visible = false; scene.add(arrow);
-  const ARROW = { slot: [0.20, 1.25, FZ + 0.03], lcd: [-0.12, 1.49, FZ + 0.03], bay: [-0.12, 1.06, FZ - 0.04],
+  const ARROW = { slot: [0.20, 1.24, FZ + 0.03], lcd: [0.20, 1.50, FZ + 0.03], bay: [-0.12, 1.02, FZ - 0.04],
+                  confirm: [0.20, 1.35, FZ + 0.03],
                   tray: [0.20, 0.85, FZ + 0.01], galA: [GAL.a.x, 0.7, 0.02], galB: [GAL.b.x, 0.7, 0.02], box: [0.20, 0.95, -0.19] };
 
   const lcdDraw = lcd.draw.bind(lcd);
@@ -402,7 +417,8 @@
     const g = lcd.g, a = 0.55 + 0.45 * Math.sin(now / 160);
     g.save(); g.strokeStyle = `rgba(255,196,0,${a})`; g.lineWidth = 4;
     if (s.lcd) for (const b of lcd.btn) if (b.enabled && s.lcd(b)) { g.beginPath(); g.roundRect(b.x - 3, b.y - 3, b.w + 6, b.h + 6, 13); g.stroke(); }
-    if (s.lcdRect && !lcd.pinEntry && !S(ST.ADMIN)) { const [x, y, w, h] = s.lcdRect; g.beginPath(); g.roundRect(x, y, w, h, 16); g.stroke(); }
+    const rect = typeof s.lcdRect === "function" ? s.lcdRect() : s.lcdRect;
+    if (rect && !lcd.pinEntry && !S(ST.ADMIN)) { const [x, y, w, h] = rect; g.beginPath(); g.roundRect(x, y, w, h, 16); g.stroke(); }
     g.restore();
   };
 

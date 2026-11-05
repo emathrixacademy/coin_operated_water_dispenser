@@ -1,8 +1,8 @@
 "use strict";
 // The 3.5" 480 x 320 customer screen, ported from esp32_bridge/src/ui_lcd.cpp: same coordinates,
-// colours, words and buttons. The amount picker is local to the screen until DISPENSE, as there.
+// colours, words and buttons, as on the bench branch of 2026-10-31. The amount picker is local to the screen until DISPENSE, as there.
 
-const LCD_W = 480, LCD_H = 320, TOP = 44, MAX_BUY_ML = 1500;
+const LCD_W = 480, LCD_H = 320, TOP = 44, MAX_BUY_ML = 2000;
 const C = { BG: "rgb(12,24,36)", CARD: "rgb(22,38,56)", LINE: "rgb(48,70,92)", INK: "rgb(236,243,248)",
             MUTE: "rgb(140,163,181)", ACC: "rgb(30,136,229)", WATER: "rgb(38,198,218)", OK: "rgb(46,204,113)",
             WARN: "rgb(245,166,35)", BAD: "rgb(229,83,61)", DIM: "rgb(42,59,77)" };
@@ -15,7 +15,7 @@ const FAULT_TEXT = ["", "Out of water", "Not enough change in the machine", "Coi
 const UI = { SET: -3, STATS_CLOSE: -4, STATS_OPEN: -5,
              // Admin (SPEC 8). Handled on the screen, which then calls the machine.
              A_PAGE: -10, A_STEP: -11, A_CONFIRM: -12, A_CLEAR: -13, A_RESET: -14, A_EXIT: -15,
-             K_DIGIT: -16, K_CLR: -17, K_OK: -18, K_CANCEL: -19 };
+             K_DIGIT: -16, K_CLR: -17, K_OK: -18, K_CANCEL: -19, A_OPEN: -20 };
 
 function money(c) { return c % 100 ? `PHP ${Math.floor(c / 100)}.${String(c % 100).padStart(2, "0")}` : `PHP ${c / 100}`; }
 function volume(ml) {
@@ -121,12 +121,12 @@ class Lcd {
       const items = [["Profit", "profit", true], ["Coins", "coins", true], ["Water", "water", true],
                      ["Load change", "change", true], ["Clear fault", "clear", !!m.fault], ["History", "history", true]];
       items.forEach(([lab, page, en], i) => {
-        const x = 10 + (i % 3) * 155, y = TOP + 68 + Math.floor(i / 3) * 60;
-        if (page === "clear") this.button(x, y, 150, 54, lab, UI.A_CLEAR, 0, en, false);
-        else this.button(x, y, 150, 54, lab, UI.A_PAGE, page, en, i < 3);
+        const x = 10 + (i % 3) * 156, y = TOP + 76 + Math.floor(i / 3) * 62;
+        if (page === "clear") this.button(x, y, 148, 54, lab, UI.A_CLEAR, 0, en, false, F.F9B);
+        else this.button(x, y, 148, 54, lab, UI.A_PAGE, page, en, i < 3, i < 3 ? F.F12B : F.F9B);
       });
-      this.button(10, TOP + 188, 150, 40, "Change PIN", UI.A_PAGE, "pin", true, false, F.F9B);
-      if (a.msg) this.text(a.msg, 320, TOP + 208, F.F9B, C.WARN);
+      this.button(10, TOP + 200, 148, 46, "Change PIN", UI.A_PAGE, "pin", true, false, F.F9B);
+      if (a.msg) this.text(a.msg, 320, TOP + 223, F.F9B, C.WARN);
     } else if (a.page === "profit") {
       const t = m.stats.today, all = m.stats.all;
       this.adminHeader("Profit");
@@ -191,12 +191,12 @@ class Lcd {
       this.keypad(244, TOP + 50);
     } else if (a.page === "change") {
       this.adminHeader("Load change");
-      this.text("Count the coins in each hopper, enter it, then CONFIRM.", 14, TOP + 52, F.FONT2, C.MUTE, "left");
+      this.text("Count the coins in each hopper, set them here, then Save.", 14, TOP + 52, F.FONT2, C.MUTE, "left");
       this.counter(TOP + 68, "P1 hopper", "p1");
       this.counter(TOP + 128, "P5 hopper", "p5");
       const changed = a.p1 !== m.inv.p1 || a.p5 !== m.inv.p5;
       this.button(10, H - 58, 150, 52, "Cancel", UI.A_PAGE, "menu", true, false);
-      this.button(170, H - 58, 300, 52, "CONFIRM", UI.A_CONFIRM, 0, changed, true, F.F18B);
+      this.button(170, H - 58, 300, 52, "SAVE", UI.A_CONFIRM, 0, changed, true, F.F18B);
     } else if (a.page === "history") {
       this.adminHeader("History (last 20)");
       if (!m.history.length) { this.text("Nothing recorded yet", W / 2, 180, F.F9, C.MUTE); return; }
@@ -347,9 +347,15 @@ class Lcd {
     this.clampSel();
     const canBuy = m.maxml() >= 100;
     if (canBuy) this.text(volume(this.sel), LCD_W - 14, TOP + 18, F.F12B, C.WATER, "right");
-    for (let i = 0; i < MAX_BUY_ML / 100; i++) this.tile(10 + (i % 5) * 93, TOP + 40 + Math.floor(i / 5) * 58, 86, 52, (i + 1) * 100);
-    this.button(10, LCD_H - 58, 150, 52, "Refund", EV.FINISH, -1, true, false);
-    this.button(170, LCD_H - 58, 300, 52, "DISPENSE", EV.SELECT, this.sel, canBuy, true, F.F18B);
+    // Every size from 100 mL to the ceiling in 100 mL steps: 20 tiles, 5 x 4.
+    for (let i = 0; i < MAX_BUY_ML / 100; i++) this.tile(10 + (i % 5) * 93, TOP + 34 + Math.floor(i / 5) * 47, 86, 43, (i + 1) * 100);
+    // No refund before buying (client, 2026-10-31): Finish appears only once water has been bought.
+    if (m.total > 0) {
+      this.button(10, LCD_H - 54, 150, 50, "Finish", EV.FINISH, -1, true, false);
+      this.button(170, LCD_H - 54, 300, 50, "DISPENSE", EV.SELECT, this.sel, canBuy, true, F.F18B);
+    } else {
+      this.button(10, LCD_H - 54, 460, 50, "DISPENSE", EV.SELECT, this.sel, canBuy, true, F.F18B);
+    }
   }
 
   statCard(x, y, label, value, c) {
@@ -389,7 +395,7 @@ class Lcd {
         this.text("Credit", W / 2, TOP + 36, F.F9, C.MUTE);
         this.text(c, W / 2, TOP + 84, F.F24B, C.INK);
         this.text("Insert more coins, or tap Continue", W / 2, TOP + 132, F.F9, C.MUTE);
-        this.button(120, H - 92, 240, 70, "CONTINUE", EV.CONFIRM, -1, true, true, F.F18B);
+        this.button(10, H - 80, 460, 70, "CONTINUE", EV.CONFIRM, -1, true, true, F.F18B);
         break;
       case ST.SELECTING: this.drawSelect(); break;
       case ST.AWAITING:
@@ -434,8 +440,9 @@ class Lcd {
       default:
         this.iconDrop(W / 2, 118, 32, C.WATER);
         this.text("Insert coins to start", W / 2, 200, F.F18B, C.INK);
-        this.text("1 peso = 100 mL   -   up to 15 pesos (1.5 L)", W / 2, 238, F.F9, C.MUTE);
-        this.button(W - 112, H - 48, 102, 38, "Sales", UI.STATS_OPEN, 0, true, false, F.F9B);
+        this.text("1 peso = 100 mL   -   up to 20 pesos (2 L)", W / 2, 238, F.F9, C.MUTE);
+        // Sales live inside Admin (Profit, History), behind the PIN (team request 2026-10-29).
+        this.button(W - 112, H - 48, 102, 38, "Admin", UI.A_OPEN, 0, true, false, F.F9B);
     }
   }
 
@@ -475,7 +482,8 @@ class Lcd {
         x > 180 && x < 300 && y > 64 && y < 168) this.iconHoldSince = performance.now();   // hold the icon for Admin
     for (const b of this.btn) {
       if (!b.enabled || x < b.x || x >= b.x + b.w || y < b.y || y >= b.y + b.h) continue;
-      if (b.ev <= UI.A_PAGE && this.pinEntry) this.pinAction(b);
+      if (b.ev === UI.A_OPEN) this.openAdmin();
+      else if (b.ev <= UI.A_PAGE && this.pinEntry) this.pinAction(b);
       else if (b.ev <= UI.A_PAGE) this.adminAction(b);
       else if (b.ev === UI.SET) { this.sel = b.payload; this.clampSel(); }
       else if (b.ev === UI.STATS_OPEN) { this.statsOpen = true; this.statsSince = performance.now(); }

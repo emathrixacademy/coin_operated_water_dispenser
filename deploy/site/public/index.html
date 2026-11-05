@@ -4,55 +4,51 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Water Refill Vending Machine</title>
-<style>
-  :root { --ink: #14212b; --muted: #5d6b76; --line: #d3e2e6; --brand: #0f5f73; --brand-ink: #fff; --soft: #e6f1f4;
-          --bg: #ffffff; --warn-bg: #fff7dc; --warn-line: #ecd27a; }
-  @media (prefers-color-scheme: dark) {
-    :root { --ink: #e6edf2; --muted: #9fb0bb; --line: #2b3b44; --brand: #2f9bb5; --brand-ink: #fff; --soft: #17262e; --bg: #0f171c;
-            --warn-bg: #3a3214; --warn-line: #6b5a1e; }
-  }
-  * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  main { max-width: 760px; margin: 0 auto; padding: 32px 16px 56px; }
-  h1 { color: var(--brand); font-size: 2rem; line-height: 1.15; margin: 0 0 4px; }
-  .by { color: var(--muted); font-size: .92rem; margin: 0 0 22px; }
-  .notice { background: var(--warn-bg); border: 1px solid var(--warn-line); border-radius: 10px; padding: 12px 16px; margin-bottom: 30px; }
-  h2 { font-size: 1.3rem; margin: 30px 0 10px; }
-  a.big { display: block; text-align: center; background: var(--brand); color: var(--brand-ink); font-weight: 700; font-size: 1.1rem;
-          text-decoration: none; padding: 16px; border-radius: 10px; margin: 8px 0; }
-  a.big:hover { filter: brightness(1.08); }
-  .help { background: var(--soft); border-radius: 10px; padding: 12px 16px; font-size: .95rem; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
-  .doc { display: block; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; text-decoration: none; color: var(--ink); }
-  .doc:hover { border-color: var(--brand); }
-  .doc b { color: var(--brand); display: block; margin-bottom: 2px; }
-  .doc span { color: var(--muted); font-size: .88rem; }
-  footer { color: var(--muted); font-size: .85rem; margin-top: 40px; border-top: 1px solid var(--line); padding-top: 14px; }
-</style>
+<link rel="stylesheet" href="site.css">
 </head>
 <body>
-<main>
+<nav class="top"><div class="in">
+  <a class="brand" href="./">Water Vendo</a>
+  <a class="tab on" href="./">Overview</a>
+  <a class="tab" href="wiring.html">Wiring</a>
+  <a class="tab" href="exploded.html">Exploded view</a>
+  <a class="tab" href="materials.html">Materials</a>
+  <a class="tab" href="flowchart.html">Flowchart</a>
+  <a class="tab" href="simulation/">Simulation</a>
+</div></nav>
+<main class="narrow">
   <h1>Water Refill Vending Machine</h1>
   <p class="by">Built by eMathrix Technologies · Project EMX-2026-WATERVENDO-01</p>
 
-  <div class="notice"><b>Research prototype.</b> A coin-operated chilled-water kiosk: ₱1 buys 100 mL, up to ₱15 (1.5 L)
-    per customer, with automatic change from ₱1 and ₱5 hoppers. Everything on this page matches the firmware and the
-    as-built wiring of the unit on the bench.</div>
+  <div class="notice"><b>Research prototype.</b> A coin-operated chilled-water kiosk: ₱1 buys 100 mL, up to ₱20 (2 L)
+    per customer, with automatic change from ₱1 and ₱5 hoppers. This page follows the firmware being tested on the bench
+    unit (31 Oct 2026).</div>
 
-  <h2>3D simulation</h2>
+  <h2>3D simulation and practice</h2>
   <a class="big" href="simulation/">Open the interactive 3D simulation</a>
-  <div class="help">Operate the machine in the browser: insert coins, choose an amount on the same touchscreen the machine
-    has, place a bottle and collect the change. Turn and zoom the cabinet to follow each coin through the gates and the water
-    from the gallons to the bottle. Try the faults too: empty gallons, low change, a jammed hopper.</div>
+  <div class="help">Operate the machine in the browser: drop coins in the coin slot, choose an amount on the same
+    touchscreen the machine has, put a bottle in the bay and collect the change. Guided lessons teach customers and
+    attendants step by step, and every sale is recorded so the numbers can be checked.</div>
+
+  <h2>About the machine</h2>
+  <div class="grid">
+    <a class="doc" href="wiring.html"><b>Wiring</b><span>Every pin on the controller, the power wiring and the drawings</span></a>
+    <a class="doc" href="exploded.html"><b>Exploded view</b><span>The cabinet taken apart in 3D, part by part</span></a>
+    <a class="doc" href="materials.html"><b>Materials</b><span>The parts the machine is built from</span></a>
+    <a class="doc" href="flowchart.html"><b>Flowchart</b><span>A sale from the first coin to the change</span></a>
+  </div>
 
   <h2>Firmware</h2>
-  <a class="big" href="https://github.com/emathrixacademy/coin_operated_water_dispenser/archive/refs/heads/main.zip">Download the firmware (full source code)</a>
-  <div class="help">Arduino Mega 2560 firmware (PlatformIO) and the ESP32 touchscreen firmware. The machine is standalone:
-    no network, no cloud. Build and flash instructions are in the README inside the download.</div>
+  <a class="big" href="https://github.com/emathrixacademy/coin_operated_water_dispenser/archive/refs/heads/fix/review-bugs-layout5.zip">Download the bench firmware (31 Oct 2026)</a>
+  <a class="big alt" href="https://github.com/emathrixacademy/coin_operated_water_dispenser/archive/refs/heads/main.zip">Download the main branch</a>
+  <div class="help">Arduino Mega 2560 firmware (PlatformIO) and the ESP32 touchscreen firmware. The bench firmware is the
+    version running on the unit under test (₱20 / 2 L, green CONFIRM button, measured pour time); it joins the main branch
+    once the team has finished testing. No internet or cloud: the ESP32 display runs a short-range WiFi hotspot for a phone
+    page used on the bench. Build and flash instructions are in the README inside the download.</div>
 
-  <h2>Wiring and drawings</h2>
+  <h2>Drawings</h2>
   <div class="grid">
-    <a class="doc" href="docs/wiring-asbuilt.html"><b>As-built wiring schematic</b><span>Pin map per component, interactive (Oct 29, 2026)</span></a>
+    <a class="doc" href="docs/wiring-asbuilt.html"><b>As-built wiring schematic</b><span>Pin map per component, interactive (29 Oct 2026)</span></a>
     <a class="doc" href="docs/Water-Vendo-Wiring.pdf"><b>Wiring schematic, printable</b><span>PDF, 12 pages</span></a>
     <a class="doc" href="docs/wiring.md"><b>Wiring notes</b><span>Power, grounds, and why each pin is where it is</span></a>
     <a class="doc" href="docs/Emathrix_FabDrawing_CoinRouting_RevB.pdf"><b>Coin routing fabrication drawing</b><span>Rev B, PDF</span></a>

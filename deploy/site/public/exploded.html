@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Exploded View · Water Vendo</title>
+<link rel="stylesheet" href="site.css">
+<style>
+  body { display: flex; flex-direction: column; height: 100vh; }
+  #wrap { position: relative; flex: 1; min-height: 360px; }
+  #view { position: absolute; inset: 0; }
+  #panel { position: absolute; left: 16px; top: 16px; z-index: 3; background: var(--card); border: 1px solid var(--line);
+           border-radius: 12px; padding: 12px 14px; width: min(340px, calc(100% - 32px)); box-shadow: 0 6px 20px rgba(0,0,0,.12); }
+  #panel h1 { font-size: 1.25rem; margin: 0 0 2px; }
+  #panel p { margin: 0 0 10px; color: var(--muted); font-size: .88rem; }
+  #panel input[type=range] { width: 100%; }
+  .btns { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .btns button { font: inherit; font-size: .88rem; border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 8px; padding: 5px 10px; cursor: pointer; }
+  .btns button.on { background: var(--brand); color: var(--brand-ink); border-color: var(--brand); }
+  #info { margin-top: 10px; font-size: .9rem; min-height: 44px; }
+  #info b { color: var(--brand); }
+  .lab3 { position: absolute; z-index: 2; transform: translate(-50%, -100%); background: var(--card); color: var(--ink); border: 1px solid var(--line);
+          border-radius: 5px; padding: 1px 6px; font-size: 11.5px; white-space: nowrap; pointer-events: none; }
+  @media (max-width: 600px) { #panel { top: auto; bottom: 12px; } .lab3 { font-size: 10px; } }
+</style>
+</head>
+<body>
+<nav class="top"><div class="in">
+  <a class="brand" href="./">Water Vendo</a>
+  <a class="tab" href="./">Overview</a>
+  <a class="tab" href="wiring.html">Wiring</a>
+  <a class="tab on" href="exploded.html">Exploded view</a>
+  <a class="tab" href="materials.html">Materials</a>
+  <a class="tab" href="flowchart.html">Flowchart</a>
+  <a class="tab" href="simulation/">Simulation</a>
+</div></nav>
+<div id="wrap">
+  <div id="view"></div>
+  <div id="panel">
+    <h1>Exploded view</h1>
+    <p>Slide to take the cabinet apart. Drag to turn, scroll to zoom. Click a part to read what it does.</p>
+    <input id="amt" type="range" min="0" max="100" value="70" aria-label="How far apart">
+    <div class="btns">
+      <button id="bShut">Assembled</button><button id="bOpen" class="on">Exploded</button>
+      <button id="bLab" class="on">Labels</button><button id="bSpin">Turn</button>
+    </div>
+    <div id="info">Concept geometry from the cabinet photos, 178 × 69 × 61 cm. Proportions are approximate.</div>
+  </div>
+</div>
+<script src="simulation/vendor/three.min.js"></script>
+<script src="simulation/vendor/OrbitControls.js"></script>
+<script>
+(() => {
+  const view = document.getElementById("view"), wrap = document.getElementById("wrap");
+  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.outputEncoding = THREE.sRGBEncoding;
+  view.appendChild(renderer.domElement);
+  const scene = new THREE.Scene(); scene.background = new THREE.Color(dark ? 0x0f171c : 0xeef3f6);
+  const camera = new THREE.PerspectiveCamera(35, 1, 0.01, 40);
+  camera.position.set(2.9, 2.0, 3.6);
+  const controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.target.set(0, 0.85, 0); controls.enableDamping = true;
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x7a8790, 0.9));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.7); sun.position.set(2, 4, 3); scene.add(sun);
+
+  const M = (c, o = {}) => new THREE.MeshStandardMaterial(Object.assign({ color: c, roughness: 0.55, metalness: 0.15 }, o));
+  const BLUE = M(0x2f97dc), WHITE = M(0xf1f4f6, { side: THREE.DoubleSide }), DARK = M(0x2a3238), STEEL = M(0xc5ccd1, { metalness: 0.7, roughness: 0.3 });
+  const W = 0.69, D = 0.61, HB = 0.72, HT = 1.74, FZ = D / 2;
+  const parts = [];
+  function part(name, info, offset, labelAt) {
+    const g = new THREE.Group(); g.userData = { name, info, offset: new THREE.Vector3(...offset), labelAt: new THREE.Vector3(...labelAt) };
+    scene.add(g); parts.push(g); return g;
+  }
+  const box = (g, w, h, d, m, x, y, z) => { const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); b.position.set(x, y, z); g.add(b); return b; };
+  const cyl = (g, r1, r2, h, m, x, y, z, rx = 0, rz = 0) => { const c = new THREE.Mesh(new THREE.CylinderGeometry(r1, r2, h, 28), m); c.position.set(x, y, z); c.rotation.set(rx, 0, rz); g.add(c); return c; };
+
+  // frame and roof
+  { const g = part("Steel frame", "Powder-coated blue frame: four posts and the rails at the base, the middle shelf and the top.", [0, 0, 0], [-W / 2, 1.2, FZ]);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) box(g, 0.03, HT, 0.03, BLUE, sx * (W / 2 - 0.015), HT / 2, sz * (D / 2 - 0.015));
+    for (const y of [0.02, HB, HT - 0.015]) { for (const sz of [-1, 1]) box(g, W, 0.03, 0.03, BLUE, 0, y, sz * (D / 2 - 0.015)); for (const sx of [-1, 1]) box(g, 0.03, 0.03, D, BLUE, sx * (W / 2 - 0.015), y, 0); }
+    box(g, W - 0.05, 0.012, D - 0.05, M(0x9aa4ab), 0, HB + 0.006, 0); }
+  { const g = part("Roof", "Flat roof with an overhang, keeps drips off the front.", [0, 0.55, 0], [0, HT + 0.06, 0]);
+    box(g, W + 0.06, 0.04, D + 0.06, BLUE, 0, HT + 0.02, 0); }
+  { const g = part("Base and castors", "Blue base box under the body, on four swivel castors with brakes.", [0, -0.45, 0], [0, 0.2, FZ]);
+    box(g, W, HB - 0.04, 0.008, BLUE, 0, HB / 2, FZ); box(g, W, HB - 0.04, 0.008, BLUE, 0, HB / 2, -FZ);
+    for (const sx of [-1, 1]) box(g, 0.008, HB - 0.04, D, BLUE, sx * W / 2, HB / 2, 0);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) { const x = sx * (W / 2 - 0.06), z = sz * (D / 2 - 0.06);
+      box(g, 0.05, 0.05, 0.035, STEEL, x, -0.03, z); cyl(g, 0.04, 0.04, 0.026, DARK, x, -0.065, z + 0.01, 0, Math.PI / 2); } }
+  // panels
+  { const g = part("Front panel", "White front: the screen, green CONFIRM button and coin slot in the right-hand column; the dispensing bay on the left; the change tray below.", [0, 0, 0.75], [-0.2, 1.55, FZ]);
+    const s = new THREE.Shape(); s.moveTo(-W / 2, HB); s.lineTo(W / 2, HB); s.lineTo(W / 2, HT); s.lineTo(-W / 2, HT); s.closePath();
+    const hole = (cx, cy, w, h) => { const p = new THREE.Path(); p.moveTo(cx - w / 2, cy - h / 2); p.lineTo(cx - w / 2, cy + h / 2); p.lineTo(cx + w / 2, cy + h / 2); p.lineTo(cx + w / 2, cy - h / 2); p.closePath(); s.holes.push(p); };
+    hole(0.20, 1.42, 0.11, 0.076); hole(-0.12, 0.98, 0.26, 0.36); hole(0.20, 0.79, 0.14, 0.045); hole(0.20, 1.12, 0.075, 0.15);
+    const m = new THREE.Mesh(new THREE.ShapeGeometry(s), WHITE); m.position.z = FZ; g.add(m);
+    box(g, 0.03, HT - HB, 0.01, BLUE, 0.065, (HT + HB) / 2, FZ + 0.005); }
+  { const g = part("Left side panel", "White side sheet.", [-0.6, 0, 0], [-W / 2, 1.5, 0]);
+    box(g, 0.006, HT - HB, D, WHITE, -W / 2, (HT + HB) / 2, 0); }
+  { const g = part("Right side and service doors", "Upper and lower service doors, locked. The power cord leaves through the lower door.", [0.6, 0, 0], [W / 2, 1.5, 0]);
+    box(g, 0.006, HT - HB, D, WHITE, W / 2, (HT + HB) / 2, 0);
+    for (const [y0, y1, z0, z1] of [[1.13, 1.70, -0.27, 0.24], [0.76, 1.10, -0.10, 0.12]]) {
+      box(g, 0.01, y1 - y0, 0.012, M(0x9aa7b1), W / 2 + 0.005, (y0 + y1) / 2, z0); box(g, 0.01, y1 - y0, 0.012, M(0x9aa7b1), W / 2 + 0.005, (y0 + y1) / 2, z1);
+      box(g, 0.01, 0.012, z1 - z0, M(0x9aa7b1), W / 2 + 0.005, y0, (z0 + z1) / 2); box(g, 0.01, 0.012, z1 - z0, M(0x9aa7b1), W / 2 + 0.005, y1, (z0 + z1) / 2); }
+    cyl(g, 0.014, 0.014, 0.02, STEEL, W / 2 + 0.015, 0.93, 0.09, 0, Math.PI / 2); }
+  { const g = part("Back panel", "White back sheet; the compressor's heat leaves here.", [0, 0, -0.65], [0, 1.5, -FZ]);
+    box(g, W, HT - HB, 0.006, WHITE, 0, (HT + HB) / 2, -FZ); }
+  // front fittings
+  { const g = part("Screen, CONFIRM button and coin slot", "ESP32 3.5\" touch display, the green CONFIRM push button, and the Allan multi-coin slot.", [0.25, 0.1, 1.15], [0.2, 1.5, FZ]);
+    box(g, 0.13, 0.095, 0.03, DARK, 0.20, 1.42, FZ - 0.01); box(g, 0.075, 0.05, 0.006, M(0x1f6fa8, { emissive: 0x0c2c44 }), 0.20, 1.42, FZ + 0.006);
+    cyl(g, 0.011, 0.011, 0.02, M(0x23b14d, { emissive: 0x0b4d1f }), 0.20, 1.30, FZ, Math.PI / 2);
+    box(g, 0.075, 0.15, 0.02, STEEL, 0.20, 1.12, FZ); box(g, 0.07, 0.13, 0.09, M(0x41494f), 0.20, 1.12, FZ - 0.055); }
+  { const g = part("Dispensing bay", "Bay with the yellow nozzle fitting and the IR bottle sensor; the drip grate at the bottom.", [-0.2, 0, 1.0], [-0.12, 1.2, FZ]);
+    box(g, 0.26, 0.006, 0.22, DARK, -0.12, 1.16, FZ - 0.11); box(g, 0.26, 0.36, 0.006, DARK, -0.12, 0.98, FZ - 0.22);
+    for (const sx of [-1, 1]) box(g, 0.006, 0.36, 0.22, DARK, -0.12 + sx * 0.13, 0.98, FZ - 0.11);
+    box(g, 0.25, 0.012, 0.21, STEEL, -0.12, 0.806, FZ - 0.11);
+    cyl(g, 0.012, 0.012, 0.04, M(0xd9a521), -0.12, 1.14, FZ - 0.09); cyl(g, 0.005, 0.005, 0.07, STEEL, -0.12, 1.09, FZ - 0.09); }
+  // inside
+  { const g = part("Coin path", "Two servo gates route each coin: ₱5 hopper, ₱1 hopper, or the locked coin box (₱10, ₱20). The hoppers pay the change.", [0.75, 0.05, 0.35], [0.24, 0.98, 0.06]);
+    box(g, 0.012, 0.09, 0.03, M(0x9aa3a9, { transparent: true, opacity: 0.6 }), 0.20, 1.02, 0.19);
+    for (const [y, z] of [[1.0, 0.19], [0.965, 0.17]]) { box(g, 0.05, 0.004, 0.035, M(0x7a4cc2), 0.222, y, z); box(g, 0.03, 0.04, 0.02, DARK, 0.17, y, z); }
+    for (const [x, c] of [[0.28, 0xd4b25a], [0.11, 0xc0c4c8]]) { box(g, 0.105, 0.13, 0.13, M(0x3c4a55, { transparent: true, opacity: 0.6 }), x, 0.875, 0.06); cyl(g, 0.04, 0.045, 0.05, M(c, { metalness: 0.8 }), x, 0.84, 0.06); box(g, 0.05, 0.035, 0.035, M(0x555b60), x, 0.80, -0.03); }
+    box(g, 0.14, 0.11, 0.15, M(0x50575c), 0.20, 0.79, -0.19); }
+  { const g = part("Cold tank and compressor", "About 6 L of chilled water in an insulated steel tank, with the ultrasonic level sensor on top and the compressor below.", [0, 0.45, -0.35], [-0.05, 1.62, -0.08]);
+    cyl(g, 0.11, 0.11, 0.2, M(0xf3f3f0), -0.05, 1.45, -0.08); cyl(g, 0.095, 0.095, 0.06, STEEL, -0.05, 1.58, -0.08); cyl(g, 0.05, 0.08, 0.07, M(0xe8dcc0), -0.05, 1.64, -0.08);
+    box(g, 0.22, 0.24, 0.22, M(0x6d757b), -0.05, 0.86, -0.12); }
+  { const g = part("Pumps and hoses", "Fill pump (gallons to the tank) and dispense pump (tank to the nozzle), 12 V.", [-0.65, -0.05, 0.1], [-0.2, 1.3, 0]);
+    cyl(g, 0.025, 0.025, 0.07, M(0x2f6fa8), -0.2, 1.25, 0.05, 0, Math.PI / 2); cyl(g, 0.025, 0.025, 0.07, M(0x2f6fa8), -0.2, 0.78, -0.2, 0, Math.PI / 2);
+    const tube = pts => { const c = new THREE.CatmullRomCurve3(pts.map(p => new THREE.Vector3(...p))); g.add(new THREE.Mesh(new THREE.TubeGeometry(c, 40, 0.006, 8), M(0xd8dde0))); };
+    tube([[-0.05, 1.36, -0.08], [-0.17, 1.28, 0.02], [-0.2, 1.25, 0.05]]); tube([[-0.17, 1.25, 0.05], [-0.12, 1.2, FZ - 0.09]]);
+    tube([[-0.155, 0.55, 0.02], [-0.2, 0.7, -0.15], [-0.2, 0.78, -0.2]]); }
+  { const g = part("Water gallons", "Two 5-gallon bottles side by side, each with a capacitive sensor at the reserve line, joined by one Y fitting.", [0, -0.1, 1.1], [0, 0.6, 0.02]);
+    for (const x of [-0.155, 0.155]) { cyl(g, 0.135, 0.135, 0.38, M(0x3a6fe0, { transparent: true, opacity: 0.45 }), x, 0.24, 0.02); cyl(g, 0.03, 0.135, 0.08, M(0x3a6fe0, { transparent: true, opacity: 0.45 }), x, 0.47, 0.02); box(g, 0.03, 0.012, 0.006, M(0xe8d7b0), x, 0.11, 0.157); } }
+  { const g = part("Controller", "Arduino Mega 2560 on the side wall next to the coin slot: reads every coin and sensor, runs the pumps and hoppers, keeps the money records.", [0.85, 0.2, 0.45], [0.31, 1.42, 0.16]);
+    box(g, 0.012, 0.1, 0.055, M(0x1d5ea8), 0.32, 1.37, 0.16); }
+  { const g = part("Power and relays", "12 V supply, fuse block, 5 V and 12 V terminal strips and three 2-channel relay modules on the side wall.", [0.85, 0.1, -0.2], [0.3, 1.55, -0.15]);
+    box(g, 0.012, 0.3, 0.22, M(0x3c444a), 0.32, 1.45, -0.12); for (let i = 0; i < 3; i++) box(g, 0.02, 0.05, 0.05, M(0x2b8fd8), 0.31, 1.52 - i * 0.07, -0.18);
+    box(g, 0.12, 0.08, 0.14, M(0x1e2326), 0.27, 1.2, -0.17); }
+
+  // labels
+  const labs = parts.map(p => { const e = document.createElement("div"); e.className = "lab3"; e.textContent = p.userData.name; wrap.appendChild(e); return e; });
+  let showLab = true, spin = false, amt = 0.7, target = 0.7;
+  const $ = id => document.getElementById(id);
+  const setTarget = v => { target = v; $("amt").value = Math.round(v * 100); $("bShut").classList.toggle("on", v === 0); $("bOpen").classList.toggle("on", v > 0); };
+  $("amt").addEventListener("input", e => { target = amt = e.target.value / 100; $("bShut").classList.toggle("on", amt === 0); $("bOpen").classList.toggle("on", amt > 0); });
+  $("bShut").onclick = () => setTarget(0); $("bOpen").onclick = () => setTarget(1);
+  $("bLab").onclick = () => { showLab = !showLab; $("bLab").classList.toggle("on", showLab); };
+  $("bSpin").onclick = () => { spin = !spin; controls.autoRotate = spin; $("bSpin").classList.toggle("on", spin); };
+
+  const ray = new THREE.Raycaster(), ndc = new THREE.Vector2(); let downAt = null;
+  renderer.domElement.addEventListener("pointerdown", e => { downAt = [e.clientX, e.clientY]; });
+  renderer.domElement.addEventListener("pointerup", e => {
+    if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 5) return;
+    const r = renderer.domElement.getBoundingClientRect();
+    ndc.set((e.clientX - r.left) / r.width * 2 - 1, -(e.clientY - r.top) / r.height * 2 + 1); ray.setFromCamera(ndc, camera);
+    const h = ray.intersectObjects(parts, true)[0]; if (!h) return;
+    let o = h.object; while (o.parent && !parts.includes(o)) o = o.parent;
+    $("info").innerHTML = `<b>${o.userData.name}</b><br>${o.userData.info}`;
+  });
+
+  function resize() { const r = view.getBoundingClientRect(); renderer.setSize(r.width, r.height); camera.aspect = r.width / Math.max(1, r.height); camera.updateProjectionMatrix(); }
+  addEventListener("resize", resize); resize();
+  const v = new THREE.Vector3();
+  (function frame() {
+    amt += (target - amt) * 0.12;
+    for (const p of parts) p.position.copy(p.userData.offset).multiplyScalar(amt);
+    controls.update(); renderer.render(scene, camera);
+    const r = renderer.domElement.getBoundingClientRect(), wr = wrap.getBoundingClientRect();
+    parts.forEach((p, i) => {
+      v.copy(p.userData.labelAt).add(p.position).project(camera);
+      const on = showLab && v.z < 1; labs[i].style.display = on ? "block" : "none";
+      if (on) { labs[i].style.left = (r.left - wr.left + (v.x + 1) / 2 * r.width) + "px"; labs[i].style.top = (r.top - wr.top + (1 - v.y) / 2 * r.height) + "px"; }
+    });
+    requestAnimationFrame(frame);
+  })();
+})();
+</script>
+</body>
+</html>
