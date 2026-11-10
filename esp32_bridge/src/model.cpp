@@ -83,6 +83,11 @@ bool model_apply(const char *line) {
     return true;
   }
 
+  if (!strncmp(line, "CF", 2)) {
+    g_m.cf_seq++;
+    return true;
+  }
+
   if (!strncmp(line, "HE", 2)) {
     g_stats.ready = true;
     return true;

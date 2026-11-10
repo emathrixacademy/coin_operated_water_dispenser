@@ -186,7 +186,8 @@ typedef int32_t volume_t;   // millilitres
 #ifndef COIN_BOX_SENSOR_FITTED
 #define COIN_BOX_SENSOR_FITTED 1
 #endif
-#define PIN_CONFIRM_BTN     40  // LOW = pressed. Advances ACCEPTING -> SELECTING
+// 39, was 40 (team 2026-11-10); the HIGH level LED took 40 in exchange.
+#define PIN_CONFIRM_BTN     39  // LOW = pressed. Advances ACCEPTING -> SELECTING
 // 1: the cabinet has the push button on pin 40 (team, 2026-10-30). Set 0 for
 // a unit with nothing wired there: a floating pin 40 reads as presses.
 #define CONFIRM_BTN_FITTED  1
@@ -247,7 +248,7 @@ typedef int32_t volume_t;   // millilitres
 #define PIN_COMPRESSOR    36  // AC SSR, active LOW
 #define PIN_LED_LOW       37  // Active HIGH
 #define PIN_LED_MID       38  // Active HIGH
-#define PIN_LED_HIGH      39  // Active HIGH
+#define PIN_LED_HIGH      40  // Active HIGH. Was 39, now the CONFIRM button
 
 // The pump and compressor are SOLID STATE, not mechanical -- SPEC 1.5.
 //
@@ -447,7 +448,10 @@ typedef int32_t volume_t;   // millilitres
 // lone 7.6 ms LOW with no coin inserted was counted as a pulse -- a free P1.
 // Window around 50 ms: 30 to 70. If coins stop registering, read the
 // "[pulse]" lines: the coinslot's pulse length is what this must bracket.
-#define COIN_PULSE_MIN_US 30000UL
+// 15 ms, was 30 (bench 2026-11-10): after the coinslot was reprogrammed its
+// pulses came in at 19.9 ms and every coin was rejected. 15 takes both the
+// 20 ms and the old 50 ms setting; the 7.6 ms false pulse above stays out.
+#define COIN_PULSE_MIN_US 15000UL
 // 70 ms, was 200 ms (bench 2026-11-03): with no coin the line threw LOWs of
 // up to 200 ms and credited P30; one over this limit now discards the whole
 // train (coin_acceptor.cpp). A clean P5 then logged five LOWs of 49.8 ms,
@@ -694,6 +698,18 @@ typedef int32_t volume_t;   // millilitres
 // and the water must stop, so 1.
 #define IR_PAUSES_POUR 1
 
+// 1 = the pour stops whenever the IR sees no bottle, even one started by the
+// auto-start or CONFIRM (team 2026-11-10). With no bottle put back within the
+// grace, the sale is charged in full (BOTTLE_REMOVED_CHARGES_FULL). 0 = those
+// pours ignore the IR and stop only when it sees a bottle taken away.
+#define NO_BOTTLE_STOPS_POUR 1
+
+#define BUZZER_TEST_GAP_MS 800   // test console "buzz": one beep per gap
+// Bottle alarm: one BUZZER_BEEP_MS beep every period. 500 = beep-beep-beep.
+#define BUZZER_ALARM_PERIOD_MS 500
+// Bottle taken away mid-pour: the alarm starts here and runs to the end of the
+// grace (BOTTLE_REMOVED_GRACE_MS). Team 2026-11-10: from 8 s of the 10.
+#define BOTTLE_GRACE_ALARM_MS 8000
 #define BUZZER_BEEP_MS 300  // Non-blocking. Long enough to hear over a running pump
 
 // COMPLETE holds this long for the user to choose more-or-finish, then finishes
@@ -739,7 +755,9 @@ typedef int32_t volume_t;   // millilitres
 // 150, was 50: the button's long run past the relays picked up noise that
 // held for 50 ms and sent the machine to the picker mid-insert (bench
 // 2026-10-30). A real press is held far longer than 150 ms.
-#define CONFIRM_DEBOUNCE_MS 150
+// 20, was 150 (team 2026-11-10, quicker response): only contact bounce is
+// filtered now. Put it back to 150 if the picker opens by itself again.
+#define CONFIRM_DEBOUNCE_MS 20
 
 // ---------------------------------------------------------------------------
 // Flow
@@ -950,6 +968,12 @@ typedef int32_t volume_t;   // millilitres
 // what was poured (FILL_MS_PER_100ML vs DISPENSE_MS_PER_100ML), so with the tank
 // sensor lost the drum slowly drops. Overrides PUMPS_ALWAYS_TOGETHER.
 #define FILL_FOLLOWS_POUR 1
+
+// Share of the pour's run, in thousandths, that the fill pump runs for. 976:
+// at the full run the fill pump put back about 25 mL too much per 1 L sold
+// (team 2026-11-10), 1000 / 1025 = 0.976. Lower if the drum still rises, raise
+// if it falls.
+#define FILL_FOLLOW_PERMILLE 976
 
 // OUT OF WATER lockout. Set it so the water ABOVE this line is a full P20 pour
 // (2000 mL) plus a 20% margin, all above the dispense pump intake -- measured,

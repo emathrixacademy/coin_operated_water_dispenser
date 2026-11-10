@@ -1046,6 +1046,17 @@ void ui_changed() {
 
 void ui_loop() {
   const uint32_t now = millis();
+
+  // The CONFIRM push button pressed on the picker: buy the size chosen on the
+  // screen, as the DISPENSE button would (team 2026-11-10).
+  static int32_t s_cf_seen = 0;
+  if (g_m.cf_seq != s_cf_seen) {
+    s_cf_seen = g_m.cf_seq;
+    clamp_sel();
+    if (g_m.state == ST_SELECTING && s_adm == P_NONE && g_m.maxml >= 100) {
+      mega_send_event(EV_SELECT_VOLUME, s_sel_ml);
+    }
+  }
   if ((uint32_t)(now - s_check_ms) >= 500) {   // catches "Mega lost" with no line arriving
     s_check_ms = now;
     s_dirty = true;

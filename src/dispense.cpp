@@ -276,6 +276,10 @@ volume_t dispense_delivered() {
   return v;
 }
 
+volume_t dispense_stop_ml() {
+  return s_target - stop_early(s_target);
+}
+
 volume_t dispense_target() {
   return s_target;
 }

@@ -110,6 +110,11 @@ static bool s_confirm = false;
 static uint32_t s_admin_since = 0;
 static bool s_admin_open = false;
 static int8_t s_admin_reply = -1;   // AU to send: -1 none, 0 refused, 1 accepted
+static bool s_cf_pending = false;   // CF to send: CONFIRM pressed on the picker
+
+void hmi_confirm_on_picker() {
+  s_cf_pending = true;
+}
 static state_t s_sync_state = STATE_BOOT;
 
 void service_servo_test(uint8_t cycles);   // main.cpp, which owns the servo
@@ -433,6 +438,14 @@ static void console_exec(char *cmd) {
     }
   }
   else if (!strcmp(cmd, "gate")) { coin_diverter_exercise(n < 0 ? 0 : (n > 20 ? 20 : (uint8_t)n)); }
+  else if (!strcmp(cmd, "buzzdiag")) {
+    extern void buzzer_diag();   // main.cpp
+    buzzer_diag();
+  }
+  else if (!strcmp(cmd, "buzz")) {
+    extern void buzzer_test(uint8_t beeps);   // main.cpp, which owns the buzzer
+    buzzer_test(n < 1 ? 1 : (n > 10 ? 10 : (uint8_t)n));
+  }
   else if (!strcmp(cmd, "svc")) {
     service_servo_test(n < 0 ? 0 : (n > 10 ? 10 : (uint8_t)n));
   }
@@ -598,6 +611,10 @@ void hmi_update() {
   rx_update();
   status_update();
   stats_update();
+  if (s_cf_pending) {
+    snprintf(s_tx, sizeof(s_tx), "CF");
+    if (try_send_line()) s_cf_pending = false;
+  }
   if (s_admin_reply >= 0) {
     snprintf(s_tx, sizeof(s_tx), "AU %d", s_admin_reply);
     if (try_send_line()) s_admin_reply = -1;

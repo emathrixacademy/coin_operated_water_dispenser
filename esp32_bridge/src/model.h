@@ -43,6 +43,7 @@ struct machine_t {
   int32_t gal_a;      // 1 = gallon A low
   int32_t gal_b;
   uint32_t seen_ms;   // millis() of the last line from the Mega
+  int32_t cf_seq;     // bumps on every CF line: the CONFIRM button on the picker
 };
 
 extern machine_t g_m;

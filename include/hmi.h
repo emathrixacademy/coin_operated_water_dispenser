@@ -33,6 +33,8 @@
 //                                     owed > 0: change not paid (in is 0)
 //     HE                              end of the sales reply
 //     AU <0|1>                        admin PIN refused / accepted
+//     CF                              CONFIRM button pressed on the picker;
+//                                     the screen sends EV 1 <its chosen mL>
 //     VL p1 <n> / VL p5 <n>           coins in the P1 / P5 hopper
 //                                     (SD..HE are sent only when asked, by
 //                                     EV 6 = HMI_EVENT_NAV_STATISTICS)
@@ -145,6 +147,10 @@ hmi_event_t hmi_take_event(int32_t *payload);
 // CONFIRM parked in the slot would block the next real touch until some later
 // state happened to take it.
 bool hmi_confirm_take();
+
+// The physical CONFIRM button was pressed on the picker. Sends CF; the screen
+// answers with SELECT_VOLUME for the size it has chosen.
+void hmi_confirm_on_picker();
 
 #ifdef SERIAL_CONSOLE
 // Test console "skip 1": bench bypass of the OUT OF WATER and LOW CHANGE gates.

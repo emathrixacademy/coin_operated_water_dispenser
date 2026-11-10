@@ -174,10 +174,74 @@ static void buzzer_beep() {
   s_buzz_since = millis();
 }
 
+// Bottle alarm (team 2026-11-10): beeps on repeat in the last seconds before the
+// machine gives up on a bottle -- waiting for one after a selection, and after
+// one was taken away mid-pour.
+static bool bottle_alarm_wanted() {
+  const uint32_t t = state_elapsed();
+  if (s_state == STATE_AWAITING_BOTTLE) {
+    return t >= BOTTLE_WAIT_WARN1_MS && t < BOTTLE_WAIT_CANCEL_MS;
+  }
+  if (s_state == STATE_PAUSED) {
+    return t >= BOTTLE_GRACE_ALARM_MS && t < BOTTLE_REMOVED_GRACE_MS;
+  }
+  return false;
+}
+
+static bool s_alarm_on = false;
+static uint32_t s_alarm_ms = 0;
+
+static void buzzer_beep();
+
+static void buzzer_alarm_update(bool wanted) {
+  if (!wanted) { s_alarm_on = false; return; }
+  if (!s_alarm_on || (uint32_t)(millis() - s_alarm_ms) >= BUZZER_ALARM_PERIOD_MS) {
+    s_alarm_on = true;
+    s_alarm_ms = millis();
+    buzzer_beep();
+  }
+}
+
+// Test console "buzzdiag": D47 held LOW for 2 s, then HIGH for 2 s, then a
+// 2 kHz tone for 2 s, so the team can hear which kind of buzzer is fitted.
+static uint8_t s_bdiag_step = 0;   // 0 off, 1 LOW, 2 HIGH, 3 tone
+static uint32_t s_bdiag_ms = 0;
+
+void buzzer_diag() {
+  s_bdiag_step = 1;
+  s_bdiag_ms = millis();
+  digitalWrite(PIN_BUZZER, LOW);
+}
+
+static void buzzer_diag_update() {
+  if (!s_bdiag_step || (uint32_t)(millis() - s_bdiag_ms) < 2000) return;
+  s_bdiag_ms = millis();
+  if (s_bdiag_step == 1) { digitalWrite(PIN_BUZZER, HIGH); s_bdiag_step = 2; return; }
+  if (s_bdiag_step == 2) { tone(PIN_BUZZER, 2000); s_bdiag_step = 3; return; }
+  noTone(PIN_BUZZER);
+  digitalWrite(PIN_BUZZER, BUZZER_OFF_LEVEL);
+  s_bdiag_step = 0;
+}
+
+// Test console "buzz <n>": n beeps, one every BUZZER_TEST_GAP_MS.
+static uint8_t s_buzz_test_left = 0;
+static uint32_t s_buzz_test_ms = 0;
+
+void buzzer_test(uint8_t beeps) {
+  s_buzz_test_left = beeps > 10 ? 10 : beeps;
+  s_buzz_test_ms = millis() - BUZZER_TEST_GAP_MS;
+}
+
 static void buzzer_update() {
   if (s_buzz_on && (uint32_t)(millis() - s_buzz_since) >= BUZZER_BEEP_MS) {
     digitalWrite(PIN_BUZZER, BUZZER_OFF_LEVEL);
     s_buzz_on = false;
+  }
+  if (s_buzz_test_left && !s_buzz_on &&
+      (uint32_t)(millis() - s_buzz_test_ms) >= BUZZER_TEST_GAP_MS) {
+    s_buzz_test_ms = millis();
+    s_buzz_test_left--;
+    buzzer_beep();
   }
 }
 
@@ -884,6 +948,9 @@ static void state_update(state_t s) {
         break;
       }
 #endif
+      // CONFIRM button on the picker: ask the screen for the size it shows.
+      if (confirm_take()) hmi_confirm_on_picker();
+
       int32_t payload = 0;
       const hmi_event_t e = hmi_take_event(&payload);
 
@@ -959,15 +1026,8 @@ static void state_update(state_t s) {
         transition_to(STATE_SELECTING, TRIG_CONFIRM_PRESSED);
         break;
       }
-      // Silent to 15 s, buzzer, buzzer, then cancel and refund in full. The
-      // user gets two audible warnings before losing the transaction.
-      if (s_bottle_warns == 0 && state_elapsed() >= BOTTLE_WAIT_WARN1_MS) {
-        buzzer_beep();
-        s_bottle_warns = 1;
-      } else if (s_bottle_warns == 1 && state_elapsed() >= BOTTLE_WAIT_WARN2_MS) {
-        buzzer_beep();
-        s_bottle_warns = 2;
-      }
+      // Silent to BOTTLE_WAIT_WARN1_MS, then the alarm sounds until the cancel
+      // (team 2026-11-10; was two single beeps). See bottle_alarm_wanted().
       if (state_elapsed() >= BOTTLE_WAIT_CANCEL_MS) {
         // Cancelled. The selection never poured, so its price goes back to
         // credit in full before the payout is planned -- otherwise the user
@@ -1007,7 +1067,8 @@ static void state_update(state_t s) {
       // bottle) pauses only on a removal edge -- the IR saw a bottle and then
       // lost it. Waiting on presence would pause it at once.
       if (IR_PAUSES_POUR &&
-          (bottle_just_removed() || (!s_bottle_by_button && !bottle_present()))) {
+          (bottle_just_removed() ||
+           ((NO_BOTTLE_STOPS_POUR || !s_bottle_by_button) && !bottle_present()))) {
         transition_to(STATE_PAUSED, TRIG_BOTTLE_REMOVED);
         break;
       }
@@ -1416,15 +1477,23 @@ void loop() {
   hmi_update();
   faults_update();
   confirm_update();
+  buzzer_alarm_update(bottle_alarm_wanted());
   buzzer_update();
+  buzzer_diag_update();
 
 #ifdef BENCH_COIN_TEST
   (void)state_update;   // the sale path is compiled, just not run
   bench_update();
 #else
   state_update(s_state);
+  // Stops at FILL_FOLLOW_PERMILLE of the pour's run, so it puts back what was
+  // poured rather than what it pumps in the same time.
+  // Only with a bottle the IR can see (team 2026-11-10): a pour started without
+  // one (auto-start, CONFIRM) does not refill the drum.
   water_fill_follow_pour(FILL_FOLLOWS_POUR && s_state == STATE_DISPENSING &&
-                         dispense_valve_open());
+                         dispense_valve_open() && bottle_present() &&
+                         (int32_t)dispense_delivered() * 1000L <
+                             (int32_t)dispense_stop_ml() * FILL_FOLLOW_PERMILLE);
   service_servo_update();
   hmi_sync(s_state);
 #endif

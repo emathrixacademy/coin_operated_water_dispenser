@@ -50,6 +50,10 @@ volume_t dispense_delivered();
 
 volume_t dispense_target();
 
+// The count at which the pump stops for the current target (target less the
+// tail and any per-size trim).
+volume_t dispense_stop_ml();
+
 bool dispense_valve_open();
 
 // Clears COMPLETE, STALLED or an aborted state back to IDLE, once the caller
