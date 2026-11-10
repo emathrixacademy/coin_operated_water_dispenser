@@ -227,7 +227,7 @@ typedef int32_t volume_t;   // millilitres
 // angle; signal dropped at rest, like the gates (see GATE_DETACH_MS).
 #define PIN_SERVICE_SERVO 35
 #define SERVICE_SERVO_REST_DEG   0
-#define SERVICE_SERVO_ACTIVE_DEG 30
+#define SERVICE_SERVO_ACTIVE_DEG 25
 // Test console "svc <n>": time per move. Long enough to watch a full swing.
 #define SERVICE_SERVO_TEST_STEP_MS 800
 #define PIN_COMPRESSOR    36  // AC SSR, active LOW
@@ -364,8 +364,11 @@ typedef int32_t volume_t;   // millilitres
 //                 swings back across a coin still in the chute.
 // GATE_RETURN_MS  gates travelling back to the rest position (both open)
 //                 before the next coin may come.
-#define GATE_ROUTE_MS  900
-#define GATE_RETURN_MS 400
+// 100 / 100, were 900 / 400 (team 2026-11-09, servo response). Shorter than the
+// ~200 ms the MG996R needs to travel, so a gate may not finish its swing. Put
+// them back if coins land in the wrong chamber or the chute jams.
+#define GATE_ROUTE_MS  100
+#define GATE_RETURN_MS 100
 
 // Test console "gate <n>": time per gate move. Long enough to watch each move
 // complete; the MG996R needs ~0.2 s for the 55 degree swing.
@@ -405,7 +408,10 @@ typedef int32_t volume_t;   // millilitres
 // spacing measured 326 ms (169 ms before), so 350 split a P5 into "unknown"
 // plus single P1s (bench 2026-10-30). Keep it about twice the spacing; much
 // longer only delays the credit.
-#define COIN_PULSE_GAP_MS 700
+// 350, was 700 (team 2026-11-09, servo response): pulses now log 150 ms apart,
+// so one missing pulse (300 ms) still does not end a train; two in a row splits
+// the coin. Put it back to 700 if coins start reading low.
+#define COIN_PULSE_GAP_MS 350
 
 // Accepted width of one coinslot pulse (LOW time). The Allan coinslot sends
 // pulses of tens of milliseconds; motor and relay spikes are microseconds,
@@ -821,7 +827,18 @@ typedef int32_t volume_t;   // millilitres
 // draining). The pump stops this much short of target; the count stays
 // linear from 0, unlike a negative dead time, which started it at 12%.
 // Raise it if every size pours over by the same amount, lower if under.
-#define DISPENSE_TAIL_ML 30
+// 15, was 30 (bench 2026-11-09): at 4878, 100 -> ~85 and 900 -> 890, so about
+// the same 15 mL short at both ends. A rate change would have over-poured the
+// large sizes to fix the small one.
+#define DISPENSE_TAIL_ML 15
+
+// Sizes trimmed on their own (team, 2026-11-09): these pours ran over. Estimates
+// by eye, not cylinder readings, so re-measure them. Only the pump stop moves;
+// the price and the amount billed stay those of the size chosen.
+#define DISPENSE_TRIM_200ML 20
+#define DISPENSE_TRIM_300ML 30
+#define DISPENSE_TRIM_400ML 48
+#define DISPENSE_TRIM_500ML 60
 
 // 1 = no amount picker. CONFIRM (push button, or Continue on the screen) pours
 // the whole credit, P1 = 100 mL, once the bottle IR sees a bottle.
@@ -949,14 +966,17 @@ typedef int32_t volume_t;   // millilitres
 // as full and sends the next P1/P5 to the box for no reason (harmless, but it
 // starves the change float). Much longer and a coin can still be sent to a
 // hopper that has just filled.
-#define COIN_LEVEL_DEBOUNCE_MS 500
+#define COIN_LEVEL_DEBOUNCE_MS 100   // 500 until team 2026-11-09
 
 // Going FULL needs the beam blocked this long. Bench 2026-10-30: the P5 beam
 // read full for under a second just as a P5 dropped, so the coin went to the
 // box and the refund came out in P1s. A real full hopper stays blocked; a
 // passing hand or a coin settling does not. Much shorter and that comes back;
 // longer only delays the switch to the box once a hopper truly fills.
-#define COIN_LEVEL_FULL_MS 5000
+// 100, was 5000 (team 2026-11-09, servo response). Far below the "under a second"
+// false reading above, so that fault can return. Put it back to 2000 or more if
+// P1 or P5 coins go to the box with the hopper not full.
+#define COIN_LEVEL_FULL_MS 100
 
 // Minimum time the pump stays off after stopping, before it may start again.
 // Back-to-back starts on a diaphragm pump shorten its life; this enforces a

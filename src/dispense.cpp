@@ -57,6 +57,17 @@ static volume_t delivered_now() {
   return s_banked + (s_valve_open || s_settling ? flow_ml() : 0);
 }
 
+// How far short of target the pump stops: the tail, plus any per-size trim.
+static volume_t stop_early(volume_t target) {
+  switch (target) {
+    case 200: return DISPENSE_TAIL_ML + DISPENSE_TRIM_200ML;
+    case 300: return DISPENSE_TAIL_ML + DISPENSE_TRIM_300ML;
+    case 400: return DISPENSE_TAIL_ML + DISPENSE_TRIM_400ML;
+    case 500: return DISPENSE_TAIL_ML + DISPENSE_TRIM_500ML;
+    default:  return DISPENSE_TAIL_ML;
+  }
+}
+
 // Close the valve and bank whatever the sensor counted during this leg.
 static void bank_and_close() {
   const bool was_counting = s_valve_open || s_settling;
@@ -126,7 +137,7 @@ void dispense_update() {
       // DISPENSE_TAIL_ML: water still arriving after the pump stops. Stopping
       // that much early lands the bottle on target without a dead time in the
       // count, which made the display start at 12% (see config.h).
-      if (delivered_now() + DISPENSE_TAIL_ML >= s_target) {
+      if (delivered_now() + stop_early(s_target) >= s_target) {
         // Target reached. Close the valve and start the settle window.
         //
         // The valve does not close instantly and a little water is still in
