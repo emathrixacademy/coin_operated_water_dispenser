@@ -227,7 +227,7 @@ typedef int32_t volume_t;   // millilitres
 // angle; signal dropped at rest, like the gates (see GATE_DETACH_MS).
 #define PIN_SERVICE_SERVO 35
 #define SERVICE_SERVO_REST_DEG   0
-#define SERVICE_SERVO_ACTIVE_DEG 40
+#define SERVICE_SERVO_ACTIVE_DEG 30
 // Test console "svc <n>": time per move. Long enough to watch a full swing.
 #define SERVICE_SERVO_TEST_STEP_MS 800
 #define PIN_COMPRESSOR    36  // AC SSR, active LOW
