@@ -882,7 +882,7 @@ typedef int32_t volume_t;   // millilitres
 #define DISPENSE_TRIM_700ML 80
 #define DISPENSE_TRIM_800ML 70
 #define DISPENSE_TRIM_900ML 60
-#define DISPENSE_TRIM_1000ML 60
+#define DISPENSE_TRIM_1000ML 90
 #define DISPENSE_TRIM_1100ML 60
 #define DISPENSE_TRIM_1200ML 130
 #define DISPENSE_TRIM_1300ML 301   // 48 s of pump time (team 2026-11-10)
