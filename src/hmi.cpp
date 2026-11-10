@@ -10,8 +10,8 @@
 #include "persist.h"
 #include "rtc.h"
 #include "coin_hopper.h"
-#ifdef SERIAL_CONSOLE
 #include "coin_diverter.h"
+#ifdef SERIAL_CONSOLE
 #include "coin_acceptor.h"
 #include "coin_level.h"
 #include "bottle.h"
@@ -112,6 +112,8 @@ static bool s_admin_open = false;
 static int8_t s_admin_reply = -1;   // AU to send: -1 none, 0 refused, 1 accepted
 static state_t s_sync_state = STATE_BOOT;
 
+void service_servo_test(uint8_t cycles);   // main.cpp, which owns the servo
+
 static bool admin_unlocked() {
   if (s_admin_open && (uint32_t)(millis() - s_admin_since) >= ADMIN_UNLOCK_MS) s_admin_open = false;
   return s_admin_open;
@@ -145,6 +147,9 @@ static void admin_event(long ev, long payload) {
       case 2: water_manual_fill(5); break;
       case 3: coin_hopper_clear(); coin_hopper_dispense(HOPPER_P1, 1); break;
       case 4: coin_hopper_clear(); coin_hopper_dispense(HOPPER_P5, 1); break;
+      case 5: coin_diverter_exercise_one(1, 1); break;
+      case 6: coin_diverter_exercise_one(2, 1); break;
+      case 7: service_servo_test(1); break;
       default: break;
     }
   }
@@ -302,6 +307,8 @@ static void console_help() {
   Serial.println(F("[console] fill <s>=run fill pump s seconds, ignores sensors (max 120)  fill 0=stop"));
   Serial.println(F("[console] pour <s>=run dispense pump s seconds, idle only (max 120)  pour 0=stop"));
   Serial.println(F("[console] gate <n>=close/open gate 1 then gate 2, n times (max 20)"));
+  Serial.println(F("[console] gate1 <n> / gate2 <n>=close/open that gate only, n times"));
+  Serial.println(F("[console] svc <n>=service servo on D35, rest to active angle and back, n times (max 10)"));
   Serial.println(F("[console] skip 1=ignore OUT OF WATER and LOW CHANGE for testing  skip 0=normal"));
 }
 
@@ -419,12 +426,24 @@ static void console_exec(char *cmd) {
     }
   }
   else if (!strcmp(cmd, "gate")) { coin_diverter_exercise(n < 0 ? 0 : (n > 20 ? 20 : (uint8_t)n)); }
+  else if (!strcmp(cmd, "svc")) {
+    service_servo_test(n < 0 ? 0 : (n > 10 ? 10 : (uint8_t)n));
+  }
+  else if (!strcmp(cmd, "gate1") || !strcmp(cmd, "gate2")) {
+    coin_diverter_exercise_one(cmd[4] == '1' ? 1 : 2, n < 0 ? 0 : (n > 20 ? 20 : (uint8_t)n));
+  }
   else if (!strcmp(cmd, "p1") || !strcmp(cmd, "p5")) {
     if (n < 0) n = 0;
     persist_inventory_set(cmd[1] == '1' ? DEST_P1_HOPPER : DEST_P5_HOPPER, (uint16_t)n);
     // Stand-in for the Admin load: LOW CHANGE clears here and is re-checked
     // at the STANDBY gate against the new counts.
     faults_clear(FAULT_LOW_CHANGE);
+  }
+  // "void": drop the open transaction with no payout -- for credit that came
+  // from line noise, not coins. Takes effect at the next boot.
+  else if (!strcmp(cmd, "void")) {
+    billing_reset();
+    persist_txn_close();
   }
   else if (!strcmp(cmd, "clr")) {
     for (uint8_t f = 1; f <= (uint8_t)FAULT_ACCEPTOR; f++) faults_clear((fault_t)f);

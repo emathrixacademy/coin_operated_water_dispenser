@@ -96,7 +96,8 @@ enum hmi_event_t : uint8_t {
   // with ADMIN_UNLOCK in the last ADMIN_UNLOCK_MS, and only while the machine
   // is idle. ADMIN_SET_P1 / ADMIN_SET_P5 above use the same gate.
   HMI_EVENT_ADMIN_CLEAR,     // clear every fault
-  HMI_EVENT_ADMIN_TEST,      // payload 1 pour 3 s, 2 refill 5 s, 3 pay one P1, 4 pay one P5
+  HMI_EVENT_ADMIN_TEST,      // payload 1 pour 3 s, 2 refill 5 s, 3 pay one P1, 4 pay one P5,
+                             // 5 gate 1, 6 gate 2, 7 service servo (one swing each)
   HMI_EVENT_ADMIN_UNLOCK     // payload = PIN; answered with "AU 1" or "AU 0"
 };
 

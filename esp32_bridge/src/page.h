@@ -85,7 +85,7 @@ background:var(--card);border:1px solid var(--line);font-weight:800;font-size:15
 </div>
 <script>
 const ST={BOOT:0,STANDBY:1,ACCEPTING:2,SELECTING:3,AWAITING:4,DISPENSING:5,PAUSED:6,SETTLING:7,COMPLETE:8,PAYING:9,THANKYOU:10,FAULT:11,ADMIN:12};
-const EV={SELECT:1,AGAIN:2,FINISH:3,BACK:4,STATS:6,SET_P1:10,SET_P5:11,CONFIRM:15,CLEAR:16};
+const EV={SELECT:1,AGAIN:2,FINISH:3,BACK:4,STATS:6,SET_P1:10,SET_P5:11,CONFIRM:15,CLEAR:16,TEST:17};
 const FAULTS={1:"Out of water",2:"Not enough change in the machine",3:"Coin box is full",4:"Change dispenser jammed",5:"Water flow problem",6:"Refill pump problem",7:"Coin slot problem"};
 const MAX_ML=2000;
 const v={state:0,credit:0,inserted:0,maxml:0,target:0,poured:0,total:0,unpaid:0,p1:0,p5:0,b10:0,b20:0,fill:0},m={fault:0,tank:0,tankok:0,ga:0,gb:0,seen:0};
@@ -151,6 +151,7 @@ function go(p){admAt=Date.now();adm=p;amsg="";
 function adj(k,d){admAt=Date.now();ld[k]=Math.max(0,Math.min(2000,ld[k]+d));draw(true)}
 function saveLoad(){admAt=Date.now();send(EV.SET_P1,ld.p1);send(EV.SET_P5,ld.p5);go("coins")}
 function clearFault(){admAt=Date.now();send(EV.CLEAR);amsg="Clear fault sent";draw(true)}
+function hwTest(n,l){admAt=Date.now();send(EV.TEST,n);amsg=l+" sent";draw(true)}
 const kv=(k,val,cl)=>`<div class="kv"><span>${k}</span><b class="${cl||""}">${val}</b></div>`;
 const atitle=(t,back)=>`<div class="row"><b style="font-size:19px">${t}</b><button class="alt small-btn" onclick="${back?"go('menu')":"admClose()"}">${back?"Back":"Exit"}</button></div>`;
 
@@ -170,7 +171,13 @@ function admPage(){
     <div class="menu"><button onclick="go('profit')">Profit</button><button onclick="go('coins')">Coins</button>
     <button onclick="go('water')">Water</button><button class="alt" onclick="go('load')">Load change</button>
     <button class="alt" ${m.fault?"":"disabled"} onclick="clearFault()">Clear fault</button><button class="alt" onclick="go('hist')">History</button>
-    <button class="alt" onclick="go('chpin');pin=''">Change PIN</button><button class="alt" onclick="admClose()">Exit</button></div>`;
+    <button class="alt" onclick="go('test')">Test</button><button class="alt" onclick="go('chpin');pin=''">Change PIN</button><button class="alt" onclick="admClose()">Exit</button></div>`;
+  if(adm==="test")return atitle("Test",true)+`<p class="t2">Machine must be idle. Coin tests pay one real coin.</p>
+    <p class="ok" style="min-height:20px;margin:4px 0">${amsg}</p>
+    <div class="menu"><button onclick="hwTest(3,'₱1 hopper')">₱1 hopper</button><button onclick="hwTest(4,'₱5 hopper')">₱5 hopper</button>
+    <button class="alt" onclick="hwTest(2,'Water refill')">Water refill (5 s)</button><button class="alt" onclick="hwTest(1,'Dispense pump')">Dispense pump (3 s)</button>
+    <button class="alt" onclick="hwTest(5,'Servo 1')">Servo 1</button><button class="alt" onclick="hwTest(6,'Servo 2')">Servo 2</button>
+    <button class="alt" onclick="hwTest(7,'D35 servo')">D35 servo</button></div>`;
   if(adm==="profit"){if(!S.ready)return atitle("Profit (today)",true)+`<p class="t2">Loading…</p>`;
     const owed=S.rows.reduce((a,r)=>a+(r?r.owed:0),0);
     return atitle("Profit (today)",true)+kv("Income today",peso(S.income),"ok")+kv("Sales",S.count)+kv("Water sold",vol(S.volume),"water")+kv("Change owed (recent)",peso(owed),owed?"warn":"");}
@@ -202,13 +209,14 @@ function body(){
     return `<div class="center"><p class="t2">Dispensing</p><p class="big">${pc}%</p><div class="prog"><i style="width:${pc}%"></i></div><p class="t2">${vol(v.poured)} of ${vol(v.target)}</p></div>`;}
   if(s===ST.PAUSED)return `<div class="center"><div class="icon warn">⚠</div><p class="t1">Bottle removed</p><p class="t2">Put it back within 10 seconds to continue</p></div>`;
   if(s===ST.COMPLETE)return `<div class="center"><div class="icon ok">✔</div><p class="t1">${vol(v.total)} dispensed</p><p class="t2">Credit left</p><p class="big">${c}</p></div>
-    <div class="btns"><button onclick="send(${EV.AGAIN})">Dispense more</button><button class="alt" onclick="send(${EV.FINISH})">Finish</button></div>`;
+    <div class="btns"><button onclick="send(${EV.AGAIN})">Dispense more</button>${v.total>0?`<button class="alt" onclick="send(${EV.FINISH})">Finish</button>`:""}</div>`;
   if(s===ST.PAYING)return `<div class="center"><div class="icon warn">🪙</div><p class="t1">Returning your change</p><p class="big warn">${c}</p></div>`;
   if(s===ST.THANKYOU){if(v.unpaid>0)return `<div class="center"><div class="icon warn">⚠</div><p class="t1">Sorry, your change could not be given</p><p class="big warn">${peso(v.unpaid)}</p><p class="t2">Please contact the attendant</p></div>`;
     return `<div class="center"><div class="icon ok">✔</div><p class="t1">Thank you!</p><p class="t2">Dispensed ${vol(v.total)} · Change ${c}</p></div>`;}
-  if(s===ST.FAULT)return `<div class="center"><div class="icon bad">⚠</div><p class="t1">Out of service</p><p class="bad" style="font-weight:800">${FAULTS[m.fault]||""}</p><p class="t2">Please contact the attendant</p></div>`;
+  if(s===ST.FAULT)return `<div class="center"><div class="icon bad">⚠</div><p class="t1">Out of service</p><p class="bad" style="font-weight:800">${FAULTS[m.fault]||""}</p><p class="t2">Please contact the attendant</p></div>
+    <div class="foot"><button class="alt small-btn" onclick="admOpen()">Admin</button></div>`;
   if(s===ST.ADMIN)return `<div class="center"><p class="t1">Service mode</p></div>`;
-  return `<div class="center"><div class="icon water">💧</div><p class="t1">Insert coins to start</p><p class="t2">1 peso = 100 mL · up to 20 pesos (2 L)</p></div>
+  return `<div class="center"><div class="icon water">💧</div><p class="t1">Insert coins to start</p><p class="t2">1 peso = 100 mL · up to 2 L per pour</p></div>
     <div class="foot"><button class="alt small-btn" onclick="admOpen()">Admin</button></div>`;
 }
 

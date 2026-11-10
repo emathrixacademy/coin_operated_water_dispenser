@@ -18,6 +18,7 @@ void ui_loop() {}
 #include <string.h>
 #include <Wire.h>
 #include <time.h>
+#include <Preferences.h>
 #define LGFX_USE_V1
 #include <LovyanGFX.hpp>
 #include "model.h"
@@ -34,13 +35,47 @@ void ui_loop() {}
 #define TOUCH_ADDR 0x5D
 #endif
 
+// XPT2046 raw range and orientation (resistive boards). Typical values for
+// this panel; adjust if taps land beside the buttons.
+#define TOUCH_R_X_MIN 300
+#define TOUCH_R_X_MAX 3900
+#define TOUCH_R_Y_MIN 200
+#define TOUCH_R_Y_MAX 3700
+#define TOUCH_R_ROTATION 0
+
 class LGFX : public lgfx::LGFX_Device {
   lgfx::Panel_ST7796 _panel;
   lgfx::Bus_SPI _bus;
   lgfx::Light_PWM _light;
   lgfx::Touch_GT911 _touch;
+  // The resistive variant of the same board (ESP32-3248S035R): XPT2046 on
+  // the display's SPI bus. Handover 2026-11-06: the replacement unit had no
+  // GT911 on I2C. Chosen at boot by the touch scan, see use_resistive().
+  lgfx::Touch_XPT2046 _touch_r;
 
  public:
+  void use_resistive() {
+    auto cfg = _touch_r.config();
+    cfg.x_min = TOUCH_R_X_MIN;
+    cfg.x_max = TOUCH_R_X_MAX;
+    cfg.y_min = TOUCH_R_Y_MIN;
+    cfg.y_max = TOUCH_R_Y_MAX;
+    cfg.pin_int = 36;
+    cfg.bus_shared = true;
+    cfg.offset_rotation = TOUCH_R_ROTATION;
+    cfg.spi_host = HSPI_HOST;
+    cfg.freq = 1000000;
+    cfg.pin_sclk = 14;
+    cfg.pin_mosi = 13;
+    cfg.pin_miso = 12;
+    cfg.pin_cs = 33;
+    _touch_r.config(cfg);
+    _panel.setTouch(&_touch_r);
+    // The panel now shares its SPI bus with the touch chip.
+    auto panel_cfg = _panel.config();
+    panel_cfg.bus_shared = true;
+    _panel.config(panel_cfg);
+  }
   LGFX() {
     {
       auto cfg = _bus.config();
@@ -111,6 +146,9 @@ class LGFX : public lgfx::LGFX_Device {
 };
 
 static LGFX lcd;
+
+#define NVS_TOUCH_CAL "tcal"
+static bool s_touch_resistive = false;
 
 // --- Palette ---------------------------------------------------------------
 
@@ -421,10 +459,11 @@ static void draw_stats() {
 enum { UI_ADM = -20 };
 enum {
   A_PIN_CLEAR = 10, A_PIN_OK, A_CANCEL, A_EXIT, A_OPEN,
-  A_PROFIT = 20, A_COINS, A_WATER, A_LOAD, A_CLEAR, A_HISTORY, A_CHPIN, A_MENU,
-  A_P1_M10 = 30, A_P1_M1, A_P1_P1, A_P1_P10, A_P5_M10, A_P5_M1, A_P5_P1, A_P5_P10, A_SAVE
+  A_PROFIT = 20, A_COINS, A_WATER, A_LOAD, A_CLEAR, A_HISTORY, A_CHPIN, A_MENU, A_CALIB,
+  A_P1_M10 = 30, A_P1_M1, A_P1_P1, A_P1_P10, A_P5_M10, A_P5_M1, A_P5_P1, A_P5_P10, A_SAVE,
+  A_TEST = 40, A_TEST_P1, A_TEST_P5, A_TEST_FILL, A_TEST_POUR, A_TEST_S1, A_TEST_S2, A_TEST_S3
 };
-enum { P_NONE = 0, P_PIN, P_MENU, P_PROFIT, P_COINS, P_WATER, P_HISTORY, P_LOAD, P_CHPIN };
+enum { P_NONE = 0, P_PIN, P_MENU, P_PROFIT, P_COINS, P_WATER, P_HISTORY, P_LOAD, P_CHPIN, P_TEST };
 
 static uint8_t s_adm = P_NONE;
 static char s_pin[5] = "";
@@ -503,6 +542,25 @@ static void draw_menu() {
          &fonts::FreeSansBold9pt7b);
   button(322, TOP + 138, 148, 54, "History", UI_ADM, A_HISTORY, true, false, &fonts::FreeSansBold9pt7b);
   button(10, TOP + 200, 148, 46, "Change PIN", UI_ADM, A_CHPIN, true, false, &fonts::FreeSansBold9pt7b);
+  if (s_touch_resistive) {
+    button(166, TOP + 200, 148, 46, "Calibrate", UI_ADM, A_CALIB, true, false, &fonts::FreeSansBold9pt7b);
+  }
+  button(322, TOP + 200, 148, 46, "Test", UI_ADM, A_TEST, true, false, &fonts::FreeSansBold9pt7b);
+}
+
+// Hardware checks. The Mega acts on them only while the machine is idle; the
+// coin tests pay one real coin and take it off the hopper count.
+static void draw_test() {
+  adm_title("Test", true);
+  text("Machine must be idle. Coin tests pay one real coin.", 20, TOP + 54,
+       &fonts::Font2, C_MUTE, middle_left);
+  button(10, TOP + 76, 148, 54, "P1 hopper", UI_ADM, A_TEST_P1, true, true, &fonts::FreeSansBold9pt7b);
+  button(166, TOP + 76, 148, 54, "P5 hopper", UI_ADM, A_TEST_P5, true, true, &fonts::FreeSansBold9pt7b);
+  button(322, TOP + 76, 148, 54, "Refill 5 s", UI_ADM, A_TEST_FILL, true, false, &fonts::FreeSansBold9pt7b);
+  button(10, TOP + 138, 148, 54, "Dispense 3 s", UI_ADM, A_TEST_POUR, true, false, &fonts::FreeSansBold9pt7b);
+  button(166, TOP + 138, 148, 54, "Servo 1", UI_ADM, A_TEST_S1, true, false, &fonts::FreeSansBold9pt7b);
+  button(322, TOP + 138, 148, 54, "Servo 2", UI_ADM, A_TEST_S2, true, false, &fonts::FreeSansBold9pt7b);
+  button(10, TOP + 200, 148, 46, "D35 servo", UI_ADM, A_TEST_S3, true, false, &fonts::FreeSansBold9pt7b);
 }
 
 static void kv(int y, const char *k, const char *v, uint16_t c) {
@@ -612,6 +670,7 @@ static void draw_admin() {
     case P_WATER:   draw_water(); break;
     case P_HISTORY: draw_history(); break;
     case P_LOAD:    draw_load(); break;
+    case P_TEST:    draw_test(); break;
     default: break;
   }
 }
@@ -672,6 +731,22 @@ static void adm_action(long a) {
     case A_LOAD:    s_adm = P_LOAD; s_load_p1 = g_m.p1; s_load_p5 = g_m.p5; break;
     case A_CLEAR:   admin_mega(EV_ADMIN_CLEAR, -1); break;
     case A_CHPIN:   s_adm = P_CHPIN; s_pin_len = 0; s_pin[0] = 0; s_pin_wrong = false; break;
+    case A_TEST:      s_adm = P_TEST; break;
+    case A_TEST_P1:   admin_mega(EV_ADMIN_TEST, 3); break;
+    case A_TEST_P5:   admin_mega(EV_ADMIN_TEST, 4); break;
+    case A_TEST_FILL: admin_mega(EV_ADMIN_TEST, 2); break;
+    case A_TEST_POUR: admin_mega(EV_ADMIN_TEST, 1); break;
+    case A_TEST_S1:   admin_mega(EV_ADMIN_TEST, 5); break;
+    case A_TEST_S2:   admin_mega(EV_ADMIN_TEST, 6); break;
+    case A_TEST_S3:   admin_mega(EV_ADMIN_TEST, 7); break;
+    case A_CALIB: {
+      Preferences p;
+      p.begin("wv", false);
+      p.remove(NVS_TOUCH_CAL);
+      p.end();
+      ESP.restart();
+      break;
+    }
     case A_P1_M10: s_load_p1 -= 10; break;
     case A_P1_M1:  s_load_p1 -= 1;  break;
     case A_P1_P1:  s_load_p1 += 1;  break;
@@ -757,8 +832,14 @@ static void draw_body() {
       text(b, 100, TOP + 46, &fonts::FreeSansBold18pt7b, C_INK, middle_left);
       text("Credit left", W / 2, TOP + 104, &fonts::FreeSans9pt7b, C_MUTE);
       text(c, W / 2, TOP + 140, &fonts::FreeSansBold24pt7b, C_INK);
-      button(12, H - 78, 222, 64, "Dispense more", EV_DISPENSE_AGAIN, -1, true, true);
-      button(246, H - 78, 222, 64, "Finish", EV_FINISH, -1, true, false);
+      // No refund before buying: credit restored at boot with nothing poured
+      // shows only "Dispense more".
+      if (g_m.total > 0) {
+        button(12, H - 78, 222, 64, "Dispense more", EV_DISPENSE_AGAIN, -1, true, true);
+        button(246, H - 78, 222, 64, "Finish", EV_FINISH, -1, true, false);
+      } else {
+        button(10, H - 78, 460, 64, "Dispense more", EV_DISPENSE_AGAIN, -1, true, true);
+      }
       break;
 
     case ST_PAYING:
@@ -792,6 +873,10 @@ static void draw_body() {
         text(FAULT_TEXT[g_m.fault], W / 2, 216, &fonts::FreeSansBold9pt7b, C_BAD);
       }
       text("Please contact the attendant", W / 2, 250, &fonts::FreeSans9pt7b, C_MUTE);
+      // The attendant fixes it from here: Load change clears LOW CHANGE,
+      // Clear fault the rest once the cause is gone (water refilled).
+      button(W - 112, H - 48, 102, 38, "Admin", UI_ADM, A_OPEN, true, false,
+             &fonts::FreeSansBold9pt7b);
       break;
 
     case ST_ADMIN:
@@ -803,7 +888,7 @@ static void draw_body() {
     default:
       icon_drop(W / 2, 118, 32, C_WATER);
       text("Insert coins to start", W / 2, 200, &fonts::FreeSansBold18pt7b, C_INK);
-      text("1 peso = 100 mL   -   up to 20 pesos (2 L)", W / 2, 238, &fonts::FreeSans9pt7b, C_MUTE);
+      text("1 peso = 100 mL   -   up to 2 L per pour", W / 2, 238, &fonts::FreeSans9pt7b, C_MUTE);
       // Sales live inside Admin (Profit, History), behind the PIN -- team
       // request 2026-10-29.
       button(W - 112, H - 48, 102, 38, "Admin", UI_ADM, A_OPEN, true, false,
@@ -849,7 +934,7 @@ static void close_stats() {
 // Bring-up check: which I2C addresses answer on the touch bus. The GT911
 // answers at 0x5D or 0x14 depending on how it was reset; seeing neither means
 // the touch controller is on other pins (or this is the resistive board).
-static void touch_bus_scan() {
+static bool touch_bus_scan() {
   Wire.begin(TOUCH_SDA, TOUCH_SCL);
   Serial.print(F("[touch] I2C scan:"));
   uint8_t found = 0;
@@ -862,12 +947,47 @@ static void touch_bus_scan() {
   }
   Serial.println(found ? "" : " nothing");
   Wire.end();
+  return found > 0;
+}
+
+// A resistive panel reports raw positions that differ per unit, so it is
+// calibrated on the unit: four corner targets once, kept in NVS. Admin ->
+// Calibrate clears it and restarts. Runs before the watchdog starts, because
+// it waits for a person.
+static void touch_calibrate() {
+  uint16_t cal[8];
+  Preferences p;
+  p.begin("wv", true);
+  const size_t got = p.getBytes(NVS_TOUCH_CAL, cal, sizeof(cal));
+  p.end();
+  if (got != sizeof(cal)) {
+    lcd.fillScreen(TFT_BLACK);
+    lcd.setTextColor(TFT_WHITE, TFT_BLACK);
+    lcd.setTextDatum(middle_center);
+    lcd.setFont(&fonts::FreeSansBold12pt7b);
+    lcd.drawString("Touch calibration", W / 2, H / 2 - 16);
+    lcd.setFont(&fonts::FreeSans9pt7b);
+    lcd.drawString("Press each corner target firmly", W / 2, H / 2 + 16);
+    lcd.calibrateTouch(cal, TFT_WHITE, TFT_BLACK, 24);
+    p.begin("wv", false);
+    p.putBytes(NVS_TOUCH_CAL, cal, sizeof(cal));
+    p.end();
+  }
+  lcd.setTouchCalibrate(cal);
+  Serial.printf("[touch] calibration %u %u %u %u %u %u %u %u\n", cal[0], cal[1], cal[2], cal[3],
+                cal[4], cal[5], cal[6], cal[7]);
 }
 
 void ui_begin() {
-  touch_bus_scan();
+  // No GT911 on I2C: this is the resistive board, touch is an XPT2046.
+  s_touch_resistive = !touch_bus_scan();
+  if (s_touch_resistive) {
+    lcd.use_resistive();
+    Serial.println(F("[touch] using XPT2046 (resistive)"));
+  }
   lcd.init();
   lcd.setRotation(1);   // landscape, 480 x 320
+  if (s_touch_resistive) touch_calibrate();
   {
     int32_t tx = 0, ty = 0;
     Serial.printf("[touch] after init: getTouch=%d\n", (int)lcd.getTouch(&tx, &ty));

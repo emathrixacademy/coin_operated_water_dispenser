@@ -113,7 +113,9 @@ void mega_send_event(int ev, long payload) {
 // both for ADM_LOCK_MS. A phone that enters the right PIN may send admin
 // events for ADM_SESSION_MS after its last one; every other phone may not.
 
-#define ADM_DEFAULT_PIN  1234
+#define ADM_DEFAULT_PIN  0        // shown and typed as 0000 (team 2026-11-09)
+// New key name so a PIN saved under the old "pin" key no longer applies.
+#define NVS_ADMIN_PIN    "pin2"
 #define ADM_MEGA_SECRET  1234     // must equal ADMIN_PIN in the Mega's config.h
 #define ADM_LOCK_MS      60000
 #define ADM_SESSION_MS   120000
@@ -157,7 +159,7 @@ int admin_try(uint16_t pin) {
 
 void admin_set_pin(uint16_t pin) {
   s_prefs.begin("wv", false);
-  s_prefs.putUShort("pin", pin);
+  s_prefs.putUShort(NVS_ADMIN_PIN, pin);
   s_prefs.end();
   s_admin_pin = pin;
 }
@@ -284,7 +286,7 @@ void setup() {
   Serial.println(WiFi.softAPIP());
 
   s_prefs.begin("wv", true);
-  s_admin_pin = s_prefs.getUShort("pin", ADM_DEFAULT_PIN);
+  s_admin_pin = s_prefs.getUShort(NVS_ADMIN_PIN, ADM_DEFAULT_PIN);
   s_prefs.end();
 
   // no-store: a phone that kept an old copy of the page logs in the old way

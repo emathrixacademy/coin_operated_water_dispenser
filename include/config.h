@@ -63,8 +63,20 @@ typedef int32_t volume_t;   // millilitres
 // so the hoppers must be able to pay up to P20 - P1 + P20. The display's
 // MAX_BUY_ML and the phone page's MAX_ML must match.
 #define MAX_TRANSACTION_PESOS 20
-#define MAX_TRANSACTION_CENTAVOS (MAX_TRANSACTION_PESOS * CENTAVOS_PER_PESO)
 #define MAX_TRANSACTION_ML (MAX_TRANSACTION_PESOS * ML_PER_PESO)
+
+// Team 2026-11-03: no P20 cap on coins -- the customer can insert as much as
+// they like and pour it 2 L at a time ("Dispense more"). MAX_TRANSACTION_PESOS
+// is now the largest single pour; this is the credit ceiling, only a sanity
+// bound (the open transaction stores total mL as uint16: 655 L max).
+// The low-change guard still sizes for one 2 L sale (billing.cpp): a customer
+// who inserts far more than they pour can be owed more change than the
+// hoppers hold, and gets the "change could not be given" screen.
+#define MAX_CREDIT_PESOS 500
+// money_t, not int: on the Mega int is 16-bit and 500 * 100 overflowed to a
+// negative ceiling -- every credit read as "at ceiling" and the coinslot shut
+// after the first coins (bench 2026-11-03).
+#define MAX_TRANSACTION_CENTAVOS ((money_t)MAX_CREDIT_PESOS * CENTAVOS_PER_PESO)
 
 // Partial refunds round DOWN to this multiple. A measured 305 mL is charged as
 // 300 mL. Rounding always favours the machine, never the user.
@@ -157,11 +169,12 @@ typedef int32_t volume_t;   // millilitres
 //     gives up: an overfull box backs coins up the chute and jams it, so empty
 //     it between test sessions.
 //
-// Currently 0: the team decided not to fit it (2026-10-25) -- the box is large
-// and this is a thesis prototype. The firmware cannot tell whether the sensor
-// is there, so this must match the hardware.
+// Currently 1: the team is fitting a third HW-201 here (2026-11-09), reversing
+// the 2026-10-25 decision. The firmware cannot tell whether the sensor is
+// there, so this must match the hardware. With no sensor the pull-up reads
+// "not full", so a missing one only means the box is never reported full.
 #ifndef COIN_BOX_SENSOR_FITTED
-#define COIN_BOX_SENSOR_FITTED 0
+#define COIN_BOX_SENSOR_FITTED 1
 #endif
 #define PIN_CONFIRM_BTN     40  // LOW = pressed. Advances ACCEPTING -> SELECTING
 // 1: the cabinet has the push button on pin 40 (team, 2026-10-30). Set 0 for
@@ -204,7 +217,19 @@ typedef int32_t volume_t;   // millilitres
 // 34). On 2026-10-29 the P5 relay did not switch because IN2 was not wired to
 // pin 34 yet; once it was, it worked unchanged.
 #define PIN_HOPPER_P5_RUN 34  // Relay, active LOW
-#define PIN_BUZZER        35  // Active HIGH
+#define PIN_BUZZER        47  // Was 35, given to the service servo
+// Level that sounds the buzzer. LOW for the low-level-trigger module fitted
+// 2026-11-09; the wrong level makes it sound all the time and go quiet on a beep.
+#define BUZZER_ON_LEVEL   LOW
+#define BUZZER_OFF_LEVEL  HIGH
+// Service servo (team 2026-11-09): swings once all three coin IRs read full and
+// no sale is open, and swings back once any of them clears. Held at the active
+// angle; signal dropped at rest, like the gates (see GATE_DETACH_MS).
+#define PIN_SERVICE_SERVO 35
+#define SERVICE_SERVO_REST_DEG   0
+#define SERVICE_SERVO_ACTIVE_DEG 40
+// Test console "svc <n>": time per move. Long enough to watch a full swing.
+#define SERVICE_SERVO_TEST_STEP_MS 800
 #define PIN_COMPRESSOR    36  // AC SSR, active LOW
 #define PIN_LED_LOW       37  // Active HIGH
 #define PIN_LED_MID       38  // Active HIGH
@@ -358,6 +383,13 @@ typedef int32_t volume_t;   // millilitres
 // moving gate jams the chute, and clearing a chute jam is a service call.
 #define COIN_LOCKOUT_MS (GATE_ROUTE_MS + GATE_RETURN_MS)
 
+// 1 = a coin that arrives during the lockout window is dropped, as designed
+// (scenarios.md case 14) -- correct only if the coinslot obeys the inhibit
+// on D30 and rejects the coin. 0 = it is credited after the window closes.
+// Bench 2026-11-03: the coinslot kept accepting coins in the window, so two
+// quick coins credited one. 0 until the inhibit line is proven to work.
+#define COIN_WINDOW_DROPS 0
+
 // A pulse train is considered complete when the pulse line has been idle this
 // long. The acceptor emits its pulses in a burst; this gap terminates the burst
 // so update() knows the count is final.
@@ -386,8 +418,21 @@ typedef int32_t volume_t;   // millilitres
 // pulse arrives as 2-3 LOW fragments of 1-3 ms within ~25 ms, ~130 ms apart.
 // Merged (below) a pulse spans 5-25 ms, but a lone fragment must still count.
 // The noise spikes this filter exists for are tens of microseconds.
-#define COIN_PULSE_MIN_US 1000UL
-#define COIN_PULSE_MAX_US 200000UL
+//
+// 300 us, was 1 ms (bench 2026-10-31): a P5 counted 3 and a P20 19, each
+// missing a pulse with no "[pulse]" line -- a lone fragment under 1 ms was
+// dropped. The noise measured on this line is ~32 us, still well below.
+//
+// 30 ms (bench 2026-11-03): every real pulse now logs 49.8 ms, clean, and a
+// lone 7.6 ms LOW with no coin inserted was counted as a pulse -- a free P1.
+// Window around 50 ms: 30 to 70. If coins stop registering, read the
+// "[pulse]" lines: the coinslot's pulse length is what this must bracket.
+#define COIN_PULSE_MIN_US 30000UL
+// 70 ms, was 200 ms (bench 2026-11-03): with no coin the line threw LOWs of
+// up to 200 ms and credited P30; one over this limit now discards the whole
+// train (coin_acceptor.cpp). A clean P5 then logged five LOWs of 49.8 ms,
+// 150 ms apart -- 40 ms rejected every real coin. Keep it above 50 ms.
+#define COIN_PULSE_MAX_US 70000UL
 // A HIGH shorter than this inside a pulse is chatter, not the end of it (see
 // coin_isr()). 30 ms covers the fragment spread seen on the bench and stays
 // well under the ~100 ms HIGH between real pulses; much higher and two pulses
@@ -616,6 +661,19 @@ typedef int32_t volume_t;   // millilitres
 #define BOTTLE_WAIT_WARN2_MS  18000  // second buzzer
 #define BOTTLE_WAIT_CANCEL_MS 20000  // cancel and refund in full
 
+// Bench 2026-11-03, for handover: the bottle IR on D22 misses bottles, so a
+// paid sale never poured. "Place your bottle" now waits this long, then pours
+// whether or not the IR saw anything. Shorter and the customer has no time to
+// set the bottle down; 0 = wait for the IR or CONFIRM only, as designed.
+// Must stay under BOTTLE_WAIT_WARN1_MS or the buzzer sounds first.
+#define BOTTLE_AUTO_START_MS 5000
+
+// 1 = lifting the bottle pauses the pour (water stops), and putting it back
+// within BOTTLE_REMOVED_GRACE_MS resumes it. 0 = a pour runs to the end
+// regardless. Team 2026-11-03: the IR now goes dark when the bottle is lifted
+// and the water must stop, so 1.
+#define IR_PAUSES_POUR 1
+
 #define BUZZER_BEEP_MS 300  // Non-blocking. Long enough to hear over a running pump
 
 // COMPLETE holds this long for the user to choose more-or-finish, then finishes
@@ -734,12 +792,36 @@ typedef int32_t volume_t;   // millilitres
 // Two-point at 4490: 300 mL sale poured 315 (13470 ms), 800 poured 800
 // (35920 ms) -> 100 * 22450 / 485 = 4629, dead = 13470 - 315 * 22450 / 485
 // = -1111 (~24 mL beyond the steady rate per pour).
-#define DISPENSE_MS_PER_100ML 4629
+// 2026-10-31 later: at 4629 / -1111 a 300 mL sale (12776 ms) poured 200 mL
+// with the cold tank as it runs in service, not topped up. Single rate from
+// that pour, no dead time: 12776 * 100 / 200 = 6388.
+// Then an 800 mL sale at 6388 (51104 ms) poured 900. Two-point from 200 mL in
+// 12776 ms and 900 in 51104: 100 * 38328 / 700 = 5475, dead = 12776 - 200 *
+// 38328 / 700 = 1826 ms (hose fill through the smaller hose and valve).
+// Then 500 mL at 5475 / 1826 (29201 ms) poured 650, and the display sat at 0
+// through the dead time. The rate swings run to run (15.7 to 22.3 mL/s), so
+// a dead time only fits the run it came from. Least-squares single rate over
+// all five pours (315/13470, 800/35920, 200/12776, 900/51104, 650/29201),
+// no dead time: 4996 -> 5000.
+// 2026-11-03, nine sales at 5000 (target -> out): 200-240, 300-340, 400-440,
+// 500-540, 600-700, 700-740, 800-900, 900-1000, 1000-1050. Least squares:
+// out = 1.0567 x target + 30 mL. Steady rate 5000 / 1.0567 = 4732, and the
+// 30 mL that keeps arriving after the pump stops is DISPENSE_TAIL_ML.
+// Then at 4732 / tail 30: 800 -> 780, 900 -> 880, 1000 -> 960. Pump time was
+// 36436, 41168, 45900 ms for 750, 850, 930 mL before the tail: 0.0205 mL/ms
+// on average -> 4878.
+#define DISPENSE_MS_PER_100ML 4878
 
 // Run time that delivers nothing at the cup: hose fill at the start, less the
 // dribble after the pump stops. 0 until the two-point calibration is done.
 // Signed -- negative when the dribble outweighs the hose fill.
-#define DISPENSE_DEAD_MS (-1111)
+#define DISPENSE_DEAD_MS 0
+
+// mL that still reaches the bottle after the pump stops (hose and valve
+// draining). The pump stops this much short of target; the count stays
+// linear from 0, unlike a negative dead time, which started it at 12%.
+// Raise it if every size pours over by the same amount, lower if under.
+#define DISPENSE_TAIL_ML 30
 
 // 1 = no amount picker. CONFIRM (push button, or Continue on the screen) pours
 // the whole credit, P1 = 100 mL, once the bottle IR sees a bottle.
@@ -848,6 +930,13 @@ typedef int32_t volume_t;   // millilitres
 //     the pump. 0 = only both low stops it (separate suction lines).
 #define GALLON_STOP_ON_EITHER 1
 
+// 1 = a lost tank ultrasonic locks the machine with OUT OF WATER, as designed.
+// 0 = with the sensor lost, OUT OF WATER comes from the gallons instead: both
+// at the reserve line. Handover 2026-11-06: the ultrasonic reads LOST in the
+// cabinet, and at 1 the machine would never leave OUT OF WATER. Back to 1
+// once the tank sensor reads reliably.
+#define WATER_LOCK_IF_SENSOR_LOST 0
+
 // "Low" acts at once -- it can stop the pump, and a sloshing jug near the line
 // may never hold low for a full window. Only the return to "water present" is
 // debounced, so a jug being swapped (which sloshes hard) does not flicker the
@@ -893,8 +982,10 @@ typedef int32_t volume_t;   // millilitres
 #define FILL_MS_PER_100ML 7000
 
 // Owed refill never banks more than this, so a miscount cannot run the pump
-// for ages. 120 s is more than one 1.5 L sale needs at the placeholder rate.
-#define REFILL_OWED_MAX_MS 120000UL
+// for ages. 280 s covers two 2 L sales back to back at 7000 ms per 100 mL (the
+// old 120 s cut a single 2 L sale to 1.7 L). Keep it under PUMP_MAX_RUN_MS: a
+// refill that reaches that ceiling latches a pump fault.
+#define REFILL_OWED_MAX_MS 280000UL
 
 // 1 = the refill runs even when the tank sensor is lost or a gallon reads low.
 // Bench setting (2026-10-28): neither sensor works yet, and with them in the

@@ -47,6 +47,8 @@ static volatile uint32_t s_longest_us = 0;      // diagnostics
 // into fragments shorter than COIN_PULSE_MIN_US, so a P5 counted 3 pulses or
 // 1. A HIGH shorter than COIN_PULSE_MERGE_US is now chatter inside the same
 // pulse; the pulse ends only once the line has stayed HIGH that long.
+static volatile bool s_train_noisy = false;   // an over-long LOW in this train
+static volatile uint32_t s_noise_ms = 0;      // when the last one was seen
 static volatile uint32_t s_rise_us = 0;
 static volatile bool s_rise_pending = false;   // HIGH, not yet long enough to end the pulse
 
@@ -62,7 +64,7 @@ static volatile uint8_t s_plog_head = 0, s_plog_tail = 0;
 // Interrupts off (called from the ISR, or from update() with them disabled).
 static void commit_pulse(uint32_t w) {
 #ifdef DEBUG
-  if (w >= 1000UL && w < 2000000UL) {
+  if (w >= 100UL && w < 2000000UL) {
     const uint8_t n = (uint8_t)((s_plog_head + 1) % PULSE_LOG_N);
     if (n != s_plog_tail) {
       s_plog_w[s_plog_head] = w;
@@ -75,6 +77,10 @@ static void commit_pulse(uint32_t w) {
   if (w > s_longest_us) s_longest_us = w;
   if (w < COIN_PULSE_MIN_US || w > COIN_PULSE_MAX_US) {
     if (s_rejected < 0xFFFF) s_rejected++;
+    // Bench 2026-11-03: with no coin inserted the line threw LOWs of 1 to
+    // 200 ms for seconds on end and credited P30. A real pulse is never this
+    // long, so one in a train marks the whole train as noise.
+    if (w > COIN_PULSE_MAX_US) { s_train_noisy = true; s_noise_ms = millis(); }
     return;
   }
   if (s_pulses == 0) s_first_pulse_ms = millis();
@@ -140,6 +146,11 @@ static void drain_pulses() {
 
 // How long the pulse line must be idle before a train is complete.
 static uint32_t gap_ms() {
+  // Bench 2026-10-31: since the bands accept a train with a pulse missing,
+  // such trains taught a short period, the gap fell to the 300 ms floor and
+  // the next missing pulse split the train -- a P20 read as P5, a P5 as P1.
+  // Fixed gap until the coin line is clean.
+  return COIN_PULSE_GAP_MS;
   if (s_period_ms == 0) return COIN_PULSE_GAP_MS;
   uint32_t g = (uint32_t)s_period_ms * COIN_PULSE_GAP_FACTOR;
   if (g < COIN_PULSE_GAP_MIN_MS) g = COIN_PULSE_GAP_MIN_MS;
@@ -148,17 +159,19 @@ static uint32_t gap_ms() {
 }
 
 static coin_t resolve(uint16_t pulses) {
-  switch (pulses) {
-    case COIN_PULSES_P1:  return COIN_P1;
-    case COIN_PULSES_P5:  return COIN_P5;
-    case COIN_PULSES_P10: return COIN_P10;
-    case COIN_PULSES_P20: return COIN_P20;
-    // SPEC 3.1: an unmapped count that is still inside COIN_PULSE_MAX is a real
-    // coin the acceptor accepted but this firmware does not have a mapping for.
-    // Credit the minimum, route to profit. Discarding it -- which is what this
-    // did before -- takes the user's coin and gives them nothing.
-    default:              return COIN_UNKNOWN;
-  }
+  // Bench 2026-10-31: in the cabinet a train can lose a pulse or two (a P5
+  // read 3, a P20 read 19), and an exact match credited those as P1. Coins
+  // are separated by the lockout and the gap, so a train is one coin: take
+  // the band it falls in. Bands sit low (2 is P1, 14-15 is P10) so a doubtful
+  // count is credited the smaller coin, never the larger.
+  if (pulses == 0) return COIN_UNKNOWN;
+  if (pulses < COIN_PULSES_P5 - 2)  return COIN_P1;    // 1-2
+  if (pulses <= COIN_PULSES_P5 + 2) return COIN_P5;    // 3-7
+  if (pulses < COIN_PULSES_P20 - 4) return COIN_P10;   // 8-15
+  if (pulses <= COIN_PULSE_MAX)     return COIN_P20;   // 16-24
+  // SPEC 3.1: a count with no band is still a coin the acceptor took. Credit
+  // the minimum, route to profit, rather than keep the coin for nothing.
+  return COIN_UNKNOWN;
 }
 
 void coin_acceptor_begin() {
@@ -198,12 +211,23 @@ void coin_acceptor_update() {
     Serial.print(F("[pulse] t="));
     Serial.print(at);
     Serial.print(F("ms low="));
-    Serial.print(w / 1000UL);
-    Serial.print(F("ms"));
+    Serial.print(w);
+    Serial.print(F("us"));
     Serial.println((w >= COIN_PULSE_MIN_US && w <= COIN_PULSE_MAX_US) ? F(" ok") : F(" REJECTED"));
   }
 #endif
-  if (s_window_inhibit || s_fault_inhibit) {
+  if (s_fault_inhibit) {
+    drain_pulses();
+    return;
+  }
+  // Bench 2026-11-03: the coinslot does not obey the inhibit line, so a coin
+  // fed during the gate window was swallowed and its pulses dropped -- two
+  // quick coins credited one. Until the inhibit works, a coin in the window
+  // is held and credited once the window closes, not thrown away. The gates
+  // may not be set for it, so it can land in the wrong chamber: an inventory
+  // error the admin page corrects, where dropping it took the user's money.
+  if (s_window_inhibit && !COIN_WINDOW_DROPS) return;
+  if (s_window_inhibit) {
     drain_pulses();
     return;
   }
@@ -212,19 +236,43 @@ void coin_acceptor_update() {
   const uint16_t pulses = s_pulses;
   const uint32_t last = s_last_pulse_ms;
   const uint32_t first = s_first_pulse_ms;
+  const bool noisy = s_train_noisy;
+  const uint32_t noise_at = s_noise_ms;
   interrupts();
 
-  if (pulses == 0) return;
+  if (pulses == 0) {
+    // Noise with no pulses counted: forget it once the line has been quiet a
+    // full gap, so it cannot condemn the next real coin.
+    if (noisy && (uint32_t)(millis() - noise_at) >= gap_ms()) {
+      noInterrupts();
+      s_train_noisy = false;
+      interrupts();
+    }
+    return;
+  }
 
   // Wait for the burst to go idle before interpreting it. Resolving early would
-  // read a 20-pulse P20 as a P10 followed by a P10.
+  // read a 20-pulse P20 as a P10 followed by a P10. Over-long noise counts as
+  // activity too: a train is not over while the line is still thrashing.
   if ((uint32_t)(millis() - last) < gap_ms()) return;
+  if (noisy && (uint32_t)(millis() - noise_at) < gap_ms()) return;
 
   // Remove only the pulses just read. A pulse that landed after the snapshot
   // is the start of the next coin; zeroing it would read that coin short.
   noInterrupts();
   s_pulses -= pulses;
+  s_train_noisy = false;
   interrupts();
+
+  if (noisy) {
+    // A coinslot never holds its line LOW this long; the train is noise.
+    s_discarded++;
+#ifdef DEBUG
+    Serial.print(F("[coin] NOISE train discarded, pulses="));
+    Serial.println(pulses);
+#endif
+    return;
+  }
 
 #ifdef DEBUG
   // Coin timing for bench calibration. "train" is first pulse to last; "ready"
@@ -333,8 +381,9 @@ void coin_acceptor_window_inhibit() {
 void coin_acceptor_window_release() {
   s_window_inhibit = false;
   // Drop anything that arrived during the window before re-enabling, so the
-  // release cannot hand a stale burst to the next update().
-  drain_pulses();
+  // release cannot hand a stale burst to the next update(). Not while
+  // COIN_WINDOW_DROPS is 0: that burst is a real coin (see update()).
+  if (COIN_WINDOW_DROPS) drain_pulses();
   apply_inhibit();
 }
 

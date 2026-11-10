@@ -119,25 +119,44 @@ void coin_diverter_aim(coin_t coin) {
 // coin inserted now could land anywhere.
 static uint8_t s_ex_steps = 0;     // moves left; 4 per cycle
 static uint32_t s_ex_ms = 0;
+static uint8_t s_ex_only = 0;      // 0 = both gates; 1 or 2 = that gate alone
 
-void coin_diverter_exercise(uint8_t cycles) {
+static void exercise_start(uint8_t only, uint8_t cycles) {
   if (COLLECT_ALL || s_state != DIV_IDLE || s_ex_steps) return;
   if (cycles == 0) return;
   if (cycles > 20) cycles = 20;
-  s_ex_steps = (uint8_t)(cycles * 4);
+  s_ex_only = only;
+  s_ex_steps = (uint8_t)(cycles * (only ? 2 : 4));
   s_ex_ms = millis() - GATE_EXERCISE_STEP_MS;   // first move on the next pass
   s_aim_coin = COIN_NONE;
   coin_acceptor_window_inhibit();
 }
 
+void coin_diverter_exercise(uint8_t cycles) {
+  exercise_start(0, cycles);
+}
+
+void coin_diverter_exercise_one(uint8_t gate, uint8_t cycles) {
+  if (gate != 1 && gate != 2) return;
+  exercise_start(gate, cycles);
+}
+
 static void exercise_update() {
   if ((uint32_t)(millis() - s_ex_ms) < GATE_EXERCISE_STEP_MS) return;
   s_ex_ms = millis();
-  switch (s_ex_steps % 4) {
-    case 0: gate_write(s_gate1, PIN_GATE1_SERVO, GATE1_ANGLE_CLOSED); break;
-    case 3: gate_write(s_gate1, PIN_GATE1_SERVO, GATE1_ANGLE_OPEN);   break;
-    case 2: gate_write(s_gate2, PIN_GATE2_SERVO, GATE2_ANGLE_CLOSED); break;
-    case 1: gate_write(s_gate2, PIN_GATE2_SERVO, GATE2_ANGLE_OPEN);   break;
+  if (s_ex_only == 1) {
+    gate_write(s_gate1, PIN_GATE1_SERVO,
+               (s_ex_steps % 2) ? GATE1_ANGLE_OPEN : GATE1_ANGLE_CLOSED);
+  } else if (s_ex_only == 2) {
+    gate_write(s_gate2, PIN_GATE2_SERVO,
+               (s_ex_steps % 2) ? GATE2_ANGLE_OPEN : GATE2_ANGLE_CLOSED);
+  } else {
+    switch (s_ex_steps % 4) {
+      case 0: gate_write(s_gate1, PIN_GATE1_SERVO, GATE1_ANGLE_CLOSED); break;
+      case 3: gate_write(s_gate1, PIN_GATE1_SERVO, GATE1_ANGLE_OPEN);   break;
+      case 2: gate_write(s_gate2, PIN_GATE2_SERVO, GATE2_ANGLE_CLOSED); break;
+      case 1: gate_write(s_gate2, PIN_GATE2_SERVO, GATE2_ANGLE_OPEN);   break;
+    }
   }
   s_ex_steps--;
   if (s_ex_steps == 0) {

@@ -639,7 +639,12 @@ bool water_is_locked_out() {
   // machine cannot guarantee it can serve the next user, so it must stop
   // taking money. SPEC 6.1, transient. The gallons do NOT lock: with both low
   // the pump stops, and the tank keeps selling until it reaches this line.
-  return !tank_can_serve(s_tank_mm, s_tank_valid);
+  if (s_tank_valid || WATER_LOCK_IF_SENSOR_LOST) {
+    return !tank_can_serve(s_tank_mm, s_tank_valid);
+  }
+  // Tank sensor lost and WATER_LOCK_IF_SENSOR_LOST 0 (see config.h): fall
+  // back to the gallons. Both at the reserve line = no water left to sell.
+  return s_gal_a.low && s_gal_b.low;
 }
 
 bool water_pump_running() {
