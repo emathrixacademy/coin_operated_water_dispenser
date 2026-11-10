@@ -875,12 +875,12 @@ typedef int32_t volume_t;   // millilitres
 // by eye, not cylinder readings, so re-measure them. Only the pump stop moves;
 // the price and the amount billed stay those of the size chosen.
 #define DISPENSE_TRIM_200ML 20
-#define DISPENSE_TRIM_300ML 30
+#define DISPENSE_TRIM_300ML 33
 #define DISPENSE_TRIM_400ML 48
 #define DISPENSE_TRIM_500ML 60
 #define DISPENSE_TRIM_600ML 79
 #define DISPENSE_TRIM_700ML 80
-#define DISPENSE_TRIM_800ML 70
+#define DISPENSE_TRIM_800ML 75
 #define DISPENSE_TRIM_900ML 60
 #define DISPENSE_TRIM_1000ML 90
 #define DISPENSE_TRIM_1100ML 60
