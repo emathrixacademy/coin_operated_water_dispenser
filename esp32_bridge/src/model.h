@@ -17,7 +17,8 @@ enum : int32_t {
 enum : int {
   EV_SELECT_VOLUME = 1, EV_DISPENSE_AGAIN = 2, EV_FINISH = 3, EV_BACK = 4,
   EV_ADMIN_SET_P1 = 10, EV_ADMIN_SET_P5 = 11, EV_CONFIRM = 15,
-  EV_ADMIN_CLEAR = 16, EV_ADMIN_TEST = 17, EV_ADMIN_UNLOCK = 18
+  EV_ADMIN_CLEAR = 16, EV_ADMIN_TEST = 17, EV_ADMIN_UNLOCK = 18,
+  EV_ADMIN_SET_TIME = 19, EV_ADMIN_RESET_DAY = 20, EV_ADMIN_RESET_HISTORY = 21
 };
 
 struct machine_t {
@@ -52,7 +53,7 @@ extern machine_t g_m;
 #define STATS_HISTORY 10
 
 struct sale_t {
-  uint32_t ts;     // Unix seconds, 0 = no clock when it was recorded
+  uint32_t ts;     // purchase number; 0 or a large old date means none
   int32_t in;      // centavos inserted
   int32_t ml;      // dispensed
   int32_t change;  // centavos returned

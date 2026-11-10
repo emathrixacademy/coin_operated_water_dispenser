@@ -62,8 +62,27 @@ static bool write_regs(uint8_t start, const uint8_t *buf, uint8_t len) {
   return Wire.endTransmission() == 0;
 }
 
-// Read the clock once. Leaves s_ok false and s_now untouched on any failure.
-static void read_clock() {
+// Clock set by hand with no DS3231 answering. See rtc_set_timestamp().
+static bool s_soft_set = false;
+static uint32_t s_soft_base = 0;
+static uint32_t s_soft_base_ms = 0;
+
+static void accept_reading(const datetime_t *dt) {
+  s_now = *dt;
+  s_ok = true;
+
+  // Day boundary. Compared against the last VALID reading, so a spell of failed
+  // reads across midnight still produces exactly one rollover when the clock
+  // comes back.
+  const int32_t today = calendar_day_number(dt);
+  if (s_day != 0 && today != s_day) {
+    s_day_rolled = true;
+  }
+  s_day = today;
+}
+
+// Read the DS3231 once. Leaves s_ok false and s_now untouched on any failure.
+static void read_ds3231() {
   uint8_t status;
   if (!read_regs(REG_STATUS, &status, 1)) {
     s_ok = false;
@@ -109,17 +128,16 @@ static void read_clock() {
     return;
   }
 
-  s_now = dt;
-  s_ok = true;
+  accept_reading(&dt);
+}
 
-  // Day boundary. Compared against the last VALID reading, so a spell of failed
-  // reads across midnight still produces exactly one rollover when the clock
-  // comes back.
-  const int32_t today = calendar_day_number(&dt);
-  if (s_day != 0 && today != s_day) {
-    s_day_rolled = true;
-  }
-  s_day = today;
+static void read_clock() {
+  read_ds3231();
+  if (s_ok || !s_soft_set) return;
+
+  datetime_t dt;
+  const uint32_t elapsed_s = (uint32_t)(millis() - s_soft_base_ms) / 1000UL;
+  if (calendar_from_timestamp(s_soft_base + elapsed_s, &dt)) accept_reading(&dt);
 }
 
 void rtc_begin() {
@@ -210,5 +228,18 @@ bool rtc_set(const datetime_t *dt) {
   // zero totals the operator was mid-way through reading.
   s_day_rolled = false;
 
+  return s_ok;
+}
+
+bool rtc_set_timestamp(uint32_t timestamp) {
+  datetime_t dt;
+  if (!calendar_from_timestamp(timestamp, &dt)) return false;
+  if (rtc_set(&dt)) return true;
+
+  s_soft_base = timestamp;
+  s_soft_base_ms = millis();
+  s_soft_set = true;
+  read_clock();
+  s_day_rolled = false;   // same reason as rtc_set()
   return s_ok;
 }

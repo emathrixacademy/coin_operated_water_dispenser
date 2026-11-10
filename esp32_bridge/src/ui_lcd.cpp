@@ -147,7 +147,9 @@ class LGFX : public lgfx::LGFX_Device {
 
 static LGFX lcd;
 
-#define NVS_TOUCH_CAL "tcal"
+// New key: the "tcal" calibration read past the screen edge (bench 2026-11-09,
+// y up to 375 of 320), so every board asks for a fresh one once.
+#define NVS_TOUCH_CAL "tcal2"
 static bool s_touch_resistive = false;
 
 // --- Palette ---------------------------------------------------------------
@@ -380,18 +382,16 @@ static void stat_card(int x, int y, const char *label, const char *value, uint16
   text(value, x + 12, y + 45, &fonts::FreeSansBold12pt7b, c, middle_left);
 }
 
+// A purchase is shown by its number. Old records hold 0 or a date instead.
+static void sale_number(char *out, size_t size, uint32_t no) {
+  if (no > 0 && no < 1000000UL) snprintf(out, size, "#%lu", (unsigned long)no);
+  else snprintf(out, size, "#-");
+}
+
 static void draw_stats() {
-  static const char *const MON[] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                                     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
   char b[48], v[16];
 
-  if (g_stats.year && g_stats.month >= 1 && g_stats.month <= 12) {
-    snprintf(b, sizeof(b), "Sales today  -  %u %s %u", g_stats.day,
-             MON[g_stats.month - 1], g_stats.year);
-  } else {
-    snprintf(b, sizeof(b), "Sales  (no clock fitted)");
-  }
-  text(b, 14, TOP + 21, &fonts::FreeSansBold12pt7b, C_INK, middle_left);
+  text("Sales", 14, TOP + 21, &fonts::FreeSansBold12pt7b, C_INK, middle_left);
   button(W - 104, TOP + 4, 94, 34, "Back", UI_STATS_CLOSE, 0, true, false,
          &fonts::FreeSansBold9pt7b);
 
@@ -416,15 +416,7 @@ static void draw_stats() {
   for (uint8_t i = 0; i < g_stats.n; i++) {
     const sale_t &s = g_stats.sale[i];
     const int x = 14 + (i / 5) * 234, y = TOP + 153 + (i % 5) * 25;
-    if (s.ts) {
-      const time_t t = (time_t)s.ts;
-      struct tm tmv;
-      gmtime_r(&t, &tmv);   // the Mega stores local time as if it were UTC
-      snprintf(b, sizeof(b), "%02d/%02d %02d:%02d", tmv.tm_mday, tmv.tm_mon + 1,
-               tmv.tm_hour, tmv.tm_min);
-    } else {
-      snprintf(b, sizeof(b), "--/-- --:--");
-    }
+    sale_number(b, sizeof(b), s.ts);
     text(b, x, y, &fonts::Font2, C_MUTE, middle_left);
     volume(v, sizeof(v), s.ml);
     if (s.owed > 0) {
@@ -461,9 +453,11 @@ enum {
   A_PIN_CLEAR = 10, A_PIN_OK, A_CANCEL, A_EXIT, A_OPEN,
   A_PROFIT = 20, A_COINS, A_WATER, A_LOAD, A_CLEAR, A_HISTORY, A_CHPIN, A_MENU, A_CALIB,
   A_P1_M10 = 30, A_P1_M1, A_P1_P1, A_P1_P10, A_P5_M10, A_P5_M1, A_P5_P1, A_P5_P10, A_SAVE,
-  A_TEST = 40, A_TEST_P1, A_TEST_P5, A_TEST_FILL, A_TEST_POUR, A_TEST_S1, A_TEST_S2, A_TEST_S3
+  A_TEST = 40, A_TEST_P1, A_TEST_P5, A_TEST_FILL, A_TEST_POUR, A_TEST_S1, A_TEST_S2, A_TEST_S3,
+  A_RESET, A_RESET_YES, A_RESET_HIST, A_RESET_HIST_YES
 };
-enum { P_NONE = 0, P_PIN, P_MENU, P_PROFIT, P_COINS, P_WATER, P_HISTORY, P_LOAD, P_CHPIN, P_TEST };
+enum { P_NONE = 0, P_PIN, P_MENU, P_PROFIT, P_COINS, P_WATER, P_HISTORY, P_LOAD, P_CHPIN, P_TEST, P_RESET,
+       P_RESET_HIST };
 
 static uint8_t s_adm = P_NONE;
 static char s_pin[5] = "";
@@ -534,6 +528,16 @@ static void draw_menu() {
   if (g_stats.ready) snprintf(b, sizeof(b), "Today: %s  -  %ld sales", c, (long)g_stats.count);
   else snprintf(b, sizeof(b), "Today: loading...");
   text(b, W - 14, TOP + 56, &fonts::Font2, C_MUTE, middle_right);
+  // Latest transaction, in the free space beside the title.
+  if (g_stats.ready && g_stats.n > 0) {
+    const sale_t &s = g_stats.sale[0];
+    char v[16], no[10];
+    volume(v, sizeof(v), s.ml);
+    sale_number(no, sizeof(no), s.ts);
+    money(c, sizeof(c), s.owed > 0 ? s.owed : s.in);
+    snprintf(b, sizeof(b), "Latest %s: %s%s %s", no, s.owed > 0 ? "owed " : "", c, v);
+    text(b, 150, TOP + 21, &fonts::Font2, s.owed > 0 ? C_WARN : C_INK, middle_left);
+  }
   button(10, TOP + 76, 148, 54, "Profit", UI_ADM, A_PROFIT, true, true);
   button(166, TOP + 76, 148, 54, "Coins", UI_ADM, A_COINS, true, true);
   button(322, TOP + 76, 148, 54, "Water", UI_ADM, A_WATER, true, true);
@@ -561,6 +565,25 @@ static void draw_test() {
   button(166, TOP + 138, 148, 54, "Servo 1", UI_ADM, A_TEST_S1, true, false, &fonts::FreeSansBold9pt7b);
   button(322, TOP + 138, 148, 54, "Servo 2", UI_ADM, A_TEST_S2, true, false, &fonts::FreeSansBold9pt7b);
   button(10, TOP + 200, 148, 46, "D35 servo", UI_ADM, A_TEST_S3, true, false, &fonts::FreeSansBold9pt7b);
+  button(166, TOP + 200, 148, 46, "Reset history", UI_ADM, A_RESET_HIST, true, false, &fonts::FreeSansBold9pt7b);
+  button(322, TOP + 200, 148, 46, "Reset today", UI_ADM, A_RESET, true, false, &fonts::FreeSansBold9pt7b);
+}
+
+static void draw_reset_history() {
+  adm_title("Reset history", true);
+  text("Every sale in the history will be erased.", W / 2, TOP + 80, &fonts::FreeSans9pt7b, C_INK);
+  text("This cannot be undone.", W / 2, TOP + 108, &fonts::FreeSansBold9pt7b, C_WARN);
+  button(10, H - 78, 222, 64, "Cancel", UI_ADM, A_MENU, true, false);
+  button(246, H - 78, 222, 64, "ERASE", UI_ADM, A_RESET_HIST_YES, true, true);
+}
+
+// Asks first: one stray press must not zero the day the owner counts cash against.
+static void draw_reset() {
+  adm_title("Reset today's sales", true);
+  text("Today's income, water and sales go back to zero.", W / 2, TOP + 80, &fonts::FreeSans9pt7b, C_INK);
+  text("The totals are kept in the machine's records.", W / 2, TOP + 108, &fonts::Font2, C_MUTE);
+  button(10, H - 78, 222, 64, "Cancel", UI_ADM, A_MENU, true, false);
+  button(246, H - 78, 222, 64, "RESET", UI_ADM, A_RESET_YES, true, true);
 }
 
 static void kv(int y, const char *k, const char *v, uint16_t c) {
@@ -617,14 +640,7 @@ static void draw_history() {
   for (uint8_t i = 0; i < g_stats.n; i++) {
     const sale_t &s = g_stats.sale[i];
     const int y = TOP + 58 + i * 22;
-    if (s.ts) {
-      const time_t t = (time_t)s.ts;
-      struct tm tmv;
-      gmtime_r(&t, &tmv);
-      snprintf(b, sizeof(b), "%02d/%02d %02d:%02d", tmv.tm_mday, tmv.tm_mon + 1, tmv.tm_hour, tmv.tm_min);
-    } else {
-      snprintf(b, sizeof(b), "--/-- --:--");
-    }
+    sale_number(b, sizeof(b), s.ts);
     text(b, 20, y, &fonts::Font2, C_MUTE, middle_left);
     volume(v, sizeof(v), s.ml);
     if (s.owed > 0) {
@@ -671,6 +687,8 @@ static void draw_admin() {
     case P_HISTORY: draw_history(); break;
     case P_LOAD:    draw_load(); break;
     case P_TEST:    draw_test(); break;
+    case P_RESET:   draw_reset(); break;
+    case P_RESET_HIST: draw_reset_history(); break;
     default: break;
   }
 }
@@ -732,6 +750,20 @@ static void adm_action(long a) {
     case A_CLEAR:   admin_mega(EV_ADMIN_CLEAR, -1); break;
     case A_CHPIN:   s_adm = P_CHPIN; s_pin_len = 0; s_pin[0] = 0; s_pin_wrong = false; break;
     case A_TEST:      s_adm = P_TEST; break;
+    case A_RESET:     s_adm = P_RESET; break;
+    case A_RESET_HIST: s_adm = P_RESET_HIST; break;
+    case A_RESET_HIST_YES:
+      admin_mega(EV_ADMIN_RESET_HISTORY, -1);
+      s_adm = P_MENU;
+      g_stats.ready = false;
+      mega_send_event(EV_STATS, -1);
+      break;
+    case A_RESET_YES:
+      admin_mega(EV_ADMIN_RESET_DAY, -1);
+      s_adm = P_MENU;
+      g_stats.ready = false;
+      mega_send_event(EV_STATS, -1);
+      break;
     case A_TEST_P1:   admin_mega(EV_ADMIN_TEST, 3); break;
     case A_TEST_P5:   admin_mega(EV_ADMIN_TEST, 4); break;
     case A_TEST_FILL: admin_mega(EV_ADMIN_TEST, 2); break;
@@ -1076,6 +1108,12 @@ void ui_loop() {
   int32_t x = 0, y = 0;
   const bool down = lcd.getTouch(&x, &y);
   if (down && !s_was_down) Serial.printf("[touch] %ld,%ld\n", (long)x, (long)y);
+  // A press just past the edge belongs to the button at the edge: the frame
+  // covers the corner targets, so calibration can read a little wide.
+  if (x < 0) x = 0;
+  if (x >= W) x = W - 1;
+  if (y < 0) y = 0;
+  if (y >= H) y = H - 1;
   // Hold the water drop on the idle screen to open the admin PIN.
   static bool s_dp_active = false, s_dp_fired = false;
   static uint32_t s_dp_since = 0;

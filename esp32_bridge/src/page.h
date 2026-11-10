@@ -85,7 +85,7 @@ background:var(--card);border:1px solid var(--line);font-weight:800;font-size:15
 </div>
 <script>
 const ST={BOOT:0,STANDBY:1,ACCEPTING:2,SELECTING:3,AWAITING:4,DISPENSING:5,PAUSED:6,SETTLING:7,COMPLETE:8,PAYING:9,THANKYOU:10,FAULT:11,ADMIN:12};
-const EV={SELECT:1,AGAIN:2,FINISH:3,BACK:4,STATS:6,SET_P1:10,SET_P5:11,CONFIRM:15,CLEAR:16,TEST:17};
+const EV={SELECT:1,AGAIN:2,FINISH:3,BACK:4,STATS:6,SET_P1:10,SET_P5:11,CONFIRM:15,CLEAR:16,TEST:17,SET_TIME:19,RESET_DAY:20,RESET_HIST:21};
 const FAULTS={1:"Out of water",2:"Not enough change in the machine",3:"Coin box is full",4:"Change dispenser jammed",5:"Water flow problem",6:"Refill pump problem",7:"Coin slot problem"};
 const MAX_ML=2000;
 const v={state:0,credit:0,inserted:0,maxml:0,target:0,poured:0,total:0,unpaid:0,p1:0,p5:0,b10:0,b20:0,fill:0},m={fault:0,tank:0,tankok:0,ga:0,gb:0,seen:0};
@@ -115,18 +115,17 @@ function picker(){
   <button class="grow" ${can?"":"disabled"} onclick="send(${EV.SELECT},${sel})">DISPENSE</button></div>`;
 }
 
+// A purchase is shown by its number. Old records hold 0 or a date instead.
+const saleNo=r=>r.ts>0&&r.ts<1000000?"#"+r.ts:"#-";
 function salesPage(){
-  const M=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-  const title=S.y&&S.mo?`Sales today — ${S.d} ${M[S.mo-1]} ${S.y}`:"Sales (no clock fitted)";
-  let h=`<div class="row"><b style="font-size:19px">${title}</b><button class="alt small-btn" onclick="stats=false;draw(true)">Back</button></div>`;
+  let h=`<div class="row"><b style="font-size:19px">Sales</b><button class="alt small-btn" onclick="stats=false;draw(true)">Back</button></div>`;
   if(!S.ready)return h+`<div class="center"><p class="t2">Loading…</p></div>`;
   h+=`<div class="cards"><div class="card"><span>Total income</span><b class="ok">${peso(S.income)}</b></div>
   <div class="card"><span>Water dispensed</span><b class="water">${vol(S.volume)}</b></div>
   <div class="card"><span>Purchases</span><b>${S.count}</b></div></div>
   <p class="t2" style="margin-bottom:6px">Last 10 purchases</p><div class="list">`;
   if(!S.rows.length)h+=`<p class="t2" style="padding:14px 0">No purchases yet</p>`;
-  S.rows.forEach(r=>{if(!r)return;let d="--/-- --:--";if(r.ts){const x=new Date(r.ts*1000);
-    d=`${String(x.getUTCDate()).padStart(2,"0")}/${String(x.getUTCMonth()+1).padStart(2,"0")} ${String(x.getUTCHours()).padStart(2,"0")}:${String(x.getUTCMinutes()).padStart(2,"0")}`;}
+  S.rows.forEach(r=>{if(!r)return;const d=saleNo(r);
     h+=r.owed>0?`<div class="sale owed"><span class="d">${d}</span><span class="a">owed ${peso(r.owed)}</span><span class="v">${vol(r.ml)}</span></div>`
                :`<div class="sale"><span class="d">${d}</span><span class="a">${peso(r.in)}</span><span class="v">${vol(r.ml)}</span></div>`;});
   return h+`</div>`;
@@ -151,6 +150,13 @@ function go(p){admAt=Date.now();adm=p;amsg="";
 function adj(k,d){admAt=Date.now();ld[k]=Math.max(0,Math.min(2000,ld[k]+d));draw(true)}
 function saveLoad(){admAt=Date.now();send(EV.SET_P1,ld.p1);send(EV.SET_P5,ld.p5);go("coins")}
 function clearFault(){admAt=Date.now();send(EV.CLEAR);amsg="Clear fault sent";draw(true)}
+function latestLine(r){return `Latest ${saleNo(r)}: ${r.owed>0?"owed "+peso(r.owed):peso(r.in)} · ${vol(r.ml)}`;}
+function resetDay(){admAt=Date.now();
+  if(!confirm("Reset today's sales to zero? The totals are kept in the machine's records."))return;
+  send(EV.RESET_DAY);amsg="Today's sales reset";S.ready=false;send(EV.STATS);draw(true)}
+function resetHist(){admAt=Date.now();
+  if(!confirm("Erase the whole sales history? This cannot be undone."))return;
+  send(EV.RESET_HIST);amsg="History erased";S.ready=false;send(EV.STATS);draw(true)}
 function hwTest(n,l){admAt=Date.now();send(EV.TEST,n);amsg=l+" sent";draw(true)}
 const kv=(k,val,cl)=>`<div class="kv"><span>${k}</span><b class="${cl||""}">${val}</b></div>`;
 const atitle=(t,back)=>`<div class="row"><b style="font-size:19px">${t}</b><button class="alt small-btn" onclick="${back?"go('menu')":"admClose()"}">${back?"Back":"Exit"}</button></div>`;
@@ -167,11 +173,12 @@ function admPage(){
   if(adm==="menu")return atitle("Service mode",false)+
     `<p class="${m.fault?"bad":"ok"}" style="font-weight:800;margin:4px 0">${m.fault?FAULTS[m.fault]||"Fault":"No fault"}</p>
     <p class="t2">${S.ready?`Today: ${peso(S.income)} · ${S.count} sales`:"Today: loading…"}</p>
+    <p class="t2">${S.ready&&S.rows[0]?latestLine(S.rows[0]):""}</p>
     <p class="ok" style="min-height:20px;margin:4px 0">${amsg}</p>
     <div class="menu"><button onclick="go('profit')">Profit</button><button onclick="go('coins')">Coins</button>
     <button onclick="go('water')">Water</button><button class="alt" onclick="go('load')">Load change</button>
     <button class="alt" ${m.fault?"":"disabled"} onclick="clearFault()">Clear fault</button><button class="alt" onclick="go('hist')">History</button>
-    <button class="alt" onclick="go('test')">Test</button><button class="alt" onclick="go('chpin');pin=''">Change PIN</button><button class="alt" onclick="admClose()">Exit</button></div>`;
+    <button class="alt" onclick="resetDay()">Reset today</button><button class="alt" onclick="resetHist()">Reset history</button><button class="alt" onclick="go('test')">Test</button><button class="alt" onclick="go('chpin');pin=''">Change PIN</button><button class="alt" onclick="admClose()">Exit</button></div>`;
   if(adm==="test")return atitle("Test",true)+`<p class="t2">Machine must be idle. Coin tests pay one real coin.</p>
     <p class="ok" style="min-height:20px;margin:4px 0">${amsg}</p>
     <div class="menu"><button onclick="hwTest(3,'₱1 hopper')">₱1 hopper</button><button onclick="hwTest(4,'₱5 hopper')">₱5 hopper</button>

@@ -141,6 +141,12 @@ static void admin_event(long ev, long payload) {
     faults_clear(FAULT_LOW_CHANGE);   // re-checked at the next STANDBY
   } else if (ev == (long)HMI_EVENT_ADMIN_CLEAR) {
     faults_clear_all();
+  } else if (ev == (long)HMI_EVENT_ADMIN_SET_TIME) {
+    if (payload > 0) rtc_set_timestamp((uint32_t)payload);
+  } else if (ev == (long)HMI_EVENT_ADMIN_RESET_DAY) {
+    persist_daily_reset(rtc_timestamp());
+  } else if (ev == (long)HMI_EVENT_ADMIN_RESET_HISTORY) {
+    persist_history_clear();
   } else if (ev == (long)HMI_EVENT_ADMIN_TEST) {
     switch (payload) {
       case 1: dispense_manual(3); break;
@@ -158,7 +164,8 @@ static void admin_event(long ev, long payload) {
 static bool is_admin_event(long ev) {
   return ev == (long)HMI_EVENT_ADMIN_SET_P1 || ev == (long)HMI_EVENT_ADMIN_SET_P5 ||
          ev == (long)HMI_EVENT_ADMIN_CLEAR || ev == (long)HMI_EVENT_ADMIN_TEST ||
-         ev == (long)HMI_EVENT_ADMIN_UNLOCK;
+         ev == (long)HMI_EVENT_ADMIN_UNLOCK || ev == (long)HMI_EVENT_ADMIN_SET_TIME ||
+         ev == (long)HMI_EVENT_ADMIN_RESET_DAY || ev == (long)HMI_EVENT_ADMIN_RESET_HISTORY;
 }
 
 // Sales screen reply, one line per pass so it never blocks:
@@ -225,7 +232,7 @@ static void rx_line(char *line) {
   char *end = NULL;
   const long ev = strtol(line + 3, &end, 10);
   if (end == line + 3) return;                         // no number
-  if (ev <= (long)HMI_EVENT_NONE || ev > (long)HMI_EVENT_ADMIN_UNLOCK) return;
+  if (ev <= (long)HMI_EVENT_NONE || ev > (long)HMI_EVENT_ADMIN_RESET_HISTORY) return;
 
   if (is_admin_event(ev)) {
     admin_event(ev, (*end == ' ') ? strtol(end + 1, NULL, 10) : 0);

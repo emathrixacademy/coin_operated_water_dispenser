@@ -27,7 +27,7 @@
 //
 //     SD <income> <volume> <count>    sales today (centavos, mL, purchases)
 //     DT <year> <month> <day>         today's date, 0 0 0 with no clock
-//     HS <n> <time> <in> <ml> <chg> <owed>
+//     HS <n> <sale no> <in> <ml> <chg> <owed>
 //                                     one recent purchase, n = 0 newest;
 //                                     time is Unix seconds, 0 = no clock;
 //                                     owed > 0: change not paid (in is 0)
@@ -98,7 +98,10 @@ enum hmi_event_t : uint8_t {
   HMI_EVENT_ADMIN_CLEAR,     // clear every fault
   HMI_EVENT_ADMIN_TEST,      // payload 1 pour 3 s, 2 refill 5 s, 3 pay one P1, 4 pay one P5,
                              // 5 gate 1, 6 gate 2, 7 service servo (one swing each)
-  HMI_EVENT_ADMIN_UNLOCK     // payload = PIN; answered with "AU 1" or "AU 0"
+  HMI_EVENT_ADMIN_UNLOCK,    // payload = PIN; answered with "AU 1" or "AU 0"
+  HMI_EVENT_ADMIN_SET_TIME,  // payload = local time as seconds since 1970
+  HMI_EVENT_ADMIN_RESET_DAY, // close today's totals to history and zero them
+  HMI_EVENT_ADMIN_RESET_HISTORY   // erase the history ring, cannot be undone
 };
 
 void hmi_begin();

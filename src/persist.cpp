@@ -803,6 +803,34 @@ void persist_daily_reset(uint32_t timestamp) {
   daily_close(timestamp, (uint8_t)EVT_ADMIN_EDIT);
 }
 
+uint32_t persist_next_sale_number() {
+  uint32_t highest = 0;
+  for (uint8_t i = 0; i < s_hist_count; i++) {
+    const history_entry_t *e = persist_history_get(i);
+    if (!e) continue;
+    const bool sale = e->tag == EVT_TRANSACTION ||
+                      (e->tag == EVT_CHANGE_JAM && e->denomination == (uint8_t)COIN_NONE);
+    // Above the limit is a date from when the clock could be set, not a number.
+    if (sale && e->timestamp < SALE_NUMBER_LIMIT && e->timestamp > highest) {
+      highest = e->timestamp;
+    }
+  }
+  return highest + 1;
+}
+
+void persist_history_clear() {
+  // Break the first magic byte of each slot rather than rewriting it: the loader
+  // then skips the slot, which is what "empty" already means to it. A fixed
+  // non-magic value, not a toggle: a toggle pressed twice would bring back every
+  // record it erased.
+  const uint8_t not_magic = (uint8_t)((EEPROM_MAGIC & 0xFF) ^ 0xFF);
+  for (uint8_t i = 0; i < HISTORY_ENTRIES; i++) {
+    EEPROM.update(EEPROM_ADDR_HISTORY + (i * SLOT_HIST_SIZE), not_magic);
+  }
+  s_hist_count = 0;
+  s_hist_seq = 0;
+}
+
 void persist_history_add(const history_entry_t *entry) {
   if (!entry) return;
   hist_slot_t slot;

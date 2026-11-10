@@ -226,6 +226,9 @@ typedef int32_t volume_t;   // millilitres
 // no sale is open, and swings back once any of them clears. Held at the active
 // angle; signal dropped at rest, like the gates (see GATE_DETACH_MS).
 #define PIN_SERVICE_SERVO 35
+// 0 = turned off (team 2026-11-09): never attached, no signal on the pin, and
+// the three coin IRs move nothing. COIN STORAGE FULL still locks on its own.
+#define SERVICE_SERVO_ENABLED 0
 #define SERVICE_SERVO_REST_DEG   0
 #define SERVICE_SERVO_ACTIVE_DEG 25
 // Test console "svc <n>": time per move. Long enough to watch a full swing.
@@ -839,6 +842,9 @@ typedef int32_t volume_t;   // millilitres
 #define DISPENSE_TRIM_300ML 30
 #define DISPENSE_TRIM_400ML 48
 #define DISPENSE_TRIM_500ML 60
+#define DISPENSE_TRIM_600ML 79
+#define DISPENSE_TRIM_700ML 80
+#define DISPENSE_TRIM_800ML 70
 
 // 1 = no amount picker. CONFIRM (push button, or Continue on the screen) pours
 // the whole credit, P1 = 100 mL, once the bottle IR sees a bottle.
@@ -1284,6 +1290,10 @@ typedef int32_t volume_t;   // millilitres
 // so this is the ceiling. A longer history is a new scope item to be quoted,
 // not built.
 #define HISTORY_ENTRIES 20
+
+// Sale records hold a purchase number where a date used to go. Anything at or
+// above this is an old date and is not treated as a number.
+#define SALE_NUMBER_LIMIT 1000000UL
 
 // ---------------------------------------------------------------------------
 // Main loop

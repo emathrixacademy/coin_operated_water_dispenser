@@ -39,4 +39,7 @@ int32_t calendar_day_number(const datetime_t *dt);
 // written with a failed clock is distinguishable from a real one.
 uint32_t calendar_timestamp(const datetime_t *dt);
 
+// The reverse of calendar_timestamp(). False if the result is implausible.
+bool calendar_from_timestamp(uint32_t timestamp, datetime_t *dt);
+
 #endif  // CALENDAR_H

@@ -166,6 +166,17 @@ void persist_history_add(const history_entry_t *entry);
 
 uint8_t persist_history_count();
 
+// Number for the sale being recorded, one above the highest in the ring (1 when
+// there is none). Sale records keep it in `timestamp`, team 2026-11-09: no clock
+// is fitted and the owner reads purchases by number. Starts over at 1 once the
+// history is reset.
+uint32_t persist_next_sale_number();
+
+// Admin "reset history": every entry gone for good, unpaid-change records
+// included. Cannot be undone. One byte per slot, so about 70 ms of EEPROM time;
+// the caller makes sure the machine is idle.
+void persist_history_clear();
+
 // index 0 is the most recent.
 const history_entry_t *persist_history_get(uint8_t index);
 

@@ -113,9 +113,9 @@ void mega_send_event(int ev, long payload) {
 // both for ADM_LOCK_MS. A phone that enters the right PIN may send admin
 // events for ADM_SESSION_MS after its last one; every other phone may not.
 
-#define ADM_DEFAULT_PIN  0        // shown and typed as 0000 (team 2026-11-09)
-// New key name so a PIN saved under the old "pin" key no longer applies.
-#define NVS_ADMIN_PIN    "pin2"
+#define ADM_DEFAULT_PIN  4321     // team 2026-11-09
+// New key name so a PIN saved under an older key no longer applies.
+#define NVS_ADMIN_PIN    "pin3"
 #define ADM_MEGA_SECRET  1234     // must equal ADMIN_PIN in the Mega's config.h
 #define ADM_LOCK_MS      60000
 #define ADM_SESSION_MS   120000

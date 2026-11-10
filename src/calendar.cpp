@@ -67,3 +67,31 @@ uint32_t calendar_timestamp(const datetime_t *dt) {
          (uint32_t)dt->minute * 60UL +
          (uint32_t)dt->second;
 }
+
+bool calendar_from_timestamp(uint32_t timestamp, datetime_t *dt) {
+  uint32_t days = timestamp / 86400UL;
+  const uint32_t rest = timestamp % 86400UL;
+
+  uint16_t year = 1970;
+  for (;;) {
+    const uint16_t in_year = calendar_is_leap(year) ? 366 : 365;
+    if (days < in_year) break;
+    days -= in_year;
+    year++;
+  }
+  uint8_t month = 1;
+  for (;;) {
+    const uint8_t in_month = calendar_days_in_month(year, month);
+    if (days < in_month) break;
+    days -= in_month;
+    month++;
+  }
+
+  dt->year = year;
+  dt->month = month;
+  dt->day = (uint8_t)(days + 1);
+  dt->hour = (uint8_t)(rest / 3600UL);
+  dt->minute = (uint8_t)((rest % 3600UL) / 60UL);
+  dt->second = (uint8_t)(rest % 60UL);
+  return calendar_plausible(dt);
+}

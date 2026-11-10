@@ -64,6 +64,9 @@ static volume_t stop_early(volume_t target) {
     case 300: return DISPENSE_TAIL_ML + DISPENSE_TRIM_300ML;
     case 400: return DISPENSE_TAIL_ML + DISPENSE_TRIM_400ML;
     case 500: return DISPENSE_TAIL_ML + DISPENSE_TRIM_500ML;
+    case 600: return DISPENSE_TAIL_ML + DISPENSE_TRIM_600ML;
+    case 700: return DISPENSE_TAIL_ML + DISPENSE_TRIM_700ML;
+    case 800: return DISPENSE_TAIL_ML + DISPENSE_TRIM_800ML;
     default:  return DISPENSE_TAIL_ML;
   }
 }

@@ -186,6 +186,7 @@ static bool s_service_active = false;
 static uint32_t s_service_move_ms = 0;
 
 static void service_servo_write(int angle) {
+  if (!SERVICE_SERVO_ENABLED) return;
   if (!s_service_servo.attached()) s_service_servo.attach(PIN_SERVICE_SERVO);
   s_service_servo.write(angle);
   s_service_move_ms = millis();
@@ -203,6 +204,7 @@ void service_servo_test(uint8_t cycles) {
 }
 
 static void service_servo_update() {
+  if (!SERVICE_SERVO_ENABLED) return;
   if (s_service_test_steps) {
     if ((uint32_t)(millis() - s_service_test_ms) < SERVICE_SERVO_TEST_STEP_MS) return;
     s_service_test_ms = millis();
@@ -279,7 +281,7 @@ static void accept_pending_coin() {
 static void commit_transaction() {
   history_entry_t e;
   memset(&e, 0, sizeof(e));
-  e.timestamp  = rtc_timestamp();   // RTC_TIMESTAMP_INVALID if the clock failed
+  e.timestamp  = persist_next_sale_number();
   e.tag        = EVT_TRANSACTION;
   e.amount_in  = billing_inserted();
   e.volume_out = billing_total_dispensed();
@@ -325,7 +327,7 @@ static void record_unpaid_and_close() {
 
   history_entry_t e;
   memset(&e, 0, sizeof(e));
-  e.timestamp    = rtc_timestamp();
+  e.timestamp    = persist_next_sale_number();
   e.tag          = EVT_CHANGE_JAM;
   e.denomination = (uint8_t)COIN_NONE;
   e.amount_in    = owed;

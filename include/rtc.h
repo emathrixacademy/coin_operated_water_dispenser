@@ -59,4 +59,10 @@ int32_t rtc_day_number();
 // wrong date. Clears the oscillator-stop flag on success.
 bool rtc_set(const datetime_t *dt);
 
+// Set the clock from a local-time timestamp (the phone's clock, team 2026-11-09).
+// Written to the DS3231 if one answers. Otherwise the Mega counts from it in RAM:
+// that clock drifts and is LOST on every restart, after which timestamps are
+// RTC_TIMESTAMP_INVALID again until it is set again.
+bool rtc_set_timestamp(uint32_t timestamp);
+
 #endif  // RTC_H
