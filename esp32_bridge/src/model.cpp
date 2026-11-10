@@ -24,7 +24,8 @@ bool model_apply(const char *line) {
     struct { const char *k; int32_t *f; } map[] = {
       { "state", &g_m.state }, { "credit", &g_m.credit }, { "inserted", &g_m.inserted },
       { "maxml", &g_m.maxml }, { "target", &g_m.target }, { "poured", &g_m.poured },
-      { "total", &g_m.total }, { "unpaid", &g_m.unpaid }
+      { "total", &g_m.total }, { "unpaid", &g_m.unpaid }, { "p1", &g_m.p1 }, { "p5", &g_m.p5 },
+      { "b10", &g_m.b10 }, { "b20", &g_m.b20 }, { "fill", &g_m.fill }
     };
     for (size_t i = 0; i < sizeof(map) / sizeof(map[0]); i++) {
       if (strlen(map[i].k) == n && !strncmp(map[i].k, name, n)) return set(map[i].f, v);
@@ -73,6 +74,12 @@ bool model_apply(const char *line) {
     s.change = strtol(p, &p, 10);
     s.owed = strtol(p, &p, 10);
     if (g_stats.n < i + 1) g_stats.n = (uint8_t)(i + 1);
+    return true;
+  }
+
+  if (!strncmp(line, "AU ", 3)) {
+    g_m.au = strtol(line + 3, NULL, 10);
+    g_m.au_seq++;
     return true;
   }
 

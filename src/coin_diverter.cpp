@@ -68,20 +68,22 @@ static void gates_rest() {
   gate_write(s_gate2, PIN_GATE2_SERVO, GATE2_ANGLE_OPEN);
 }
 
-// Every box destination is the same straight run -- the denomination split is
-// in the books, not in the mechanism.
+// As built (team, 2026-10-30): at rest the chute runs to the P5 hopper, so a
+// P5 moves nothing; a P1 swings gate 1 only; the box (a full hopper, P10,
+// P20, unknown) swings both. The denomination split in the box is in the
+// books, not in the mechanism.
 static void gates_for(coin_dest_t dest) {
   switch (dest) {
     case DEST_P5_HOPPER:
+      gates_rest();
+      break;
+    case DEST_P1_HOPPER:
       gate_write(s_gate1, PIN_GATE1_SERVO, GATE1_ANGLE_CLOSED);
       gate_write(s_gate2, PIN_GATE2_SERVO, GATE2_ANGLE_OPEN);
       break;
-    case DEST_P1_HOPPER:
-      gate_write(s_gate1, PIN_GATE1_SERVO, GATE1_ANGLE_OPEN);
-      gate_write(s_gate2, PIN_GATE2_SERVO, GATE2_ANGLE_CLOSED);
-      break;
     default:
-      gates_rest();
+      gate_write(s_gate1, PIN_GATE1_SERVO, GATE1_ANGLE_CLOSED);
+      gate_write(s_gate2, PIN_GATE2_SERVO, GATE2_ANGLE_CLOSED);
       break;
   }
 }
@@ -117,25 +119,44 @@ void coin_diverter_aim(coin_t coin) {
 // coin inserted now could land anywhere.
 static uint8_t s_ex_steps = 0;     // moves left; 4 per cycle
 static uint32_t s_ex_ms = 0;
+static uint8_t s_ex_only = 0;      // 0 = both gates; 1 or 2 = that gate alone
 
-void coin_diverter_exercise(uint8_t cycles) {
+static void exercise_start(uint8_t only, uint8_t cycles) {
   if (COLLECT_ALL || s_state != DIV_IDLE || s_ex_steps) return;
   if (cycles == 0) return;
   if (cycles > 20) cycles = 20;
-  s_ex_steps = (uint8_t)(cycles * 4);
+  s_ex_only = only;
+  s_ex_steps = (uint8_t)(cycles * (only ? 2 : 4));
   s_ex_ms = millis() - GATE_EXERCISE_STEP_MS;   // first move on the next pass
   s_aim_coin = COIN_NONE;
   coin_acceptor_window_inhibit();
 }
 
+void coin_diverter_exercise(uint8_t cycles) {
+  exercise_start(0, cycles);
+}
+
+void coin_diverter_exercise_one(uint8_t gate, uint8_t cycles) {
+  if (gate != 1 && gate != 2) return;
+  exercise_start(gate, cycles);
+}
+
 static void exercise_update() {
   if ((uint32_t)(millis() - s_ex_ms) < GATE_EXERCISE_STEP_MS) return;
   s_ex_ms = millis();
-  switch (s_ex_steps % 4) {
-    case 0: gate_write(s_gate1, PIN_GATE1_SERVO, GATE1_ANGLE_CLOSED); break;
-    case 3: gate_write(s_gate1, PIN_GATE1_SERVO, GATE1_ANGLE_OPEN);   break;
-    case 2: gate_write(s_gate2, PIN_GATE2_SERVO, GATE2_ANGLE_CLOSED); break;
-    case 1: gate_write(s_gate2, PIN_GATE2_SERVO, GATE2_ANGLE_OPEN);   break;
+  if (s_ex_only == 1) {
+    gate_write(s_gate1, PIN_GATE1_SERVO,
+               (s_ex_steps % 2) ? GATE1_ANGLE_OPEN : GATE1_ANGLE_CLOSED);
+  } else if (s_ex_only == 2) {
+    gate_write(s_gate2, PIN_GATE2_SERVO,
+               (s_ex_steps % 2) ? GATE2_ANGLE_OPEN : GATE2_ANGLE_CLOSED);
+  } else {
+    switch (s_ex_steps % 4) {
+      case 0: gate_write(s_gate1, PIN_GATE1_SERVO, GATE1_ANGLE_CLOSED); break;
+      case 3: gate_write(s_gate1, PIN_GATE1_SERVO, GATE1_ANGLE_OPEN);   break;
+      case 2: gate_write(s_gate2, PIN_GATE2_SERVO, GATE2_ANGLE_CLOSED); break;
+      case 1: gate_write(s_gate2, PIN_GATE2_SERVO, GATE2_ANGLE_OPEN);   break;
+    }
   }
   s_ex_steps--;
   if (s_ex_steps == 0) {
@@ -262,9 +283,9 @@ void coin_diverter_route(coin_t coin) {
              : coin == COIN_P10 ? F("P10") : coin == COIN_P20 ? F("P20")
                                            : F("unknown"));
   Serial.print(F(" -> "));
-  Serial.print(s_dest == DEST_P5_HOPPER ? F("P5 hopper (gate1 CLOSED)")
-             : s_dest == DEST_P1_HOPPER ? F("P1 hopper (gate2 CLOSED)")
-                                        : F("coin box (both OPEN)"));
+  Serial.print(s_dest == DEST_P5_HOPPER ? F("P5 hopper (gates at rest)")
+             : s_dest == DEST_P1_HOPPER ? F("P1 hopper (gate1 moved)")
+                                        : F("coin box (both moved)"));
   Serial.print(F("  P1full="));
   Serial.print(coin_level_hopper_full(HOPPER_P1) ? 1 : 0);
   Serial.print(F(" P5full="));

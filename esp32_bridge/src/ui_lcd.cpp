@@ -18,6 +18,7 @@ void ui_loop() {}
 #include <string.h>
 #include <Wire.h>
 #include <time.h>
+#include <Preferences.h>
 #define LGFX_USE_V1
 #include <LovyanGFX.hpp>
 #include "model.h"
@@ -34,13 +35,47 @@ void ui_loop() {}
 #define TOUCH_ADDR 0x5D
 #endif
 
+// XPT2046 raw range and orientation (resistive boards). Typical values for
+// this panel; adjust if taps land beside the buttons.
+#define TOUCH_R_X_MIN 300
+#define TOUCH_R_X_MAX 3900
+#define TOUCH_R_Y_MIN 200
+#define TOUCH_R_Y_MAX 3700
+#define TOUCH_R_ROTATION 0
+
 class LGFX : public lgfx::LGFX_Device {
   lgfx::Panel_ST7796 _panel;
   lgfx::Bus_SPI _bus;
   lgfx::Light_PWM _light;
   lgfx::Touch_GT911 _touch;
+  // The resistive variant of the same board (ESP32-3248S035R): XPT2046 on
+  // the display's SPI bus. Handover 2026-11-06: the replacement unit had no
+  // GT911 on I2C. Chosen at boot by the touch scan, see use_resistive().
+  lgfx::Touch_XPT2046 _touch_r;
 
  public:
+  void use_resistive() {
+    auto cfg = _touch_r.config();
+    cfg.x_min = TOUCH_R_X_MIN;
+    cfg.x_max = TOUCH_R_X_MAX;
+    cfg.y_min = TOUCH_R_Y_MIN;
+    cfg.y_max = TOUCH_R_Y_MAX;
+    cfg.pin_int = 36;
+    cfg.bus_shared = true;
+    cfg.offset_rotation = TOUCH_R_ROTATION;
+    cfg.spi_host = HSPI_HOST;
+    cfg.freq = 1000000;
+    cfg.pin_sclk = 14;
+    cfg.pin_mosi = 13;
+    cfg.pin_miso = 12;
+    cfg.pin_cs = 33;
+    _touch_r.config(cfg);
+    _panel.setTouch(&_touch_r);
+    // The panel now shares its SPI bus with the touch chip.
+    auto panel_cfg = _panel.config();
+    panel_cfg.bus_shared = true;
+    _panel.config(panel_cfg);
+  }
   LGFX() {
     {
       auto cfg = _bus.config();
@@ -112,6 +147,9 @@ class LGFX : public lgfx::LGFX_Device {
 
 static LGFX lcd;
 
+#define NVS_TOUCH_CAL "tcal"
+static bool s_touch_resistive = false;
+
 // --- Palette ---------------------------------------------------------------
 
 static uint16_t C_BG, C_CARD, C_LINE, C_INK, C_MUTE, C_ACC, C_WATER, C_OK, C_WARN, C_BAD, C_DIM;
@@ -131,7 +169,7 @@ static const int W = 480, H = 320, TOP = 44;
 // Most one customer can buy -- must match MAX_TRANSACTION_PESOS x 100 mL in
 // the Mega's config.h. The Mega enforces it either way; this only keeps the
 // picker from offering more.
-#define MAX_BUY_ML 1500
+#define MAX_BUY_ML 2000
 
 // --- Buttons ---------------------------------------------------------------
 //
@@ -154,7 +192,7 @@ struct btn_t {
   long payload;
   bool enabled;
 };
-static btn_t s_btn[20];   // 15 amount tiles + Refund + DISPENSE, with room
+static btn_t s_btn[24];   // 20 amount tiles + Finish + DISPENSE, with room
 static uint8_t s_nbtn = 0;
 
 // Amount chosen on the picker, in mL. Local to the screen until DISPENSE
@@ -318,15 +356,22 @@ static void draw_select() {
     text(b, W - 14, TOP + 18, &fonts::FreeSansBold12pt7b, C_WATER, middle_right);
   }
 
-  // Every size from 100 mL to the ceiling in 100 mL steps: 15 tiles, 5 x 3.
+  // Every size from 100 mL to the ceiling in 100 mL steps: 20 tiles, 5 x 4.
   for (int i = 0; i < MAX_BUY_ML / 100; i++) {
     const int col = i % 5, row = i / 5;
-    tile(10 + col * 93, TOP + 40 + row * 58, 86, 52, (long)(i + 1) * 100);
+    tile(10 + col * 93, TOP + 34 + row * 47, 86, 43, (long)(i + 1) * 100);
   }
 
-  button(10, H - 58, 150, 52, "Refund", EV_FINISH, -1, true, false, &fonts::FreeSansBold12pt7b);
-  button(170, H - 58, 300, 52, "DISPENSE", EV_SELECT_VOLUME, s_sel_ml, can_buy, true,
-         &fonts::FreeSansBold18pt7b);
+  // No refund before buying (client, 2026-10-31). Finish appears only once
+  // water has been bought this transaction (back here via "Dispense more").
+  if (g_m.total > 0) {
+    button(10, H - 54, 150, 50, "Finish", EV_FINISH, -1, true, false, &fonts::FreeSansBold12pt7b);
+    button(170, H - 54, 300, 50, "DISPENSE", EV_SELECT_VOLUME, s_sel_ml, can_buy, true,
+           &fonts::FreeSansBold18pt7b);
+  } else {
+    button(10, H - 54, 460, 50, "DISPENSE", EV_SELECT_VOLUME, s_sel_ml, can_buy, true,
+           &fonts::FreeSansBold18pt7b);
+  }
 }
 
 static void stat_card(int x, int y, const char *label, const char *value, uint16_t c) {
@@ -396,6 +441,330 @@ static void draw_stats() {
   }
 }
 
+// --- Admin -----------------------------------------------------------------
+//
+// Hold the water drop on the idle screen for ADM_HOLD_MS, enter the PIN, and
+// the service menu opens: Profit, Coins, Water, Load change, Clear fault,
+// History, Change PIN. Three wrong PINs lock it for ADM_LOCK_MS.
+//
+// The PIN the operator types is kept on this board (NVS) so it can be changed
+// here. Actions that change the machine go to the Mega behind its own unlock
+// (EV 18 with ADM_MEGA_SECRET, which must equal ADMIN_PIN in the Mega's
+// config.h); the phone page cannot send admin events at all -- main.cpp drops
+// them.
+
+#define ADM_HOLD_MS      3000
+#define ADM_IDLE_MS      120000
+
+enum { UI_ADM = -20 };
+enum {
+  A_PIN_CLEAR = 10, A_PIN_OK, A_CANCEL, A_EXIT, A_OPEN,
+  A_PROFIT = 20, A_COINS, A_WATER, A_LOAD, A_CLEAR, A_HISTORY, A_CHPIN, A_MENU, A_CALIB,
+  A_P1_M10 = 30, A_P1_M1, A_P1_P1, A_P1_P10, A_P5_M10, A_P5_M1, A_P5_P1, A_P5_P10, A_SAVE,
+  A_TEST = 40, A_TEST_P1, A_TEST_P5, A_TEST_FILL, A_TEST_POUR, A_TEST_S1, A_TEST_S2, A_TEST_S3
+};
+enum { P_NONE = 0, P_PIN, P_MENU, P_PROFIT, P_COINS, P_WATER, P_HISTORY, P_LOAD, P_CHPIN, P_TEST };
+
+static uint8_t s_adm = P_NONE;
+static char s_pin[5] = "";
+static uint8_t s_pin_len = 0;
+static bool s_pin_wrong = false;
+static uint32_t s_adm_touch = 0;
+static int32_t s_load_p1 = 0, s_load_p5 = 0;
+
+static void adm_open_pin() {
+  s_adm = P_PIN;
+  s_pin_len = 0;
+  s_pin[0] = 0;
+  s_pin_wrong = false;
+  s_adm_touch = millis();
+}
+
+static void adm_close() {
+  s_adm = P_NONE;
+  s_pin_len = 0;
+}
+
+static void adm_title(const char *t, bool back_to_menu) {
+  text(t, 14, TOP + 21, &fonts::FreeSansBold12pt7b, C_INK, middle_left);
+  button(W - 104, TOP + 4, 94, 34, back_to_menu ? "Back" : "Exit", UI_ADM,
+         back_to_menu ? A_MENU : A_EXIT, true, false, &fonts::FreeSansBold9pt7b);
+}
+
+static void draw_pin() {
+  text("Admin PIN", 14, TOP + 21, &fonts::FreeSansBold12pt7b, C_INK, middle_left);
+  button(W - 104, TOP + 4, 94, 34, "Cancel", UI_ADM, A_CANCEL, true, false,
+         &fonts::FreeSansBold9pt7b);
+  if (s_adm == P_PIN && admin_locked()) {
+    icon_warn(120, TOP + 120, 34, C_BAD);
+    text("Admin locked", 120, TOP + 182, &fonts::FreeSansBold12pt7b, C_INK);
+    char b[32];
+    snprintf(b, sizeof(b), "Try again in %lus", (unsigned long)admin_lock_left_s());
+    text(b, 120, TOP + 212, &fonts::Font2, C_MUTE);
+    return;
+  }
+  text(s_adm == P_CHPIN ? "Enter a NEW 4-digit PIN" : "Enter the 4-digit PIN", 120, TOP + 70,
+       &fonts::Font2, C_MUTE);
+  for (int i = 0; i < 4; i++) {
+    const int cx = 66 + i * 36, cy = TOP + 110;
+    if (i < s_pin_len) lcd.fillCircle(cx, cy, 10, C_INK);
+    else lcd.drawCircle(cx, cy, 10, C_MUTE);
+  }
+  if (s_pin_wrong) {
+    char b[32];
+    snprintf(b, sizeof(b), "Wrong PIN (%u of %u)", admin_fails(), ADM_MAX_TRIES);
+    text(b, 120, TOP + 150, &fonts::Font2, C_BAD);
+  }
+  // Keypad, right half.
+  static const char *const K[12] = { "1", "2", "3", "4", "5", "6", "7", "8", "9", "Clear", "0", "OK" };
+  for (int i = 0; i < 12; i++) {
+    const int col = i % 3, row = i / 3;
+    const long a = (i < 9) ? i + 1 : (i == 9 ? A_PIN_CLEAR : (i == 10 ? 0 : A_PIN_OK));
+    button(250 + col * 76, TOP + 46 + row * 56, 70, 50, K[i], UI_ADM, a, true, i == 11,
+           &fonts::FreeSansBold12pt7b);
+  }
+}
+
+static void draw_menu() {
+  adm_title("Service mode", false);
+  text(g_m.fault ? FAULT_TEXT[g_m.fault < 8 ? g_m.fault : 0] : "No fault", 14, TOP + 56,
+       &fonts::FreeSansBold9pt7b, g_m.fault ? C_BAD : C_OK, middle_left);
+  char b[48], c[20];
+  money(c, sizeof(c), g_stats.income);
+  if (g_stats.ready) snprintf(b, sizeof(b), "Today: %s  -  %ld sales", c, (long)g_stats.count);
+  else snprintf(b, sizeof(b), "Today: loading...");
+  text(b, W - 14, TOP + 56, &fonts::Font2, C_MUTE, middle_right);
+  button(10, TOP + 76, 148, 54, "Profit", UI_ADM, A_PROFIT, true, true);
+  button(166, TOP + 76, 148, 54, "Coins", UI_ADM, A_COINS, true, true);
+  button(322, TOP + 76, 148, 54, "Water", UI_ADM, A_WATER, true, true);
+  button(10, TOP + 138, 148, 54, "Load change", UI_ADM, A_LOAD, true, false, &fonts::FreeSansBold9pt7b);
+  button(166, TOP + 138, 148, 54, "Clear fault", UI_ADM, A_CLEAR, g_m.fault != 0, false,
+         &fonts::FreeSansBold9pt7b);
+  button(322, TOP + 138, 148, 54, "History", UI_ADM, A_HISTORY, true, false, &fonts::FreeSansBold9pt7b);
+  button(10, TOP + 200, 148, 46, "Change PIN", UI_ADM, A_CHPIN, true, false, &fonts::FreeSansBold9pt7b);
+  if (s_touch_resistive) {
+    button(166, TOP + 200, 148, 46, "Calibrate", UI_ADM, A_CALIB, true, false, &fonts::FreeSansBold9pt7b);
+  }
+  button(322, TOP + 200, 148, 46, "Test", UI_ADM, A_TEST, true, false, &fonts::FreeSansBold9pt7b);
+}
+
+// Hardware checks. The Mega acts on them only while the machine is idle; the
+// coin tests pay one real coin and take it off the hopper count.
+static void draw_test() {
+  adm_title("Test", true);
+  text("Machine must be idle. Coin tests pay one real coin.", 20, TOP + 54,
+       &fonts::Font2, C_MUTE, middle_left);
+  button(10, TOP + 76, 148, 54, "P1 hopper", UI_ADM, A_TEST_P1, true, true, &fonts::FreeSansBold9pt7b);
+  button(166, TOP + 76, 148, 54, "P5 hopper", UI_ADM, A_TEST_P5, true, true, &fonts::FreeSansBold9pt7b);
+  button(322, TOP + 76, 148, 54, "Refill 5 s", UI_ADM, A_TEST_FILL, true, false, &fonts::FreeSansBold9pt7b);
+  button(10, TOP + 138, 148, 54, "Dispense 3 s", UI_ADM, A_TEST_POUR, true, false, &fonts::FreeSansBold9pt7b);
+  button(166, TOP + 138, 148, 54, "Servo 1", UI_ADM, A_TEST_S1, true, false, &fonts::FreeSansBold9pt7b);
+  button(322, TOP + 138, 148, 54, "Servo 2", UI_ADM, A_TEST_S2, true, false, &fonts::FreeSansBold9pt7b);
+  button(10, TOP + 200, 148, 46, "D35 servo", UI_ADM, A_TEST_S3, true, false, &fonts::FreeSansBold9pt7b);
+}
+
+static void kv(int y, const char *k, const char *v, uint16_t c) {
+  text(k, 24, y, &fonts::FreeSans9pt7b, C_MUTE, middle_left);
+  text(v, W - 24, y, &fonts::FreeSansBold9pt7b, c, middle_right);
+  lcd.drawFastHLine(20, y + 13, W - 40, C_DIM);
+}
+
+static void draw_profit() {
+  adm_title("Profit (today)", true);
+  char b[24];
+  if (!g_stats.ready) { text("Loading...", W / 2, 180, &fonts::FreeSansBold12pt7b, C_MUTE); return; }
+  int32_t owed = 0;
+  for (uint8_t i = 0; i < g_stats.n; i++) owed += g_stats.sale[i].owed;
+  money(b, sizeof(b), g_stats.income);              kv(TOP + 64, "Income today", b, C_OK);
+  snprintf(b, sizeof(b), "%ld", (long)g_stats.count); kv(TOP + 98, "Sales", b, C_INK);
+  volume(b, sizeof(b), g_stats.volume);             kv(TOP + 132, "Water sold", b, C_WATER);
+  money(b, sizeof(b), owed);                        kv(TOP + 166, "Change owed (recent)", b, owed ? C_WARN : C_INK);
+  text("Totals reset at midnight when the clock module is fitted.", W / 2, H - 22,
+       &fonts::Font2, C_MUTE);
+}
+
+static void draw_coins() {
+  adm_title("Coins", true);
+  char b[32];
+  snprintf(b, sizeof(b), "x %ld", (long)g_m.p1);   kv(TOP + 64, "P1 hopper (change)", b, C_WATER);
+  snprintf(b, sizeof(b), "x %ld", (long)g_m.p5);   kv(TOP + 98, "P5 hopper (change)", b, C_WATER);
+  snprintf(b, sizeof(b), "x %ld", (long)g_m.b10);  kv(TOP + 132, "P10 in coin box", b, C_INK);
+  snprintf(b, sizeof(b), "x %ld", (long)g_m.b20);  kv(TOP + 166, "P20 in coin box", b, C_INK);
+  char c[20], d[20];
+  money(c, sizeof(c), (g_m.b10 * 10 + g_m.b20 * 20) * 100L);
+  money(d, sizeof(d), (g_m.p1 + g_m.p5 * 5) * 100L);
+  snprintf(b, sizeof(b), "Coin box %s  -  change float %s", c, d);
+  text(b, W / 2, H - 22, &fonts::Font2, C_MUTE);
+}
+
+static void draw_water() {
+  adm_title("Water", true);
+  char b[24];
+  if (g_m.tank_ok) snprintf(b, sizeof(b), "%ld%%", (long)g_m.tank); else snprintf(b, sizeof(b), "no reading");
+  kv(TOP + 64, "Cold tank", b, g_m.tank_ok ? C_WATER : C_WARN);
+  kv(TOP + 98, "Gallon A", g_m.gal_a ? "LOW" : "OK", g_m.gal_a ? C_WARN : C_OK);
+  kv(TOP + 132, "Gallon B", g_m.gal_b ? "LOW" : "OK", g_m.gal_b ? C_WARN : C_OK);
+  kv(TOP + 166, "Refill pump", g_m.fill ? "running" : "off", g_m.fill ? C_WATER : C_INK);
+  volume(b, sizeof(b), g_stats.volume);
+  kv(TOP + 200, "Water sold today", b, C_INK);
+}
+
+static void draw_history() {
+  adm_title("History (last 10 sales)", true);
+  if (!g_stats.ready) { text("Loading...", W / 2, 180, &fonts::FreeSansBold12pt7b, C_MUTE); return; }
+  if (g_stats.n == 0) { text("No sales yet", W / 2, 180, &fonts::FreeSans9pt7b, C_MUTE); return; }
+  char b[48], v[16], o[20];
+  for (uint8_t i = 0; i < g_stats.n; i++) {
+    const sale_t &s = g_stats.sale[i];
+    const int y = TOP + 58 + i * 22;
+    if (s.ts) {
+      const time_t t = (time_t)s.ts;
+      struct tm tmv;
+      gmtime_r(&t, &tmv);
+      snprintf(b, sizeof(b), "%02d/%02d %02d:%02d", tmv.tm_mday, tmv.tm_mon + 1, tmv.tm_hour, tmv.tm_min);
+    } else {
+      snprintf(b, sizeof(b), "--/-- --:--");
+    }
+    text(b, 20, y, &fonts::Font2, C_MUTE, middle_left);
+    volume(v, sizeof(v), s.ml);
+    if (s.owed > 0) {
+      money(o, sizeof(o), s.owed);
+      snprintf(b, sizeof(b), "Sale %s, change NOT paid: %s owed", v, o);
+      text(b, 120, y, &fonts::Font2, C_WARN, middle_left);
+    } else {
+      char in[16], ch[16];
+      money(in, sizeof(in), s.in);
+      money(ch, sizeof(ch), s.change);
+      snprintf(b, sizeof(b), "Sale %s in, %s, change %s", in, v, ch);
+      text(b, 120, y, &fonts::Font2, C_INK, middle_left);
+    }
+  }
+}
+
+static void load_row(int y, const char *label, int32_t val, long base) {
+  char b[24];
+  snprintf(b, sizeof(b), "%s  x %ld", label, (long)val);
+  text(b, 20, y + 22, &fonts::FreeSansBold12pt7b, C_INK, middle_left);
+  static const char *const L[4] = { "-10", "-1", "+1", "+10" };
+  for (int i = 0; i < 4; i++) {
+    button(196 + i * 70, y, 64, 44, L[i], UI_ADM, base + i, true, false, &fonts::FreeSansBold9pt7b);
+  }
+}
+
+static void draw_load() {
+  adm_title("Load change", true);
+  text("Count the coins in each hopper, set them here, then Save.", 20, TOP + 54,
+       &fonts::Font2, C_MUTE, middle_left);
+  load_row(TOP + 70, "P1", s_load_p1, A_P1_M10);
+  load_row(TOP + 126, "P5", s_load_p5, A_P5_M10);
+  button(W - 170, H - 58, 160, 50, "SAVE", UI_ADM, A_SAVE, true, true);
+}
+
+static void draw_admin() {
+  switch (s_adm) {
+    case P_PIN:
+    case P_CHPIN:   draw_pin(); break;
+    case P_MENU:    draw_menu(); break;
+    case P_PROFIT:  draw_profit(); break;
+    case P_COINS:   draw_coins(); break;
+    case P_WATER:   draw_water(); break;
+    case P_HISTORY: draw_history(); break;
+    case P_LOAD:    draw_load(); break;
+    case P_TEST:    draw_test(); break;
+    default: break;
+  }
+}
+
+static void adm_clamp_load() {
+  if (s_load_p1 < 0) s_load_p1 = 0;
+  if (s_load_p1 > 2000) s_load_p1 = 2000;
+  if (s_load_p5 < 0) s_load_p5 = 0;
+  if (s_load_p5 > 2000) s_load_p5 = 2000;
+}
+
+static void adm_action(long a) {
+  s_adm_touch = millis();
+  if (s_adm == P_PIN || s_adm == P_CHPIN) {
+    if (a >= 0 && a <= 9) {
+      if ((s_adm == P_PIN && admin_locked()) || s_pin_len >= 4) return;
+      s_pin[s_pin_len++] = (char)('0' + a);
+      s_pin[s_pin_len] = 0;
+      s_pin_wrong = false;
+      return;
+    }
+    if (a == A_PIN_CLEAR) { s_pin_len = 0; s_pin[0] = 0; return; }
+    if (a == A_CANCEL) {
+      if (s_adm == P_CHPIN) { s_adm = P_MENU; return; }
+      adm_close();
+      return;
+    }
+    if (a == A_PIN_OK && s_pin_len == 4) {
+      const uint16_t typed = (uint16_t)atoi(s_pin);
+      if (s_adm == P_CHPIN) {   // set a new PIN
+        admin_set_pin(typed);
+        s_adm = P_MENU;
+        return;
+      }
+      const int ok = admin_try(typed);
+      if (ok == 1) {
+        s_adm = P_MENU;
+        g_stats.ready = false;
+        mega_send_event(EV_STATS, -1);       // today's numbers for the menu
+        admin_mega(EV_ADMIN_UNLOCK, -1);
+      } else {
+        s_pin_wrong = (ok == 0);
+      }
+      s_pin_len = 0;
+      s_pin[0] = 0;
+    }
+    return;
+  }
+
+  switch (a) {
+    case A_OPEN:    adm_open_pin(); break;
+    case A_EXIT:    adm_close(); break;
+    case A_MENU:    s_adm = P_MENU; break;
+    case A_PROFIT:  s_adm = P_PROFIT; g_stats.ready = false; mega_send_event(EV_STATS, -1); break;
+    case A_HISTORY: s_adm = P_HISTORY; g_stats.ready = false; mega_send_event(EV_STATS, -1); break;
+    case A_COINS:   s_adm = P_COINS; break;
+    case A_WATER:   s_adm = P_WATER; break;
+    case A_LOAD:    s_adm = P_LOAD; s_load_p1 = g_m.p1; s_load_p5 = g_m.p5; break;
+    case A_CLEAR:   admin_mega(EV_ADMIN_CLEAR, -1); break;
+    case A_CHPIN:   s_adm = P_CHPIN; s_pin_len = 0; s_pin[0] = 0; s_pin_wrong = false; break;
+    case A_TEST:      s_adm = P_TEST; break;
+    case A_TEST_P1:   admin_mega(EV_ADMIN_TEST, 3); break;
+    case A_TEST_P5:   admin_mega(EV_ADMIN_TEST, 4); break;
+    case A_TEST_FILL: admin_mega(EV_ADMIN_TEST, 2); break;
+    case A_TEST_POUR: admin_mega(EV_ADMIN_TEST, 1); break;
+    case A_TEST_S1:   admin_mega(EV_ADMIN_TEST, 5); break;
+    case A_TEST_S2:   admin_mega(EV_ADMIN_TEST, 6); break;
+    case A_TEST_S3:   admin_mega(EV_ADMIN_TEST, 7); break;
+    case A_CALIB: {
+      Preferences p;
+      p.begin("wv", false);
+      p.remove(NVS_TOUCH_CAL);
+      p.end();
+      ESP.restart();
+      break;
+    }
+    case A_P1_M10: s_load_p1 -= 10; break;
+    case A_P1_M1:  s_load_p1 -= 1;  break;
+    case A_P1_P1:  s_load_p1 += 1;  break;
+    case A_P1_P10: s_load_p1 += 10; break;
+    case A_P5_M10: s_load_p5 -= 10; break;
+    case A_P5_M1:  s_load_p5 -= 1;  break;
+    case A_P5_P1:  s_load_p5 += 1;  break;
+    case A_P5_P10: s_load_p5 += 10; break;
+    case A_SAVE:
+      admin_mega(EV_ADMIN_SET_P1, s_load_p1);
+      mega_send_event(EV_ADMIN_SET_P5, s_load_p5);
+      s_adm = P_COINS;
+      break;
+    default: break;
+  }
+  adm_clamp_load();
+}
+
 static void draw_body() {
   lcd.fillRect(0, TOP, W, H - TOP, C_BG);
   s_nbtn = 0;
@@ -410,6 +779,10 @@ static void draw_body() {
     return;
   }
 
+  if (s_adm != P_NONE) {
+    draw_admin();
+    return;
+  }
   if (s_stats_open) {
     draw_stats();
     return;
@@ -420,7 +793,9 @@ static void draw_body() {
       text("Credit", W / 2, TOP + 36, &fonts::FreeSans9pt7b, C_MUTE);
       text(c, W / 2, TOP + 84, &fonts::FreeSansBold24pt7b, C_INK);
       text("Insert more coins, or tap Continue", W / 2, TOP + 132, &fonts::FreeSans9pt7b, C_MUTE);
-      button(120, H - 92, 240, 70, "CONTINUE", EV_CONFIRM, -1, true, true,
+      // No Refund here (client, 2026-10-31): the machine sells water, it does
+      // not change coins.
+      button(10, H - 80, 460, 70, "CONTINUE", EV_CONFIRM, -1, true, true,
              &fonts::FreeSansBold18pt7b);
       break;
 
@@ -457,8 +832,14 @@ static void draw_body() {
       text(b, 100, TOP + 46, &fonts::FreeSansBold18pt7b, C_INK, middle_left);
       text("Credit left", W / 2, TOP + 104, &fonts::FreeSans9pt7b, C_MUTE);
       text(c, W / 2, TOP + 140, &fonts::FreeSansBold24pt7b, C_INK);
-      button(12, H - 78, 222, 64, "Dispense more", EV_DISPENSE_AGAIN, -1, true, true);
-      button(246, H - 78, 222, 64, "Finish", EV_FINISH, -1, true, false);
+      // No refund before buying: credit restored at boot with nothing poured
+      // shows only "Dispense more".
+      if (g_m.total > 0) {
+        button(12, H - 78, 222, 64, "Dispense more", EV_DISPENSE_AGAIN, -1, true, true);
+        button(246, H - 78, 222, 64, "Finish", EV_FINISH, -1, true, false);
+      } else {
+        button(10, H - 78, 460, 64, "Dispense more", EV_DISPENSE_AGAIN, -1, true, true);
+      }
       break;
 
     case ST_PAYING:
@@ -492,6 +873,10 @@ static void draw_body() {
         text(FAULT_TEXT[g_m.fault], W / 2, 216, &fonts::FreeSansBold9pt7b, C_BAD);
       }
       text("Please contact the attendant", W / 2, 250, &fonts::FreeSans9pt7b, C_MUTE);
+      // The attendant fixes it from here: Load change clears LOW CHANGE,
+      // Clear fault the rest once the cause is gone (water refilled).
+      button(W - 112, H - 48, 102, 38, "Admin", UI_ADM, A_OPEN, true, false,
+             &fonts::FreeSansBold9pt7b);
       break;
 
     case ST_ADMIN:
@@ -503,8 +888,10 @@ static void draw_body() {
     default:
       icon_drop(W / 2, 118, 32, C_WATER);
       text("Insert coins to start", W / 2, 200, &fonts::FreeSansBold18pt7b, C_INK);
-      text("1 peso = 100 mL   -   up to 15 pesos (1.5 L)", W / 2, 238, &fonts::FreeSans9pt7b, C_MUTE);
-      button(W - 112, H - 48, 102, 38, "Sales", UI_STATS_OPEN, 0, true, false,
+      text("1 peso = 100 mL   -   up to 2 L per pour", W / 2, 238, &fonts::FreeSans9pt7b, C_MUTE);
+      // Sales live inside Admin (Profit, History), behind the PIN -- team
+      // request 2026-10-29.
+      button(W - 112, H - 48, 102, 38, "Admin", UI_ADM, A_OPEN, true, false,
              &fonts::FreeSansBold9pt7b);
       break;
   }
@@ -516,6 +903,7 @@ static void draw_body() {
 struct body_sig_t {
   int32_t state, credit, maxml, target, total, unpaid, fault, lost;
   int32_t stats_open, stats_ready, stats_n, stats_count;
+  int32_t adm, p1, p5, b10, b20, fill;
 };
 struct top_sig_t { int32_t tank, tank_ok, gal_a, gal_b, lost; };
 
@@ -546,7 +934,7 @@ static void close_stats() {
 // Bring-up check: which I2C addresses answer on the touch bus. The GT911
 // answers at 0x5D or 0x14 depending on how it was reset; seeing neither means
 // the touch controller is on other pins (or this is the resistive board).
-static void touch_bus_scan() {
+static bool touch_bus_scan() {
   Wire.begin(TOUCH_SDA, TOUCH_SCL);
   Serial.print(F("[touch] I2C scan:"));
   uint8_t found = 0;
@@ -559,12 +947,47 @@ static void touch_bus_scan() {
   }
   Serial.println(found ? "" : " nothing");
   Wire.end();
+  return found > 0;
+}
+
+// A resistive panel reports raw positions that differ per unit, so it is
+// calibrated on the unit: four corner targets once, kept in NVS. Admin ->
+// Calibrate clears it and restarts. Runs before the watchdog starts, because
+// it waits for a person.
+static void touch_calibrate() {
+  uint16_t cal[8];
+  Preferences p;
+  p.begin("wv", true);
+  const size_t got = p.getBytes(NVS_TOUCH_CAL, cal, sizeof(cal));
+  p.end();
+  if (got != sizeof(cal)) {
+    lcd.fillScreen(TFT_BLACK);
+    lcd.setTextColor(TFT_WHITE, TFT_BLACK);
+    lcd.setTextDatum(middle_center);
+    lcd.setFont(&fonts::FreeSansBold12pt7b);
+    lcd.drawString("Touch calibration", W / 2, H / 2 - 16);
+    lcd.setFont(&fonts::FreeSans9pt7b);
+    lcd.drawString("Press each corner target firmly", W / 2, H / 2 + 16);
+    lcd.calibrateTouch(cal, TFT_WHITE, TFT_BLACK, 24);
+    p.begin("wv", false);
+    p.putBytes(NVS_TOUCH_CAL, cal, sizeof(cal));
+    p.end();
+  }
+  lcd.setTouchCalibrate(cal);
+  Serial.printf("[touch] calibration %u %u %u %u %u %u %u %u\n", cal[0], cal[1], cal[2], cal[3],
+                cal[4], cal[5], cal[6], cal[7]);
 }
 
 void ui_begin() {
-  touch_bus_scan();
+  // No GT911 on I2C: this is the resistive board, touch is an XPT2046.
+  s_touch_resistive = !touch_bus_scan();
+  if (s_touch_resistive) {
+    lcd.use_resistive();
+    Serial.println(F("[touch] using XPT2046 (resistive)"));
+  }
   lcd.init();
   lcd.setRotation(1);   // landscape, 480 x 320
+  if (s_touch_resistive) touch_calibrate();
   {
     int32_t tx = 0, ty = 0;
     Serial.printf("[touch] after init: getTouch=%d\n", (int)lcd.getTouch(&tx, &ty));
@@ -603,6 +1026,20 @@ void ui_loop() {
     close_stats();
   }
 
+  // Admin closes on its own when left idle or when a customer starts a sale.
+  const bool idle_state = g_m.state == ST_STANDBY || g_m.state == ST_BOOT || g_m.state == ST_FAULT;
+  if (s_adm != P_NONE &&
+      ((uint32_t)(now - s_adm_touch) >= ADM_IDLE_MS || !idle_state || mega_lost())) {
+    adm_close();
+    s_dirty = true;
+  }
+  // The lockout countdown ticks once a second.
+  static uint32_t s_lock_draw = 0;
+  if ((s_adm == P_PIN) && admin_locked() &&(uint32_t)(now - s_lock_draw) >= 1000) {
+    s_lock_draw = now;
+    draw_body();
+  }
+
   if (s_dirty) {
     s_dirty = false;
     const bool lost = mega_lost();
@@ -614,7 +1051,8 @@ void ui_loop() {
     const body_sig_t b = { g_m.state, g_m.credit, g_m.maxml, g_m.target, g_m.total, g_m.unpaid,
                            g_m.fault,
                            lost ? 1 : 0, s_stats_open ? 1 : 0, g_stats.ready ? 1 : 0,
-                           g_stats.n, g_stats.count };
+                           g_stats.n, g_stats.count,
+                           s_adm, g_m.p1, g_m.p5, g_m.b10, g_m.b20, g_m.fill };
     if (!s_drawn || memcmp(&b, &s_body, sizeof(b)) != 0) {
       // A fresh visit to the picker starts at the smallest size, 100 mL (team
       // decision 2026-10-27).
@@ -638,21 +1076,24 @@ void ui_loop() {
   int32_t x = 0, y = 0;
   const bool down = lcd.getTouch(&x, &y);
   if (down && !s_was_down) Serial.printf("[touch] %ld,%ld\n", (long)x, (long)y);
-
-  // Hold the title to open the sales screen.
-  if (down && y < TOP && x < 260) {
-    if (!s_lp_active) {
-      s_lp_active = true;
-      s_lp_fired = false;
-      s_lp_since = now;
-    } else if (!s_lp_fired && (uint32_t)(now - s_lp_since) >= STATS_HOLD_MS &&
-               !s_stats_open && !mega_lost() &&
-               (g_m.state == ST_STANDBY || g_m.state == ST_BOOT || g_m.state == ST_FAULT)) {
-      s_lp_fired = true;
-      open_stats();
+  // Hold the water drop on the idle screen to open the admin PIN.
+  static bool s_dp_active = false, s_dp_fired = false;
+  static uint32_t s_dp_since = 0;
+  if (down && s_adm == P_NONE && !s_stats_open && idle_state && !mega_lost() &&
+      x >= W / 2 - 60 && x < W / 2 + 60 && y >= 70 && y < 170) {
+    if (!s_dp_active) {
+      s_dp_active = true;
+      s_dp_fired = false;
+      s_dp_since = now;
+    } else if (!s_dp_fired && (uint32_t)(now - s_dp_since) >= ADM_HOLD_MS) {
+      s_dp_fired = true;
+      adm_open_pin();
+      draw_body();
+      s_was_down = true;   // the finger still on the glass is not a key press
+      return;
     }
   } else if (!down) {
-    s_lp_active = false;
+    s_dp_active = false;
   }
 
   if (down && !s_was_down) {
@@ -666,6 +1107,7 @@ void ui_loop() {
       else if (bt.ev == UI_SET) { s_sel_ml = bt.payload; clamp_sel(); draw_body(); }
       else if (bt.ev == UI_STATS_CLOSE) { close_stats(); }
       else if (bt.ev == UI_STATS_OPEN) { open_stats(); }
+      else if (bt.ev == UI_ADM) { adm_action(bt.payload); draw_body(); }
       else mega_send_event(bt.ev, bt.payload);
       break;
     }

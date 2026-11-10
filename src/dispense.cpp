@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include "dispense.h"
 #include "flow.h"
+#include "relay.h"
 
 // Dispense -- valve control, cutoff, partial-stop handling. SPEC 4.3, 5.5.
 //
@@ -45,7 +46,7 @@ static void log_pour(const __FlashStringHelper *what) {
 // detector's idea of whether the valve is open cannot drift from the pin.
 // =========================================================================
 static void valve_write(bool open) {
-  digitalWrite(PIN_VALVE, open ? RELAY_ON : RELAY_OFF);
+  relay_write(PIN_VALVE, open);
   s_valve_open = open;
   flow_set_valve_open(open);
 }
@@ -89,7 +90,6 @@ void dispense_manual(uint32_t seconds) {
 }
 
 void dispense_begin() {
-  pinMode(PIN_VALVE, OUTPUT);
   valve_write(false);
   s_status = DISPENSE_IDLE;
   s_target = 0;
@@ -123,7 +123,10 @@ void dispense_update() {
         }
       }
 #endif
-      if (delivered_now() >= s_target) {
+      // DISPENSE_TAIL_ML: water still arriving after the pump stops. Stopping
+      // that much early lands the bottle on target without a dead time in the
+      // count, which made the display start at 12% (see config.h).
+      if (delivered_now() + DISPENSE_TAIL_ML >= s_target) {
         // Target reached. Close the valve and start the settle window.
         //
         // The valve does not close instantly and a little water is still in
@@ -131,7 +134,7 @@ void dispense_update() {
         // toward what the user RECEIVED, so they are never charged for water
         // measured after their bottle was already full -- and never handed
         // uncounted water either.
-        digitalWrite(PIN_VALVE, RELAY_OFF);
+        relay_write(PIN_VALVE, false);
         s_valve_open = false;
         // Tell flow now, not after the settle window: in timed mode the clock
         // must stop with the pump, or the settle time is counted as water.
@@ -155,6 +158,9 @@ void dispense_update() {
       // Settle window over. Bank the tail and tell flow the valve is shut, so
       // the stall detector disarms.
       s_banked += flow_ml();
+      // The tail the pump stopped early for has arrived by now. Without this
+      // the pour reads short of target and settles as a partial with a refund.
+      if (s_banked < s_target) s_banked = s_target;
       s_settling = false;
       flow_set_valve_open(false);
       return;
@@ -237,7 +243,12 @@ dispense_result_t dispense_status() {
 }
 
 volume_t dispense_delivered() {
-  return delivered_now();
+  const volume_t v = delivered_now();
+  // A completed pour stopped DISPENSE_TAIL_ML early on purpose; the tail is in
+  // the bottle. Report the target from the moment it completes, so a caller
+  // reading during the settle window does not see a short pour.
+  if (s_status == DISPENSE_COMPLETE && v < s_target) return s_target;
+  return v;
 }
 
 volume_t dispense_target() {

@@ -186,7 +186,9 @@ money_t billing_worst_case_change() {
   // F8 / WO-009: credit is not clamped, so the acceptor can take one more coin
   // while still below the ceiling -- at worst P19 then a P20, i.e. P39. A
   // no-pour finish refunds all of it.
-  return MAX_TRANSACTION_CENTAVOS - COIN_VALUE_P1 + COIN_VALUE_P20;
+  // Sized for one 2 L sale, not the credit ceiling (MAX_CREDIT_PESOS in
+  // config.h): sized at P500 the machine would never leave LOW CHANGE.
+  return (money_t)MAX_TRANSACTION_PESOS * CENTAVOS_PER_PESO - COIN_VALUE_P1 + COIN_VALUE_P20;
 }
 
 void billing_load(const transaction_t *txn) {
