@@ -303,6 +303,12 @@ void water_refill_add(volume_t ml) {
   if (s_refill_owed_ms > REFILL_OWED_MAX_MS) s_refill_owed_ms = REFILL_OWED_MAX_MS;
 }
 
+void water_refill_cancel(volume_t ml) {
+  if (ml <= 0) return;
+  const uint32_t ms = (uint32_t)ml * FILL_MS_PER_100ML / 100UL;
+  s_refill_owed_ms = (ms >= s_refill_owed_ms) ? 0 : s_refill_owed_ms - ms;
+}
+
 uint32_t water_refill_owed_ms() {
   return s_refill_owed_ms;
 }
@@ -573,7 +579,25 @@ void water_level_update() {
   // interlock, the rest period and the run ceiling, and may refuse it.
   // A manual fill still ends the moment the sensor sees the tank full -- the
   // person watching should not have to be the only thing stopping an overflow.
-  if (manual_fill_active() && s_tank_valid && s_tank_mm <= TANK_SONAR_FULL_MM) {
+  // Debounced tank decisions: each must hold TANK_PUMP_HOLD_MS before it counts.
+  static bool s_want = false, s_want_cand = false;
+  static bool s_full = false, s_full_cand = false;
+  static uint32_t s_want_since = 0, s_full_since = 0;
+  {
+    const uint32_t now_ms = millis();
+    const bool raw_want = tank_pump_want(s_tank_mm, s_tank_valid, s_want);
+    if (raw_want != s_want_cand) { s_want_cand = raw_want; s_want_since = now_ms; }
+    else if (s_want != s_want_cand && (uint32_t)(now_ms - s_want_since) >= TANK_PUMP_HOLD_MS) {
+      s_want = s_want_cand;
+    }
+    const bool raw_full = s_tank_valid && s_tank_mm <= TANK_SONAR_FULL_MM;
+    if (raw_full != s_full_cand) { s_full_cand = raw_full; s_full_since = now_ms; }
+    else if (s_full != s_full_cand && (uint32_t)(now_ms - s_full_since) >= TANK_PUMP_HOLD_MS) {
+      s_full = s_full_cand;
+    }
+  }
+
+  if (manual_fill_active() && s_full) {
     s_manual_ms = 0;
 #ifdef DEBUG
     Serial.println(F("[fill pump] tank FULL (ultrasonic) -- manual fill stopped"));
@@ -584,7 +608,7 @@ void water_level_update() {
   {
     const uint32_t now_ms = millis();
     if (refill_active()) {
-      if (s_tank_valid && s_tank_mm <= TANK_SONAR_FULL_MM) {
+      if (s_full) {
         s_refill_owed_ms = 0;
       } else if (s_pump_on) {
         const uint32_t ran = now_ms - s_refill_tick_ms;
@@ -595,7 +619,7 @@ void water_level_update() {
   }
   pump_write((manual_fill_active() || refill_active())
                  ? true
-                 : tank_pump_want(s_tank_mm, s_tank_valid, s_pump_on));
+                 : s_want);
 
   temperature_update();
   cooling_update();

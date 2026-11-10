@@ -109,6 +109,8 @@ static uint16_t s_pay_p1 = 0;
 static uint16_t s_pay_p5 = 0;
 static uint8_t  s_pay_leg = 0;      // 0 = P5 leg, 1 = P1 leg, 2 = done
 static money_t  s_change_paid = 0;  // held for the Thank You summary
+// The fill pump was booked to run alongside this pour (tank sensor lost).
+static bool     s_refill_booked = false;
 // A hopper leg of THIS payout is running. Without it a finished Admin or console
 // test payout reads as this sale's leg: the P5 leg is skipped and the customer
 // is short-changed.
@@ -619,6 +621,13 @@ static void on_enter(state_t s) {
         dispense_resume();
       } else {
         dispense_start(s_target_ml);
+        // Team 2026-11-10: with the tank ultrasonic lost, or the tank at half or
+        // below, the fill pump puts the water back WHILE it pours, booked for
+        // the full target now and trued up in SETTLING. Above half it does not
+        // run alongside the pour.
+        s_refill_booked = PUMPS_ALWAYS_TOGETHER || !water_tank_sensor_ok() ||
+                          water_tank_distance_mm() >= TANK_SONAR_HALF_MM;
+        if (s_refill_booked) water_refill_add(s_target_ml);
       }
       break;
 
@@ -1039,9 +1048,17 @@ static void state_update(state_t s) {
         } else {
           billing_settle_partial(delivered);
         }
-        // Put back what physically left the tank (measured, not charged --
-        // this is plumbing, not money).
-        water_refill_add(delivered);
+        // The refill for the full target was booked when the pour started (it
+        // runs alongside it). True it up to what physically left the tank --
+        // plumbing, not money.
+        if (s_refill_booked) {
+          if (delivered < s_target_ml) {
+            water_refill_cancel(s_target_ml - delivered);
+          } else {
+            water_refill_add(delivered - s_target_ml);
+          }
+          s_refill_booked = false;
+        }
         dispense_clear();
         s_target_ml = 0;
 

@@ -67,6 +67,10 @@ void water_manual_fill(uint32_t seconds);
 // Pump back into the tank what a pour took out: adds ml x FILL_MS_PER_100ML of
 // fill-pump run time, worked off while the pump runs. Called after every pour.
 void water_refill_add(volume_t ml);
+
+// Take back refill booked for water that was never poured. Whatever already ran
+// stays run: the tank can end up over by at most that much.
+void water_refill_cancel(volume_t ml);
 uint32_t water_refill_owed_ms();
 
 // Test console only: tank ultrasonic trigger mode, 0-2 (see sonar_trigger()).

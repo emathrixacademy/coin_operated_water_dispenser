@@ -135,6 +135,12 @@ typedef int32_t volume_t;   // millilitres
 #define PIN_TANK_SONAR_TRIG 19   // marked RX1 19. Sensor yellow wire
 #define TANK_SONAR_TRIG_PERIOD_MS 100
 // 0 floating, 1 idle-high/low-pulse, 2 idle-low/high-pulse -- see sonar_trigger().
+// Bench 2026-11-10: at 0 the sensor sends nothing and reads LOST. At 2 it reads,
+// but jumped 47-135 mm with noise mutes and the fill pump clicked on and off.
+// Option B (slower response, TANK_PUMP_HOLD_MS below) was tried at 2 and the line
+// then carried only noise. Back to 0 (team): with the sensor lost, the fill pump
+// runs alongside every pour and puts back what was sold. Try "trig 2" on the
+// console once the wiring noise is fixed.
 #ifndef TANK_SONAR_TRIG_MODE
 #define TANK_SONAR_TRIG_MODE 0
 #endif
@@ -845,6 +851,9 @@ typedef int32_t volume_t;   // millilitres
 #define DISPENSE_TRIM_600ML 79
 #define DISPENSE_TRIM_700ML 80
 #define DISPENSE_TRIM_800ML 70
+#define DISPENSE_TRIM_900ML 60
+#define DISPENSE_TRIM_1000ML 60
+#define DISPENSE_TRIM_1100ML 60
 
 // 1 = no amount picker. CONFIRM (push button, or Continue on the screen) pours
 // the whole credit, P1 = 100 mL, once the bottle IR sees a bottle.
@@ -895,12 +904,26 @@ typedef int32_t volume_t;   // millilitres
 
 // Pump stops here. The tank is kept as full as it can be, so the dispense side
 // always has head and the timed-dispense rate stays where it was calibrated.
-#define TANK_SONAR_FULL_MM 60
+// Measured by the team 2026-11-10 with a ruler: 150 mm from the sensor face to
+// the water with the drum full, 280 mm to the drum floor. Was 60 / 80 / 1000,
+// placeholders; at 60 a working sensor would have pumped until it overflowed.
+#define TANK_SONAR_FULL_MM 150
 
 // Pump starts here. A 20 mm band is the "keep it topped up" setting: the tank
 // never sits more than a cupful down. Narrower and every pour short-cycles the
 // pump, which shortens its life; PUMP_MIN_OFF_MS backs this up regardless.
-#define TANK_SONAR_REFILL_MM 80
+#define TANK_SONAR_REFILL_MM 170
+
+// Half tank (team 2026-11-10), midway between full (150) and the floor (280):
+// at or below this level the fill pump runs alongside every pour, as it does
+// with the sensor lost. Must stay above MIN_SERVE or it never comes into play.
+#define TANK_SONAR_HALF_MM 215
+
+// 1 = the fill pump runs alongside EVERY pour, whatever the tank sensor reads
+// (team 2026-11-10, the sensor still reads LOST). 0 = only with the sensor lost
+// or the tank at TANK_SONAR_HALF_MM or below. A working sensor that sees the
+// tank full still stops the refill either way.
+#define PUMPS_ALWAYS_TOGETHER 1
 
 // OUT OF WATER lockout. Set it so the water ABOVE this line is a full P20 pour
 // (2000 mL) plus a 20% margin, all above the dispense pump intake -- measured,
@@ -913,18 +936,28 @@ typedef int32_t volume_t;   // millilitres
 // dropped. Also the 0% point on the display.
 // 2026-10-26: raised from 300 on the bench -- the empty tank reads deeper than
 // 300 mm, so every echo off its floor was thrown away and the sensor looked
-// dead. Set to the measured sensor-to-floor distance once known.
-#define TANK_SONAR_EMPTY_MM 1000
+// dead. 2026-11-10: the floor measured 280 mm by ruler; 320 leaves room for a
+// floor echo that reads a little deep.
+#define TANK_SONAR_EMPTY_MM 320
 
 // Readings in the median. Five frames is ~0.5 s: enough to reject a wave or an
 // echo off the inlet stream, short enough that the pump still stops at FULL
 // rather than a centimetre past it.
-#define TANK_FILTER_SAMPLES 5
+// 15, was 5 (bench 2026-11-10): noisy readings jumped 47-135 mm; a longer
+// median keeps the odd bad frame out of the level.
+#define TANK_FILTER_SAMPLES 15
 
 // No plausible frame for this long = sensor lost (unplugged, condensation on
 // the face, wrong sensor variant). The pump stops at once and the machine
 // locks at the next STANDBY. Ten missed frames: a lone dropout never trips it.
-#define TANK_SONAR_TIMEOUT_MS 1000
+// 5000, was 1000 (bench 2026-11-10): the noisy line dropped frames for a second
+// or two at a time, and every LOST stopped the fill pump -- it clicked.
+#define TANK_SONAR_TIMEOUT_MS 5000
+
+// The tank reading must ask for the same thing -- pump on, pump off, tank full
+// -- for this long before the fill pump acts on it. Stops a noisy sensor
+// clicking the pump; longer only makes the top-up start or stop later.
+#define TANK_PUMP_HOLD_MS 10000
 
 // --- Supply gallons: capacitive sensors -----------------------------------
 //
