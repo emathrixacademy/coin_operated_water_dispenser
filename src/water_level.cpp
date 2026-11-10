@@ -303,6 +303,14 @@ void water_refill_add(volume_t ml) {
   if (s_refill_owed_ms > REFILL_OWED_MAX_MS) s_refill_owed_ms = REFILL_OWED_MAX_MS;
 }
 
+// Fill pump follows the dispense pump (team 2026-11-10): on while the pour runs,
+// off the moment it stops, nothing owed afterwards. Set every pass by main.
+static bool s_follow_pour = false;
+
+void water_fill_follow_pour(bool pouring) {
+  s_follow_pour = pouring;
+}
+
 void water_refill_cancel(volume_t ml) {
   if (ml <= 0) return;
   const uint32_t ms = (uint32_t)ml * FILL_MS_PER_100ML / 100UL;
@@ -347,7 +355,7 @@ static void pump_write(bool want_on) {
   //    REFILL_IGNORES_SENSORS is 1: it pumps a measured amount, not "until a
   //    sensor says stop", so it does not need the tank sensor to run.
   if ((gallons_supply_low() || !s_tank_valid) && !manual_fill_active() &&
-      !(REFILL_IGNORES_SENSORS && refill_active())) {
+      !(REFILL_IGNORES_SENSORS && (refill_active() || s_follow_pour))) {
     relay_write(PIN_PUMP, false);
     if (s_pump_on) {
       s_pump_on = false;
@@ -617,7 +625,7 @@ void water_level_update() {
     }
     s_refill_tick_ms = now_ms;
   }
-  pump_write((manual_fill_active() || refill_active())
+  pump_write((manual_fill_active() || refill_active() || (s_follow_pour && !s_full))
                  ? true
                  : s_want);
 

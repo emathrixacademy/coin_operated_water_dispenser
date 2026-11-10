@@ -71,6 +71,10 @@ void water_refill_add(volume_t ml);
 // Take back refill booked for water that was never poured. Whatever already ran
 // stays run: the tank can end up over by at most that much.
 void water_refill_cancel(volume_t ml);
+
+// True while a sale's dispense pump is running: the fill pump runs with it and
+// stops with it (FILL_FOLLOWS_POUR). Call every pass.
+void water_fill_follow_pour(bool pouring);
 uint32_t water_refill_owed_ms();
 
 // Test console only: tank ultrasonic trigger mode, 0-2 (see sonar_trigger()).

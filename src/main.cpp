@@ -111,6 +111,9 @@ static uint8_t  s_pay_leg = 0;      // 0 = P5 leg, 1 = P1 leg, 2 = done
 static money_t  s_change_paid = 0;  // held for the Thank You summary
 // The fill pump was booked to run alongside this pour (tank sensor lost).
 static bool     s_refill_booked = false;
+// This pour ended because the bottle was taken away and not put back: it is
+// charged in full (BOTTLE_REMOVED_CHARGES_FULL), not refunded as a partial.
+static bool     s_charge_full = false;
 // A hopper leg of THIS payout is running. Without it a finished Admin or console
 // test payout reads as this sale's leg: the P5 leg is skipped and the customer
 // is short-changed.
@@ -625,8 +628,9 @@ static void on_enter(state_t s) {
         // below, the fill pump puts the water back WHILE it pours, booked for
         // the full target now and trued up in SETTLING. Above half it does not
         // run alongside the pour.
-        s_refill_booked = PUMPS_ALWAYS_TOGETHER || !water_tank_sensor_ok() ||
-                          water_tank_distance_mm() >= TANK_SONAR_HALF_MM;
+        s_refill_booked = !FILL_FOLLOWS_POUR &&
+                          (PUMPS_ALWAYS_TOGETHER || !water_tank_sensor_ok() ||
+                           water_tank_distance_mm() >= TANK_SONAR_HALF_MM);
         if (s_refill_booked) water_refill_add(s_target_ml);
       }
       break;
@@ -1023,6 +1027,7 @@ static void state_update(state_t s) {
         break;
       }
       if (state_elapsed() >= BOTTLE_REMOVED_GRACE_MS) {
+        s_charge_full = BOTTLE_REMOVED_CHARGES_FULL;
         transition_to(STATE_SETTLING, TRIG_GRACE_EXPIRED);
       }
       break;
@@ -1043,11 +1048,12 @@ static void state_update(state_t s) {
       // ---------------------------------------------------------------
       {
         const volume_t delivered = dispense_delivered();
-        if (delivered >= s_target_ml && s_target_ml > 0) {
+        if ((delivered >= s_target_ml || s_charge_full) && s_target_ml > 0) {
           billing_settle_complete(delivered);
         } else {
           billing_settle_partial(delivered);
         }
+        s_charge_full = false;
         // The refill for the full target was booked when the pour started (it
         // runs alongside it). True it up to what physically left the tank --
         // plumbing, not money.
@@ -1417,6 +1423,8 @@ void loop() {
   bench_update();
 #else
   state_update(s_state);
+  water_fill_follow_pour(FILL_FOLLOWS_POUR && s_state == STATE_DISPENSING &&
+                         dispense_valve_open());
   service_servo_update();
   hmi_sync(s_state);
 #endif

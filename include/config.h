@@ -125,14 +125,18 @@ typedef int32_t volume_t;   // millilitres
 // have is the PWM variant, and its pulse can be as short as ~0.2 ms near a
 // full tank -- shorter than a loop pass, so it cannot be polled. The ISR only
 // timestamps the two edges, nothing else. Only used when TANK_SONAR_PWM is 1.
-#define PIN_TANK_SONAR_PWM 18   // INT3 (marked TX1 18). Sensor white wire
+// 19, was 18 (bench 2026-11-10): D18 carried a steady storm of ~16 us spikes
+// even with the sensor wire pulled off, so the ISR was muted all the time and
+// the sensor read LOST. D2, the other free interrupt, is already dead on this
+// board; D20/D21 belong to I2C. The trigger moved off D19 to make room.
+#define PIN_TANK_SONAR_PWM 19   // INT2 (marked RX1 19). Sensor white wire
 
 // Trigger for the PWM ultrasonic, on its yellow (RX) wire. Our unit measures
 // only when told to: on the bench it sent ten readings at power-up and then
 // went silent. Idle HIGH, pulled LOW for TANK_SONAR_TRIG_LOW_MS every
 // TANK_SONAR_TRIG_PERIOD_MS. A free-running unit treats a HIGH line the same
 // as an unconnected one, so this is harmless on that variant.
-#define PIN_TANK_SONAR_TRIG 19   // marked RX1 19. Sensor yellow wire
+#define PIN_TANK_SONAR_TRIG 48   // Sensor yellow wire; plain digital, no interrupt needed
 #define TANK_SONAR_TRIG_PERIOD_MS 100
 // 0 floating, 1 idle-high/low-pulse, 2 idle-low/high-pulse -- see sonar_trigger().
 // Bench 2026-11-10: at 0 the sensor sends nothing and reads LOST. At 2 it reads,
@@ -232,11 +236,12 @@ typedef int32_t volume_t;   // millilitres
 // no sale is open, and swings back once any of them clears. Held at the active
 // angle; signal dropped at rest, like the gates (see GATE_DETACH_MS).
 #define PIN_SERVICE_SERVO 35
-// 0 = turned off (team 2026-11-09): never attached, no signal on the pin, and
-// the three coin IRs move nothing. COIN STORAGE FULL still locks on its own.
-#define SERVICE_SERVO_ENABLED 0
+// 1 = on (team 2026-11-10, again): swings open once all three coin IRs read full
+// and no sale is open. 0 = never attached, no signal on the pin, and the three
+// coin IRs move nothing. COIN STORAGE FULL still locks on its own either way.
+#define SERVICE_SERVO_ENABLED 1
 #define SERVICE_SERVO_REST_DEG   0
-#define SERVICE_SERVO_ACTIVE_DEG 25
+#define SERVICE_SERVO_ACTIVE_DEG 20
 // Test console "svc <n>": time per move. Long enough to watch a full swing.
 #define SERVICE_SERVO_TEST_STEP_MS 800
 #define PIN_COMPRESSOR    36  // AC SSR, active LOW
@@ -712,6 +717,13 @@ typedef int32_t volume_t;   // millilitres
 // and any change due is paid on confirm.
 #define BOTTLE_REMOVED_GRACE_MS 10000
 
+// 1 = a pour whose bottle was taken away and not put back within the grace is
+// charged in full; the water not poured is lost to the customer (team
+// 2026-11-10). 0 = the design rule in ENGINEERING_RULES.md: charge what poured,
+// rounded down to 100 mL, and return the rest to credit. A flow stall, a machine
+// fault, still settles as a partial either way.
+#define BOTTLE_REMOVED_CHARGES_FULL 1
+
 // Bottle proximity debounce -- SPEC 1.2.
 //
 // A momentary flicker -- a hand passing the sensor, or splash-back off the
@@ -932,6 +944,12 @@ typedef int32_t volume_t;   // millilitres
 // or the tank at TANK_SONAR_HALF_MM or below. A working sensor that sees the
 // tank full still stops the refill either way.
 #define PUMPS_ALWAYS_TOGETHER 1
+
+// 1 = the fill pump runs exactly while a sale's dispense pump runs and stops with
+// it; no refill is owed afterwards (team 2026-11-10). It moves about 4.9/7 of
+// what was poured (FILL_MS_PER_100ML vs DISPENSE_MS_PER_100ML), so with the tank
+// sensor lost the drum slowly drops. Overrides PUMPS_ALWAYS_TOGETHER.
+#define FILL_FOLLOWS_POUR 1
 
 // OUT OF WATER lockout. Set it so the water ABOVE this line is a full P20 pour
 // (2000 mL) plus a 20% margin, all above the dispense pump intake -- measured,
