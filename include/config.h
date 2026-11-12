@@ -1072,7 +1072,12 @@ typedef int32_t volume_t;   // millilitres
 
 // 0 = gallon A sensor (D26) ignored: reads full, never stops the pump, no LCD
 // warning. Team 2026-11-11: it read dry with water in the jug.
-#define GALLON_A_ENABLED 0
+#define GALLON_A_ENABLED 1   // read again for the both-low warning (2026-11-12)
+
+// 0 = the gallon sensors never stop the fill pump; the LCD shows "Both gallons
+// low" only when A and B are both at their line (team 2026-11-12).
+// 1 = they stop the pump (GALLON_STOP_ON_EITHER) and each one warns.
+#define GALLONS_STOP_PUMP 0
 
 // 1 = a lost tank ultrasonic locks the machine with OUT OF WATER, as designed.
 // 0 = with the sensor lost, OUT OF WATER comes from the gallons instead: both

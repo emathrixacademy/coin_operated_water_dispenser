@@ -78,6 +78,7 @@ static void gallon_update(gallon_t *g) {
 // air, and air in a shared suction line starves the pump just as surely as two
 // empty jugs. So with a Y, either one low stops the pump -- GALLON_STOP_ON_EITHER.
 static bool gallons_supply_low() {
+  if (!GALLONS_STOP_PUMP) return false;   // warning only -- see config.h
   return GALLON_STOP_ON_EITHER ? (s_gal_a.low || s_gal_b.low)
                                : (s_gal_a.low && s_gal_b.low);
 }

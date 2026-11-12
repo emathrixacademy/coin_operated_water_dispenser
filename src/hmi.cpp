@@ -71,8 +71,12 @@ static void status_update() {
   const uint8_t now_lv[4] = {
     water_tank_percent(),
     (uint8_t)(water_tank_sensor_ok() ? 1 : 0),
-    (uint8_t)(water_gallon_low(0) ? 1 : 0),
-    (uint8_t)(water_gallon_low(1) ? 1 : 0)
+    // GALLONS_STOP_PUMP 0: the LCD warns only when BOTH are low, so one jug
+    // at its line shows nothing ("Both gallons low" otherwise).
+    (uint8_t)((GALLONS_STOP_PUMP ? water_gallon_low(0)
+                                 : (water_gallon_low(0) && water_gallon_low(1))) ? 1 : 0),
+    (uint8_t)((GALLONS_STOP_PUMP ? water_gallon_low(1)
+                                 : (water_gallon_low(0) && water_gallon_low(1))) ? 1 : 0)
   };
   const uint32_t now = millis();
   const bool changed = memcmp(now_lv, s_lv_last, sizeof(now_lv)) != 0;
