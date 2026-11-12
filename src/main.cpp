@@ -283,14 +283,17 @@ static void service_servo_update() {
     return;
   }
   const bool idle = s_state == STATE_STANDBY || s_state == STATE_FAULT;
-  const bool want = idle && coin_level_box_full() &&
-                    coin_level_hopper_full(HOPPER_P1) &&
-                    coin_level_hopper_full(HOPPER_P5);
+  // Team 2026-11-11: ANY of the three coin IRs full moves it (was all three).
+  // Also whenever the machine is out of service (STATE_FAULT), team 2026-11-11.
+  const bool want = s_state == STATE_FAULT ||
+                    (idle && (coin_level_box_full() ||
+                              coin_level_hopper_full(HOPPER_P1) ||
+                              coin_level_hopper_full(HOPPER_P5)));
   if (want != s_service_active) {
     s_service_active = want;
     service_servo_write(want ? SERVICE_SERVO_ACTIVE_DEG : SERVICE_SERVO_REST_DEG);
 #ifdef DEBUG
-    Serial.println(want ? F("[service servo] all coin IRs full -- moved")
+    Serial.println(want ? F("[service servo] a coin IR is full -- moved")
                         : F("[service servo] back to rest"));
 #endif
   }

@@ -149,7 +149,12 @@ static LGFX lcd;
 
 // New key: the "tcal" calibration read past the screen edge (bench 2026-11-09,
 // y up to 375 of 320), so every board asks for a fresh one once.
-#define NVS_TOUCH_CAL "tcal2"
+// "tcal3" (2026-11-12): the "tcal2" calibration on the unit had gone bad, so
+// the new key starts every board on TOUCH_CAL_DEFAULT.
+#define NVS_TOUCH_CAL "tcal3"
+#define NVS_TOUCH_REDO "tredo"
+// Measured on the bench unit, 2026-11-11 (the last calibration that worked).
+static const uint16_t TOUCH_CAL_DEFAULT[8] = { 3560, 3734, 3556, 447, 573, 3743, 581, 474 };
 static bool s_touch_resistive = false;
 
 // --- Palette ---------------------------------------------------------------
@@ -775,6 +780,7 @@ static void adm_action(long a) {
       Preferences p;
       p.begin("wv", false);
       p.remove(NVS_TOUCH_CAL);
+      p.putUChar(NVS_TOUCH_REDO, 1);   // run the corner targets at the next boot
       p.end();
       ESP.restart();
       break;
@@ -991,8 +997,14 @@ static void touch_calibrate() {
   Preferences p;
   p.begin("wv", true);
   const size_t got = p.getBytes(NVS_TOUCH_CAL, cal, sizeof(cal));
+  const bool redo = p.getUChar(NVS_TOUCH_REDO, 0) != 0;
   p.end();
-  if (got != sizeof(cal)) {
+  // No saved calibration and none asked for: the one measured on this unit
+  // (bench 2026-11-11). A bad corner press during an unasked calibration left
+  // the screen untouchable on 2026-11-12.
+  if (got != sizeof(cal) && !redo) {
+    memcpy(cal, TOUCH_CAL_DEFAULT, sizeof(cal));
+  } else if (got != sizeof(cal) || redo) {
     lcd.fillScreen(TFT_BLACK);
     lcd.setTextColor(TFT_WHITE, TFT_BLACK);
     lcd.setTextDatum(middle_center);
@@ -1003,6 +1015,7 @@ static void touch_calibrate() {
     lcd.calibrateTouch(cal, TFT_WHITE, TFT_BLACK, 24);
     p.begin("wv", false);
     p.putBytes(NVS_TOUCH_CAL, cal, sizeof(cal));
+    p.remove(NVS_TOUCH_REDO);
     p.end();
   }
   lcd.setTouchCalibrate(cal);
