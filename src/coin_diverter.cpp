@@ -63,9 +63,63 @@ static void gate_write(Servo &s, uint8_t pin, int angle) {
   s_last_move_ms = millis();
 }
 
+// Railing sorter: one servo on D11 (SORT_SINGLE_SERVO). It reuses s_gate1 as
+// its Servo object, so attach/detach below covers it; s_gate2 stays unused.
+static const bool SINGLE = (SORT_SINGLE_SERVO != 0);
+
+static void sort_write(int angle) {
+  gate_write(s_gate1, PIN_SORT_SERVO, angle);
+}
+
 static void gates_rest() {
+  if (SINGLE) { sort_write(SORT_ANGLE_P5); return; }
   gate_write(s_gate1, PIN_GATE1_SERVO, GATE1_ANGLE_OPEN);
   gate_write(s_gate2, PIN_GATE2_SERVO, GATE2_ANGLE_OPEN);
+}
+
+// Stopper on D12. Test only for now: not yet part of a coin's route.
+static Servo s_stop;
+static uint8_t s_stop_steps = 0;
+static uint32_t s_stop_ms = 0;
+static uint32_t s_stop_last_ms = 0;
+
+static void stop_write(int angle) {
+  if (!s_stop.attached()) s_stop.attach(PIN_STOP_SERVO);
+  s_stop.write(angle);
+  s_stop_last_ms = millis();
+}
+
+void coin_diverter_stop_test(uint8_t cycles) {
+  if (cycles > 20) cycles = 20;
+  s_stop_steps = (uint8_t)(cycles * 2);
+  s_stop_ms = millis() - STOP_TEST_STEP_MS;
+}
+
+void coin_diverter_stop_angle(int angle) {
+  if (angle < 0) angle = 0;
+  if (angle > 180) angle = 180;
+  s_stop_steps = 0;
+  stop_write(angle);
+}
+
+static void stop_update() {
+  if (s_stop_steps && (uint32_t)(millis() - s_stop_ms) >= STOP_TEST_STEP_MS) {
+    s_stop_ms = millis();
+    stop_write((s_stop_steps % 2) ? STOP_ANGLE_CLOSED : STOP_ANGLE_OPEN);
+    s_stop_steps--;
+  }
+  if (!s_stop_steps && s_stop.attached() &&
+      (uint32_t)(millis() - s_stop_last_ms) >= GATE_DETACH_MS) {
+    s_stop.detach();
+  }
+}
+
+void coin_diverter_sort_angle(int angle) {
+  if (COLLECT_ALL || s_state != DIV_IDLE) return;
+  if (angle < 0) angle = 0;
+  if (angle > 180) angle = 180;
+  s_aim_coin = COIN_NONE;
+  sort_write(angle);
 }
 
 // As built (team, 2026-10-30): at rest the chute runs to the P5 hopper, so a
@@ -73,6 +127,11 @@ static void gates_rest() {
 // P20, unknown) swings both. The denomination split in the box is in the
 // books, not in the mechanism.
 static void gates_for(coin_dest_t dest) {
+  if (SINGLE) {
+    sort_write(dest == DEST_P5_HOPPER ? SORT_ANGLE_P5
+             : dest == DEST_P1_HOPPER ? SORT_ANGLE_P1 : SORT_ANGLE_BOX);
+    return;
+  }
   switch (dest) {
     case DEST_P5_HOPPER:
       gates_rest();
@@ -144,7 +203,13 @@ void coin_diverter_exercise_one(uint8_t gate, uint8_t cycles) {
 static void exercise_update() {
   if ((uint32_t)(millis() - s_ex_ms) < GATE_EXERCISE_STEP_MS) return;
   s_ex_ms = millis();
-  if (s_ex_only == 1) {
+  if (SINGLE) {
+    // gate1 = P1 and back, gate2 = box and back, gate = P1, rest, box, rest.
+    const int away = (s_ex_only == 1) ? SORT_ANGLE_P1
+                   : (s_ex_only == 2) ? SORT_ANGLE_BOX
+                   : ((s_ex_steps % 4) == 0 ? SORT_ANGLE_P1 : SORT_ANGLE_BOX);
+    sort_write((s_ex_steps % 2) ? SORT_ANGLE_P5 : away);
+  } else if (s_ex_only == 1) {
     gate_write(s_gate1, PIN_GATE1_SERVO,
                (s_ex_steps % 2) ? GATE1_ANGLE_OPEN : GATE1_ANGLE_CLOSED);
   } else if (s_ex_only == 2) {
@@ -166,6 +231,7 @@ static void exercise_update() {
 }
 
 void coin_diverter_update() {
+  stop_update();
   if (s_ex_steps) {
     exercise_update();
     return;
@@ -190,7 +256,7 @@ void coin_diverter_update() {
   const uint32_t elapsed = millis() - s_started_ms;
 
   if (s_state == DIV_ROUTING) {
-    if (elapsed < GATE_ROUTE_MS) return;
+    if (elapsed < (SINGLE ? (uint32_t)SORT_ROUTE_MS : (uint32_t)GATE_ROUTE_MS)) return;
 
     // ---------------------------------------------------------------------
     // The coin is physically committed to its chamber only now.
@@ -204,7 +270,11 @@ void coin_diverter_update() {
     // 13 reconciliation possible: a power cut before this point leaves an
     // in-flight marker and no inventory change.
     // ---------------------------------------------------------------------
-    persist_inventory_add(s_dest, +1);
+    // HOPPER_COUNT_INSERTED 0 (team 2026-11-11): an inserted coin never raises
+    // the hopper count -- only Load change sets it and payouts lower it. The
+    // coin is booked to the box under its denomination instead.
+    persist_inventory_add((HOPPER_COUNT_INSERTED || !coin_dest_is_hopper(s_dest))
+                              ? s_dest : coin_route_unrouted(s_coin), +1);
     persist_clear_coin_in_flight();
 
     gates_rest();
@@ -283,9 +353,9 @@ void coin_diverter_route(coin_t coin) {
              : coin == COIN_P10 ? F("P10") : coin == COIN_P20 ? F("P20")
                                            : F("unknown"));
   Serial.print(F(" -> "));
-  Serial.print(s_dest == DEST_P5_HOPPER ? F("P5 hopper (gates at rest)")
-             : s_dest == DEST_P1_HOPPER ? F("P1 hopper (gate1 moved)")
-                                        : F("coin box (both moved)"));
+  Serial.print(s_dest == DEST_P5_HOPPER ? F("P5 hopper")
+             : s_dest == DEST_P1_HOPPER ? F("P1 hopper")
+                                        : F("coin box"));
   Serial.print(F("  P1full="));
   Serial.print(coin_level_hopper_full(HOPPER_P1) ? 1 : 0);
   Serial.print(F(" P5full="));

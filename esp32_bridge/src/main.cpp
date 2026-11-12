@@ -200,6 +200,8 @@ static void on_admin_line(uint8_t c, const uint8_t *p, size_t len) {
   if (pin < 0) return;
   if (!memcmp(p, "AD ", 3)) {
     const int ok = admin_try((uint16_t)pin);
+    Serial.printf("[ws] phone %u admin login: %s\n", c,
+                  ok == 1 ? "OK" : ok == 0 ? "wrong PIN" : "locked");
     if (ok == 1) {
       if (c < WEBSOCKETS_SERVER_CLIENT_MAX) { s_auth[c] = true; s_auth_ms[c] = millis(); }
       snprintf(r, sizeof(r), "AA 1");
@@ -219,15 +221,18 @@ static void on_admin_line(uint8_t c, const uint8_t *p, size_t len) {
 
 static void on_ws(uint8_t client, WStype_t type, uint8_t *payload, size_t len) {
   if (type == WStype_CONNECTED) {
+    Serial.printf("[ws] phone %u connected\n", client);
     if (client < WEBSOCKETS_SERVER_CLIENT_MAX) s_auth[client] = false;
     for (uint8_t i = 0; i < s_cached; i++) s_ws.sendTXT(client, s_line[i]);
     return;
   }
   if (type == WStype_DISCONNECTED) {
+    Serial.printf("[ws] phone %u disconnected\n", client);
     if (client < WEBSOCKETS_SERVER_CLIENT_MAX) s_auth[client] = false;
     return;
   }
   if (type != WStype_TEXT) return;
+  Serial.printf("[ws] phone %u: %.*s\n", client, (int)(len > 8 ? 2 : len), (const char *)payload);
   if (len >= 2 && payload[0] == 'A') {
     on_admin_line(client, payload, len);
     return;

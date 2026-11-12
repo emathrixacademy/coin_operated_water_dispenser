@@ -35,6 +35,9 @@ static gallon_t s_gal_a = { PIN_GALLON_A, false, false, 0 };
 static gallon_t s_gal_b = { PIN_GALLON_B, false, false, 0 };
 
 static bool gallon_raw_low(const gallon_t *g) {
+  // A gallon whose sensor is switched off always reads full: it never stops
+  // the pump, never warns on the LCD.
+  if (g->pin == PIN_GALLON_A && !GALLON_A_ENABLED) return false;
   return digitalRead(g->pin) != GALLON_SENSOR_WET_LEVEL;
 }
 

@@ -146,7 +146,7 @@ typedef int32_t volume_t;   // millilitres
 // runs alongside every pour and puts back what was sold. Try "trig 2" on the
 // console once the wiring noise is fixed.
 #ifndef TANK_SONAR_TRIG_MODE
-#define TANK_SONAR_TRIG_MODE 0
+#define TANK_SONAR_TRIG_MODE 1   // 1 (2026-11-11): free-running gave ~2 pulses/s and LOST; triggered ~10/s
 #endif
 #define TANK_SONAR_TRIG_LOW_MS 2
 
@@ -304,6 +304,28 @@ typedef int32_t volume_t;   // millilitres
 #define GATE1_ANGLE_CLOSED 110
 #define GATE2_ANGLE_OPEN   55
 #define GATE2_ANGLE_CLOSED 110
+
+// Railing sorter (team 2026-11-11): the two gates above are replaced by a
+// railing from the coinslot to ONE servo on D11 whose flap points at the
+// chamber. 1 = D11 sorts and D9/D10 are never driven; 0 = the two gates.
+#define SORT_SINGLE_SERVO 0   // 0 until the D11 sorter is fitted
+#define PIN_SORT_SERVO    11
+// Flap angle per chamber. Rest is the P5 chamber, as with the gates. First
+// guesses: tune with the console "sort <angle>" and "sort1/sort5/sortbox".
+#define SORT_ANGLE_P5   90
+#define SORT_ANGLE_P1   45
+#define SORT_ANGLE_BOX  135
+// Flap held this long for one coin: the coin has to run the railing and pass
+// the flap. Raise it if a coin reaches the chamber after the flap went back.
+#define SORT_ROUTE_MS   600
+
+// Stopper (team 2026-11-11): a small servo on D12 whose arm holds the coin at
+// the end of the railing until the D11 flap is in place. First guesses; tune
+// with the console "stop <n>" (close/open n times) and "stopa <angle>".
+#define PIN_STOP_SERVO     12
+#define STOP_ANGLE_CLOSED  90
+#define STOP_ANGLE_OPEN    30
+#define STOP_TEST_STEP_MS  700
 
 // ---------------------------------------------------------------------------
 // Serial
@@ -529,9 +551,10 @@ typedef int32_t volume_t;   // millilitres
 // P1 re-measured 2026-10-29: at 3000/3000, 10 relay pulses gave 5 turns and
 // 5 coins -- the P1 hopper turns once per TWO pulses. So it is driven with
 // two pulses per coin (team's call). The P5 hopper turns on every pulse.
-#define HOPPER_PULSE_ON_MS     3000   // P1
-#define HOPPER_PULSE_OFF_MS    3000   // P1
-#define HOPPER_P1_PULSES_PER_COIN 2
+// Team 2026-11-11: one long pulse per coin, 6 s on / 1 s rest (was 2 x 3/3).
+#define HOPPER_PULSE_ON_MS     6000   // P1
+#define HOPPER_PULSE_OFF_MS    1000   // P1
+#define HOPPER_P1_PULSES_PER_COIN 1
 #define HOPPER_P5_PULSES_PER_COIN 1
 // 2000/800 paid 6 coins for 10 pulses; lengthened again.
 #define HOPPER_P5_PULSE_ON_MS  3000
@@ -672,6 +695,16 @@ typedef int32_t volume_t;   // millilitres
 // all -- P18 change came out as P1 coins. Revisit (10 was the design value)
 // once the hopper is loaded to a working float.
 #define HOPPER_RESERVE_P5 0
+
+// LOW CHANGE (team 2026-11-11): 1 = the machine goes out of service only when
+// a hopper is down to this many coins or fewer. 0 = the old check: enough
+// coins for the worst-case change of the largest credit.
+#define LOW_CHANGE_BY_COUNT 1
+// 0 = a coin inserted by a customer does not add to the P1/P5 hopper count
+// (team 2026-11-11): 50 loaded, one P1 paid out -> 49, whatever came in.
+#define HOPPER_COUNT_INSERTED 0
+#define LOW_CHANGE_P1_AT 4
+#define LOW_CHANGE_P5_AT 4
 
 // ---------------------------------------------------------------------------
 // Bottle and dispense timing
@@ -883,9 +916,9 @@ typedef int32_t volume_t;   // millilitres
 #define DISPENSE_TRIM_800ML 80
 #define DISPENSE_TRIM_900ML 73
 #define DISPENSE_TRIM_1000ML 90
-#define DISPENSE_TRIM_1100ML 25
+#define DISPENSE_TRIM_1100ML 175
 #define DISPENSE_TRIM_1200ML 120
-#define DISPENSE_TRIM_1300ML 301   // 48 s of pump time (team 2026-11-10)
+#define DISPENSE_TRIM_1300ML 221   // 48 s of pump time (team 2026-11-10)
 #define DISPENSE_TRIM_1400ML 250
 #define DISPENSE_TRIM_1500ML 200
 #define DISPENSE_TRIM_1700ML 200
@@ -1035,6 +1068,10 @@ typedef int32_t volume_t;   // millilitres
 //     machine: both jugs feed one Y fitting, and one jug sucking air starves
 //     the pump. 0 = only both low stops it (separate suction lines).
 #define GALLON_STOP_ON_EITHER 1
+
+// 0 = gallon A sensor (D26) ignored: reads full, never stops the pump, no LCD
+// warning. Team 2026-11-11: it read dry with water in the jug.
+#define GALLON_A_ENABLED 0
 
 // 1 = a lost tank ultrasonic locks the machine with OUT OF WATER, as designed.
 // 0 = with the sensor lost, OUT OF WATER comes from the gallons instead: both

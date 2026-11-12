@@ -867,7 +867,13 @@ static void state_update(state_t s) {
       // transaction is invariant 8 from the other direction: once the money
       // is in, refusing is no longer an option.
       // ---------------------------------------------------------------
-      if (!bench_bypass && !coin_hopper_can_cover(billing_worst_case_change())) {
+      // Team 2026-11-11: plain count limits instead of the worst-case cover
+      // check -- locks only when a hopper is down to LOW_CHANGE_P1/P5_AT coins.
+      const bool low_change = LOW_CHANGE_BY_COUNT
+          ? (persist_inventory()->p1_count <= LOW_CHANGE_P1_AT ||
+             persist_inventory()->p5_count <= LOW_CHANGE_P5_AT)
+          : !coin_hopper_can_cover(billing_worst_case_change());
+      if (!bench_bypass && low_change) {
         faults_raise(FAULT_LOW_CHANGE);
         transition_to(STATE_FAULT, TRIG_FAULT_RAISED_WHILE_IDLE);
         break;

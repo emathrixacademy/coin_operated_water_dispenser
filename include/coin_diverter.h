@@ -33,6 +33,15 @@ void coin_diverter_exercise(uint8_t cycles);
 // Test console only: the same, for one gate (1 or 2).
 void coin_diverter_exercise_one(uint8_t gate, uint8_t cycles);
 
+// Test console only: move the railing sorter flap (D11) to `angle` (0-180).
+// Idle only.
+void coin_diverter_sort_angle(int angle);
+
+// Test console only: stopper servo on D12. stop_test closes and opens it
+// `cycles` times (max 20); stop_angle moves it to one angle.
+void coin_diverter_stop_test(uint8_t cycles);
+void coin_diverter_stop_angle(int angle);
+
 // Aim the gates for an identified coin immediately, before it is credited or
 // routed. route() then keeps this decision. Gates return to rest after
 // COIN_AIM_TIMEOUT_MS if the coin is never routed. No-op while busy.

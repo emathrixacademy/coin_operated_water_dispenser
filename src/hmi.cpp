@@ -449,6 +449,16 @@ static void console_exec(char *cmd) {
   else if (!strcmp(cmd, "svc")) {
     service_servo_test(n < 0 ? 0 : (n > 10 ? 10 : (uint8_t)n));
   }
+  // Railing sorter on D11: "sort <angle>" moves the flap there, "sort1",
+  // "sort5", "sortbox" to the configured chamber angle. Released after
+  // GATE_DETACH_MS; it then stays where it was left.
+  else if (!strcmp(cmd, "sort"))    { if (n >= 0) coin_diverter_sort_angle(n); }
+  else if (!strcmp(cmd, "sort1"))   { coin_diverter_sort_angle(SORT_ANGLE_P1); }
+  else if (!strcmp(cmd, "sort5"))   { coin_diverter_sort_angle(SORT_ANGLE_P5); }
+  else if (!strcmp(cmd, "sortbox")) { coin_diverter_sort_angle(SORT_ANGLE_BOX); }
+  // Stopper on D12: "stop <n>" closes/opens n times, "stopa <angle>".
+  else if (!strcmp(cmd, "stop"))    { coin_diverter_stop_test(n < 1 ? 1 : (n > 20 ? 20 : (uint8_t)n)); }
+  else if (!strcmp(cmd, "stopa"))   { if (n >= 0) coin_diverter_stop_angle(n); }
   else if (!strcmp(cmd, "gate1") || !strcmp(cmd, "gate2")) {
     coin_diverter_exercise_one(cmd[4] == '1' ? 1 : 2, n < 0 ? 0 : (n > 20 ? 20 : (uint8_t)n));
   }
