@@ -920,16 +920,16 @@ typedef int32_t volume_t;   // millilitres
 #define DISPENSE_TRIM_800ML 80
 #define DISPENSE_TRIM_900ML 73
 #define DISPENSE_TRIM_1000ML 90
-#define DISPENSE_TRIM_1100ML 110
-#define DISPENSE_TRIM_1200ML 170
+#define DISPENSE_TRIM_1100ML 140
+#define DISPENSE_TRIM_1200ML 160
 #define DISPENSE_TRIM_1300ML 161   // 48 s of pump time (team 2026-11-10)
 #define DISPENSE_TRIM_1400ML 150
 #define DISPENSE_TRIM_1500ML 150
-#define DISPENSE_TRIM_1600ML 140
-#define DISPENSE_TRIM_1700ML 110
-#define DISPENSE_TRIM_1800ML 120
-#define DISPENSE_TRIM_1900ML 120
-#define DISPENSE_TRIM_2000ML 110
+#define DISPENSE_TRIM_1600ML 180
+#define DISPENSE_TRIM_1700ML 180
+#define DISPENSE_TRIM_1800ML 160
+#define DISPENSE_TRIM_1900ML 160
+#define DISPENSE_TRIM_2000ML 150
 
 // 1 = no amount picker. CONFIRM (push button, or Continue on the screen) pours
 // the whole credit, P1 = 100 mL, once the bottle IR sees a bottle.
