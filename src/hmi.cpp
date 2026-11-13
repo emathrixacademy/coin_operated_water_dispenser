@@ -144,7 +144,7 @@ static void admin_event(long ev, long payload) {
 
   if (ev == (long)HMI_EVENT_ADMIN_SET_P1 || ev == (long)HMI_EVENT_ADMIN_SET_P5) {
     if (payload < 0) payload = 0;
-    if (payload > 2000) payload = 2000;
+    if (payload > 60000) payload = 60000;   // was 2000 (team 2026-11-12)
     persist_inventory_set(ev == (long)HMI_EVENT_ADMIN_SET_P1 ? DEST_P1_HOPPER : DEST_P5_HOPPER,
                           (uint16_t)payload);
     faults_clear(FAULT_LOW_CHANGE);   // re-checked at the next STANDBY

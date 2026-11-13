@@ -700,9 +700,10 @@ static void draw_admin() {
 
 static void adm_clamp_load() {
   if (s_load_p1 < 0) s_load_p1 = 0;
-  if (s_load_p1 > 2000) s_load_p1 = 2000;
+  // No practical cap (team 2026-11-12, was 2000); the count is 16-bit.
+  if (s_load_p1 > 60000) s_load_p1 = 60000;
   if (s_load_p5 < 0) s_load_p5 = 0;
-  if (s_load_p5 > 2000) s_load_p5 = 2000;
+  if (s_load_p5 > 60000) s_load_p5 = 60000;
 }
 
 static void adm_action(long a) {

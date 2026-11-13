@@ -791,6 +791,8 @@ static void state_update(state_t s) {
       // Reconciliation runs in setup(); by the time loop() sees BOOT the
       // decision has been made. Kept as a real state so the transition out of
       // it is logged like every other.
+      // A CHANGE JAM saved before CHANGE_SHORT_LOCKS was turned off is dropped.
+      if (!CHANGE_SHORT_LOCKS) faults_clear(FAULT_CHANGE_JAM);
       if (faults_is_locked()) {
         transition_to(STATE_FAULT, TRIG_BOOT_PERSISTENT_FAULT);
       } else if (persist_has_open_txn()) {
@@ -1202,7 +1204,7 @@ static void state_update(state_t s) {
         s_change_unpaid = billing_change_due() - s_change_paid;
         if (s_change_unpaid < 0) s_change_unpaid = 0;
         record_unpaid_and_close();
-        if (bench_bypass_on()) {
+        if (bench_bypass_on() || !CHANGE_SHORT_LOCKS) {
           // Bench bypass: recorded above (F19), shown on the Thank You screen
           // for CHANGE_UNPAID_HOLD_MS, then back to selling.
           hmi_set_unpaid(s_change_unpaid);
@@ -1250,7 +1252,7 @@ static void state_update(state_t s) {
         s_change_unpaid = billing_change_due() - s_change_paid;
         if (s_change_unpaid < 0) s_change_unpaid = 0;
         record_unpaid_and_close();
-        if (bench_bypass_on()) {
+        if (bench_bypass_on() || !CHANGE_SHORT_LOCKS) {
           hmi_set_unpaid(s_change_unpaid);
           transition_to(STATE_THANK_YOU, TRIG_PAYOUT_SHORT);
           break;

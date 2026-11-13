@@ -703,6 +703,10 @@ typedef int32_t volume_t;   // millilitres
 // 0 = a coin inserted by a customer does not add to the P1/P5 hopper count
 // (team 2026-11-11): 50 loaded, one P1 paid out -> 49, whatever came in.
 #define HOPPER_COUNT_INSERTED 0
+// 0 = change that could not be paid never locks the machine (team
+// 2026-11-12): the shortfall is recorded, shown on the Thank You screen, and
+// the machine goes back to selling. 1 = CHANGE DISPENSER JAMMED lock.
+#define CHANGE_SHORT_LOCKS 0
 #define LOW_CHANGE_P1_AT 4
 #define LOW_CHANGE_P5_AT 4
 
@@ -916,7 +920,7 @@ typedef int32_t volume_t;   // millilitres
 #define DISPENSE_TRIM_800ML 80
 #define DISPENSE_TRIM_900ML 73
 #define DISPENSE_TRIM_1000ML 90
-#define DISPENSE_TRIM_1100ML 165
+#define DISPENSE_TRIM_1100ML 110
 #define DISPENSE_TRIM_1200ML 170
 #define DISPENSE_TRIM_1300ML 161   // 48 s of pump time (team 2026-11-10)
 #define DISPENSE_TRIM_1400ML 150

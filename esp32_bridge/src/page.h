@@ -147,7 +147,7 @@ function go(p){admAt=Date.now();adm=p;amsg="";
   if(p==="menu"||p==="profit"||p==="hist"){S.ready=false;send(EV.STATS)}
   if(p==="load"){ld.p1=v.p1;ld.p5=v.p5}
   draw(true)}
-function adj(k,d){admAt=Date.now();ld[k]=Math.max(0,Math.min(2000,ld[k]+d));draw(true)}
+function adj(k,d){admAt=Date.now();ld[k]=Math.max(0,Math.min(60000,ld[k]+d));draw(true)}
 function saveLoad(){admAt=Date.now();send(EV.SET_P1,ld.p1);send(EV.SET_P5,ld.p5);go("coins")}
 function clearFault(){admAt=Date.now();send(EV.CLEAR);amsg="Clear fault sent";draw(true)}
 function latestLine(r){return `Latest ${saleNo(r)}: ${r.owed>0?"owed "+peso(r.owed):peso(r.in)} · ${vol(r.ml)}`;}
