@@ -20,6 +20,7 @@
 #include <string.h>
 #include "rtc.h"
 #include "relay.h"
+#include "slide_motor.h"
 
 // Single non-blocking state machine.
 // Project EMX-2026-WATERVENDO-01, eMathrix Technologies.
@@ -114,6 +115,9 @@ static bool     s_refill_booked = false;
 // This pour ended because the bottle was taken away and not put back: it is
 // charged in full (BOTTLE_REMOVED_CHARGES_FULL), not refunded as a partial.
 static bool     s_charge_full = false;
+// mL paid for but not poured this transaction (bottle taken and not put back
+// while BOTTLE_REMOVED_CHARGES_FULL). Shown in the LCD history as "took".
+static volume_t s_short_ml = 0;
 // A hopper leg of THIS payout is running. Without it a finished Admin or console
 // test payout reads as this sale's leg: the P5 leg is skipped and the customer
 // is short-changed.
@@ -358,6 +362,10 @@ static void commit_transaction() {
   e.amount_in  = billing_inserted();
   e.volume_out = billing_total_dispensed();
   e.change_out = s_change_paid;
+  // denomination is unused by a sale record: it carries the mL paid for but not
+  // poured, in 10 mL units (MAX_TRANSACTION_ML 2000 -> 200, fits a byte).
+  e.denomination = (uint8_t)((s_short_ml / 10) > 255 ? 255 : (s_short_ml / 10));
+  s_short_ml = 0;
   persist_history_add(&e);
 
   // Profit is what the user was actually charged: inserted less change paid.
@@ -651,6 +659,7 @@ static void on_enter(state_t s) {
       // cleared rather than leaking credit into the next user's session.
       billing_reset();
       s_target_ml = 0;
+      s_short_ml = 0;
       s_change_paid = 0;
       s_change_unpaid = 0;
       hmi_set_unpaid(0);
@@ -1121,6 +1130,8 @@ static void state_update(state_t s) {
       {
         const volume_t delivered = dispense_delivered();
         if ((delivered >= s_target_ml || s_charge_full) && s_target_ml > 0) {
+          if (delivered < s_target_ml)
+            s_short_ml += s_target_ml - (delivered > 0 ? delivered : 0);
           billing_settle_complete(delivered);
         } else {
           billing_settle_partial(delivered);
@@ -1351,8 +1362,13 @@ static void boot_step(const __FlashStringHelper *what) {
 
 void setup() {
   // Relays OFF before anything else (see relay.h for what OFF means).
+#if HOPPER_BY_SLIDE
+  // D33/D34 hopper relays are not used: the slide motors pay the change.
+  static const uint8_t RELAYS[] = { PIN_PUMP, PIN_VALVE, PIN_COMPRESSOR };
+#else
   static const uint8_t RELAYS[] = { PIN_PUMP, PIN_VALVE, PIN_HOPPER_P1_RUN,
                                     PIN_HOPPER_P5_RUN, PIN_COMPRESSOR };
+#endif
   for (uint8_t i = 0; i < sizeof(RELAYS); i++) relay_write(RELAYS[i], false);
 
 #ifdef DEBUG
@@ -1388,6 +1404,7 @@ void setup() {
   boot_step(F("rtc"));           rtc_begin();
   boot_step(F("diverter"));      coin_diverter_begin();
   boot_step(F("hopper"));        coin_hopper_begin();
+  boot_step(F("slide motors"));  slide_begin();
   boot_step(F("coin level"));    coin_level_begin();
   boot_step(F("flow"));          flow_begin();
   boot_step(F("bottle"));        bottle_begin();
@@ -1480,6 +1497,10 @@ void loop() {
   if (coin_acceptor_available()) coin_diverter_aim(coin_acceptor_peek());
   coin_diverter_update();
   coin_hopper_update();
+#if SLIDE_WITH_CHANGE
+  slide_follow(coin_hopper_is_busy());
+#endif
+  slide_update();
   coin_level_update();
   flow_update();
   bottle_update();

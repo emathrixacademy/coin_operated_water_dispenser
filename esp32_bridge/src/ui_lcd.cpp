@@ -459,10 +459,10 @@ enum {
   A_PROFIT = 20, A_COINS, A_WATER, A_LOAD, A_CLEAR, A_HISTORY, A_CHPIN, A_MENU, A_CALIB,
   A_P1_M10 = 30, A_P1_M1, A_P1_P1, A_P1_P10, A_P5_M10, A_P5_M1, A_P5_P1, A_P5_P10, A_SAVE,
   A_TEST = 40, A_TEST_P1, A_TEST_P5, A_TEST_FILL, A_TEST_POUR, A_TEST_S1, A_TEST_S2, A_TEST_S3,
-  A_RESET, A_RESET_YES, A_RESET_HIST, A_RESET_HIST_YES
+  A_RESET, A_RESET_YES, A_RESET_HIST, A_RESET_HIST_YES, A_SHORT
 };
 enum { P_NONE = 0, P_PIN, P_MENU, P_PROFIT, P_COINS, P_WATER, P_HISTORY, P_LOAD, P_CHPIN, P_TEST, P_RESET,
-       P_RESET_HIST };
+       P_RESET_HIST, P_SHORT };
 
 static uint8_t s_adm = P_NONE;
 static char s_pin[5] = "";
@@ -550,11 +550,13 @@ static void draw_menu() {
   button(166, TOP + 138, 148, 54, "Clear fault", UI_ADM, A_CLEAR, g_m.fault != 0, false,
          &fonts::FreeSansBold9pt7b);
   button(322, TOP + 138, 148, 54, "History", UI_ADM, A_HISTORY, true, false, &fonts::FreeSansBold9pt7b);
-  button(10, TOP + 200, 148, 46, "Change PIN", UI_ADM, A_CHPIN, true, false, &fonts::FreeSansBold9pt7b);
+  // Bottom row, four across: Change PIN, Not taken, Calibrate (resistive only), Test.
+  button(10, TOP + 200, 110, 46, "Change PIN", UI_ADM, A_CHPIN, true, false, &fonts::FreeSansBold9pt7b);
+  button(126, TOP + 200, 110, 46, "Not taken", UI_ADM, A_SHORT, true, false, &fonts::FreeSansBold9pt7b);
   if (s_touch_resistive) {
-    button(166, TOP + 200, 148, 46, "Calibrate", UI_ADM, A_CALIB, true, false, &fonts::FreeSansBold9pt7b);
+    button(242, TOP + 200, 110, 46, "Calibrate", UI_ADM, A_CALIB, true, false, &fonts::FreeSansBold9pt7b);
   }
-  button(322, TOP + 200, 148, 46, "Test", UI_ADM, A_TEST, true, false, &fonts::FreeSansBold9pt7b);
+  button(358, TOP + 200, 112, 46, "Test", UI_ADM, A_TEST, true, false, &fonts::FreeSansBold9pt7b);
 }
 
 // Hardware checks. The Mega acts on them only while the machine is idle; the
@@ -641,7 +643,7 @@ static void draw_history() {
   adm_title("History (last 10 sales)", true);
   if (!g_stats.ready) { text("Loading...", W / 2, 180, &fonts::FreeSansBold12pt7b, C_MUTE); return; }
   if (g_stats.n == 0) { text("No sales yet", W / 2, 180, &fonts::FreeSans9pt7b, C_MUTE); return; }
-  char b[48], v[16], o[20];
+  char b[64], v[16], o[20];
   for (uint8_t i = 0; i < g_stats.n; i++) {
     const sale_t &s = g_stats.sale[i];
     const int y = TOP + 58 + i * 22;
@@ -659,6 +661,26 @@ static void draw_history() {
       snprintf(b, sizeof(b), "Sale %s in, %s, change %s", in, v, ch);
       text(b, 120, y, &fonts::Font2, C_INK, middle_left);
     }
+  }
+}
+
+// Sales whose bottle was taken before the pour finished: what was bought and
+// how much was actually taken. The Mega sends only these rows (EV_STATS 1).
+static void draw_short() {
+  adm_title("Not taken in full", true);
+  if (!g_stats.ready) { text("Loading...", W / 2, 180, &fonts::FreeSansBold12pt7b, C_MUTE); return; }
+  if (g_stats.n == 0) { text("None yet", W / 2, 180, &fonts::FreeSans9pt7b, C_MUTE); return; }
+  char b[64], v[16], tk[16], in[16];
+  for (uint8_t i = 0; i < g_stats.n; i++) {
+    const sale_t &s = g_stats.sale[i];
+    const int y = TOP + 58 + i * 22;
+    sale_number(b, sizeof(b), s.ts);
+    text(b, 20, y, &fonts::Font2, C_MUTE, middle_left);
+    volume(v, sizeof(v), s.ml);
+    volume(tk, sizeof(tk), s.ml > s.short_ml ? s.ml - s.short_ml : 0);
+    money(in, sizeof(in), s.in - s.change);
+    snprintf(b, sizeof(b), "Bought %s (%s), took %s", v, in, tk);
+    text(b, 120, y, &fonts::Font2, C_WARN, middle_left);
   }
 }
 
@@ -694,6 +716,7 @@ static void draw_admin() {
     case P_TEST:    draw_test(); break;
     case P_RESET:   draw_reset(); break;
     case P_RESET_HIST: draw_reset_history(); break;
+    case P_SHORT:   draw_short(); break;
     default: break;
   }
 }
@@ -747,7 +770,13 @@ static void adm_action(long a) {
   switch (a) {
     case A_OPEN:    adm_open_pin(); break;
     case A_EXIT:    adm_close(); break;
-    case A_MENU:    s_adm = P_MENU; break;
+    case A_MENU:
+      // Leaving the Not-taken list: reload the full history so the menu's
+      // "Latest" line and Profit are not read from the filtered rows.
+      if (s_adm == P_SHORT) { g_stats.ready = false; mega_send_event(EV_STATS, -1); }
+      s_adm = P_MENU;
+      break;
+    case A_SHORT:   s_adm = P_SHORT; g_stats.ready = false; mega_send_event(EV_STATS, 1); break;
     case A_PROFIT:  s_adm = P_PROFIT; g_stats.ready = false; mega_send_event(EV_STATS, -1); break;
     case A_HISTORY: s_adm = P_HISTORY; g_stats.ready = false; mega_send_event(EV_STATS, -1); break;
     case A_COINS:   s_adm = P_COINS; break;

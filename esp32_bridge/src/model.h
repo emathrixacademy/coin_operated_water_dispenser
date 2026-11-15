@@ -59,6 +59,7 @@ struct sale_t {
   int32_t ml;      // dispensed
   int32_t change;  // centavos returned
   int32_t owed;    // centavos of change NOT paid (0 = paid in full)
+  int32_t short_ml; // mL paid for but not taken (bottle removed); ml - short_ml = taken
 };
 
 struct stats_t {

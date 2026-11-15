@@ -73,6 +73,7 @@ bool model_apply(const char *line) {
     s.ml = strtol(p, &p, 10);
     s.change = strtol(p, &p, 10);
     s.owed = strtol(p, &p, 10);
+    s.short_ml = strtol(p, &p, 10);   // 0 from an older Mega without the field
     if (g_stats.n < i + 1) g_stats.n = (uint8_t)(i + 1);
     return true;
   }

@@ -5,6 +5,7 @@
 #include "relay.h"
 #include "persist.h"
 #include "rtc.h"
+#include "slide_motor.h"
 
 // Coin hoppers -- change payout, outlet counting, jam retry.
 //
@@ -45,6 +46,21 @@ static coin_dest_t dest_of(hopper_id_t h) {
   return (h == HOPPER_P1) ? DEST_P1_HOPPER : DEST_P5_HOPPER;
 }
 
+#if HOPPER_BY_SLIDE
+// Motor 1 = P1, Motor 2 = P5. One HOME->FRONT->HOME stroke = one coin.
+static uint8_t slide_of(hopper_id_t h) { return (h == HOPPER_P1) ? 0 : 1; }
+static uint16_t s_stroke_base = 0;   // slide_strokes() when this payout began
+
+// Off = finish the stroke at HOME, never stop with a coin half pushed.
+static void motor(bool on) {
+  if (!on && !slide_at_home(slide_of(s_hopper))) slide_command(slide_of(s_hopper), SLIDE_REV);
+}
+
+static void motors_all_off() {
+  for (uint8_t i = 0; i < 2; i++)
+    if (slide_busy(i) || !slide_at_home(i)) slide_command(i, SLIDE_REV);
+}
+#else
 static void motor(bool on) {
   relay_write(run_pin(), on);
 }
@@ -53,6 +69,7 @@ static void motors_all_off() {
   relay_write(PIN_HOPPER_P1_RUN, false);
   relay_write(PIN_HOPPER_P5_RUN, false);
 }
+#endif
 
 // Poll the outlet sensor. Coins leave at 5-10/sec, slow enough to poll, which
 // is why neither of the two interrupts is spent here. This depends on the loop
@@ -118,6 +135,12 @@ static void finish(bool jammed) {
 
 static void start_attempt() {
   s_attempt_ms = millis();
+#if HOPPER_BY_SLIDE
+  // Coins already counted stay counted: strokes from here add to s_counted.
+  s_stroke_base = (uint16_t)(slide_strokes(slide_of(s_hopper)) - s_counted);
+  s_phase = HOP_RUNNING;
+  return;
+#endif
   s_last_level = digitalRead(count_pin());
   s_last_edge_ms = millis();
   motor(true);
@@ -154,6 +177,12 @@ uint16_t coin_hopper_pulse_ms(hopper_id_t hopper, bool on) {
 
 void coin_hopper_manual(hopper_id_t hopper, uint8_t seconds) {
   if (s_phase != HOP_IDLE) return;
+#if HOPPER_BY_SLIDE
+  // Bench check: one stroke of that hopper's motor (no count, no inventory).
+  if (seconds == 0) { motors_all_off(); return; }
+  slide_command(slide_of(hopper), SLIDE_CYCLE);
+  return;
+#endif
   motors_all_off();
   if (seconds == 0) { s_manual_ms = 0; return; }
   if (seconds > 10) seconds = 10;
@@ -178,6 +207,30 @@ void coin_hopper_update() {
   }
   switch (s_phase) {
     case HOP_RUNNING: {
+#if HOPPER_BY_SLIDE
+      {
+        // One full stroke = one coin. Start the next stroke whenever the motor
+        // is back at HOME and coins are still owed.
+        const uint8_t m = slide_of(s_hopper);
+        const uint16_t n = (uint16_t)(slide_strokes(m) - s_stroke_base);
+        if (n != s_counted) { s_counted = n; s_attempt_ms = millis(); }
+        if (s_counted >= s_commanded) {
+          s_settle_ms = millis();
+          s_phase = HOP_SETTLING;
+          return;
+        }
+        if (slide_fault(m) ||
+            (uint32_t)(millis() - s_attempt_ms) >= SLIDE_STROKE_TIMEOUT_MS) {
+          // No coin in time: send it HOME and judge after the settle.
+          motor(false);
+          s_settle_ms = millis();
+          s_phase = HOP_SETTLING;
+          return;
+        }
+        if (!slide_busy(m)) slide_command(m, SLIDE_CYCLE);
+        return;
+      }
+#endif
       const uint16_t before = s_counted;
 #if !HOPPER_COUNT_BY_PULSE
       poll_outlet();
@@ -256,7 +309,12 @@ void coin_hopper_update() {
       // A coin already in the outlet throat when the motor cut still has to
       // fall past the sensor. Declaring the count short before it lands makes
       // the machine retry a payout that actually succeeded, and overpay.
-#if !HOPPER_COUNT_BY_PULSE
+#if HOPPER_BY_SLIDE
+      // A stroke that reaches HOME during the settle still pushed its coin.
+      s_counted = (uint16_t)(slide_strokes(slide_of(s_hopper)) - s_stroke_base);
+      // Wait for the motor to be home before judging.
+      if (slide_busy(slide_of(s_hopper))) return;
+#elif !HOPPER_COUNT_BY_PULSE
       poll_outlet();
 #endif
       if ((uint32_t)(millis() - s_settle_ms) < HOPPER_SETTLE_MS) return;

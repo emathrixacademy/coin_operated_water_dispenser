@@ -11,6 +11,7 @@
 #include "rtc.h"
 #include "coin_hopper.h"
 #include "coin_diverter.h"
+#include "slide_motor.h"
 #ifdef SERIAL_CONSOLE
 #include "coin_acceptor.h"
 #include "coin_level.h"
@@ -186,6 +187,7 @@ static bool is_admin_event(long ev) {
 static uint8_t s_stats_step = 0;   // 0 idle, 1 SD, 2 DT, 3 HS rows, 4 HE
 static uint8_t s_stats_idx = 0;    // next history slot to look at
 static uint8_t s_stats_sent = 0;   // HS rows sent
+static bool s_stats_short = false; // send only sales not taken in full
 
 static bool try_send_line();
 
@@ -215,9 +217,12 @@ static void stats_update() {
         const bool sale = e && e->tag == EVT_TRANSACTION;
         const bool unpaid = e && e->tag == EVT_CHANGE_JAM && e->denomination == (uint8_t)COIN_NONE;
         if (!sale && !unpaid) { s_stats_idx++; continue; }
-        snprintf(s_tx, sizeof(s_tx), "HS %u %lu %ld %ld %ld %ld", (unsigned)s_stats_sent,
+        if (s_stats_short && !(sale && e->denomination > 0)) { s_stats_idx++; continue; }
+        // Seventh field: mL paid for but not taken (sale records only).
+        snprintf(s_tx, sizeof(s_tx), "HS %u %lu %ld %ld %ld %ld %ld", (unsigned)s_stats_sent,
                  (unsigned long)e->timestamp, sale ? (long)e->amount_in : 0L,
-                 (long)e->volume_out, (long)e->change_out, unpaid ? (long)e->amount_in : 0L);
+                 (long)e->volume_out, (long)e->change_out, unpaid ? (long)e->amount_in : 0L,
+                 sale ? (long)e->denomination * 10L : 0L);
         if (!try_send_line()) return;   // TX full: same row next pass
         s_stats_idx++;
         s_stats_sent++;
@@ -255,6 +260,8 @@ static void rx_line(char *line) {
   // The sales screen asks for its numbers; answered by stats_update(), not
   // through the event slot, since no state of the machine consumes it.
   if (ev == (long)HMI_EVENT_NAV_STATISTICS) {
+    // "EV 6 1": the Not-taken list -- only sales whose bottle left early.
+    s_stats_short = (*end == ' ') && strtol(end + 1, NULL, 10) == 1;
     s_stats_step = 1;
     return;
   }
@@ -479,6 +486,21 @@ static void console_exec(char *cmd) {
     billing_reset();
     persist_txn_close();
   }
+  // Slide motors: m1f/m1r/m1h/m1s/m1c (abante, atras, home, stop, cycle),
+  // same for m2; "lim" prints both motors and all four limits.
+  else if (cmd[0] == 'm' && (cmd[1] == '1' || cmd[1] == '2') && cmd[2] && !cmd[3]) {
+    const uint8_t m = (uint8_t)(cmd[1] - '1');
+    switch (cmd[2]) {
+      case 'f': slide_command(m, SLIDE_FWD);   break;
+      case 'r':
+      case 'h': slide_command(m, SLIDE_REV);   break;
+      case 's': slide_command(m, SLIDE_STOP);  break;
+      case 'c': slide_command(m, SLIDE_CYCLE); break;
+      case 'a': slide_command(m, SLIDE_AUTO);  break;
+      default:  console_help(); return;
+    }
+  }
+  else if (!strcmp(cmd, "lim")) { slide_print_status(); return; }
   else if (!strcmp(cmd, "clr")) {
     for (uint8_t f = 1; f <= (uint8_t)FAULT_ACCEPTOR; f++) faults_clear((fault_t)f);
   }

@@ -327,6 +327,43 @@ typedef int32_t volume_t;   // millilitres
 #define STOP_ANGLE_OPEN    30
 #define STOP_TEST_STEP_MS  700
 
+// Slide motors (team 2026-11-14): two DC motors, each driven forward/reverse by
+// two relays wired as an H-bridge (COM to a motor lead, NO to +12V, NC to GND),
+// with a limit switch at each end (C to the pin, NO to GND, read LOW = hit).
+// One relay on = run; both off = brake. Console: m1f m1r m1h m1s, m2..., lim.
+#define SLIDE_ENABLED        1
+#define PIN_M1_FWD           44   // relay IN1 (K1)
+#define PIN_M1_REV           45   // relay IN2 (K2)
+#define PIN_M1_HOME          52   // limit at the back (D25 read nothing, bench 2026-11-14)
+#define PIN_M1_FRONT         24   // limit at the front
+#define PIN_M2_FWD           46   // relay IN3 (K3)
+#define PIN_M2_REV           49   // relay IN4 (K4)
+#define PIN_M2_HOME          50
+#define PIN_M2_FRONT         51
+#define SLIDE_TIMEOUT_MS     15000 // no limit hit in this long -> stop, fault (8 s too short, M2 forward took 8.5 s)
+#define SLIDE_DEADTIME_MS    150  // both relays off before reversing
+#define SLIDE_DEBOUNCE_MS    20
+#define SLIDE_CYCLE_PAUSE_MS 0    // at the front, before going back home
+#define SLIDE_HOME_AT_BOOT   1
+// 1 = like the animated schematic: home at boot, then forever forward to
+// FRONT, pause, back to HOME, wait, again. Console m1s/m2s stops it, m1a/m2a
+// restarts it. A timeout fault stops it until m1a/m2a.
+#define SLIDE_AUTO_CYCLE     0
+// 1 = the motors cycle while the hoppers pay change; once the change is done
+// (hoppers idle this long) each motor runs back to HOME and stops there.
+// 0: the motors no longer just run alongside the payout -- they ARE the payout
+// (HOPPER_BY_SLIDE below).
+#define SLIDE_WITH_CHANGE    0
+// 1 = change is paid by the slide motors, not the D33/D34 hopper relays (team
+// 2026-11-14): Motor 1 pays P1, Motor 2 pays P5, one full HOME->FRONT->HOME
+// stroke = one coin. D33/D34 are no longer driven.
+#define HOPPER_BY_SLIDE      1
+// No coin (stroke) for this long = jam: one stroke is two runs of up to
+// SLIDE_TIMEOUT_MS each, plus dead time.
+#define SLIDE_STROKE_TIMEOUT_MS (2UL * SLIDE_TIMEOUT_MS + 2000UL)
+#define SLIDE_CHANGE_HOLD_MS 1500
+#define SLIDE_HOME_WAIT_MS   0    // at HOME, before the next forward run
+
 // ---------------------------------------------------------------------------
 // Serial
 // ---------------------------------------------------------------------------
@@ -557,10 +594,10 @@ typedef int32_t volume_t;   // millilitres
 #define HOPPER_P1_PULSES_PER_COIN 1
 #define HOPPER_P5_PULSES_PER_COIN 1
 // 2000/800 paid 6 coins for 10 pulses; lengthened again.
-#define HOPPER_P5_PULSE_ON_MS  3000
+#define HOPPER_P5_PULSE_ON_MS  3000   // 3 s (team 2026-11-13)
 // 3000/1500 paid 8-9 of 10: the hopper misses a pulse when the rest is short.
 // Same rest as P1, which pays 10 of 10.
-#define HOPPER_P5_PULSE_OFF_MS 3000
+#define HOPPER_P5_PULSE_OFF_MS 1000   // 1 s (team 2026-11-13), was 3000
 
 // 1 = no working outlet sensor: each completed pulse counts as one coin paid
 //     (bench 2026-10-29 -- three pulses gave exactly three P1, while the
